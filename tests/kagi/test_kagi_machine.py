@@ -2,6 +2,7 @@ import base64
 import datetime as dt
 import hashlib
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -706,6 +707,59 @@ def test_series_shape_firewall_backup_errors(tbl):
     assert ("控え", "timer が動いていない: backup") in whats(f)
     f = run_check(tbl, facts_text(timers="backup.timer\napt-daily.timer"))
     assert ("控え", "表の timer が動いている（backup）") in whats(f, fix=False)
+
+
+def _firewall_how(tbl, fw):
+    f = run_check(tbl, facts_text(firewall=fw))
+    (x,) = [x for x in f if x.what == "防火壁" and x.fix and "default deny outgoing" in "\n".join(x.how)]
+    return x
+
+
+def test_closing_outgoing_counts_ports_and_sets_undo_timer(tbl):
+    fw = 'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="DROP"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nfail2ban=active'
+    x = _firewall_how(tbl, fw)
+    assert x.confirm  # 防火壁の手には今も印が付く
+    how = x.how
+    count = how.index(machine.OUT_PORTS_NOW)
+    allow = how.index("sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp")
+    timer = how.index(machine.UFW_UNDO_TIMER)
+    deny = how.index("sudo ufw default deny outgoing")
+    cancel = how.index(machine.UFW_UNDO_CANCEL)
+    assert count < allow < timer < deny < how.index("sudo apt update") < cancel
+    assert "ufw-modosu" in machine.UFW_UNDO_TIMER and "ufw-modosu.timer" in machine.UFW_UNDO_CANCEL
+
+
+def test_no_firewall_counts_ports_and_sets_undo_timer_before_enable(tbl):
+    fw = "ufw=inactive\nnftables=inactive\nfirewalld=inactive"
+    x = _firewall_how(tbl, fw)
+    assert x.confirm
+    how = x.how
+    count = how.index(machine.OUT_PORTS_NOW)
+    ssh_in = next(i for i, ln in enumerate(how) if ln.startswith("sudo ufw limit 22/tcp"))
+    allow = how.index("sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp")
+    timer = how.index(machine.UFW_UNDO_TIMER)
+    enable = how.index("sudo ufw enable")
+    cancel = how.index(machine.UFW_UNDO_CANCEL)
+    assert count < how.index("sudo apt install -y ufw") < ssh_in < allow < timer < enable < cancel
+    assert enable == timer + 1  # 有効にする直前に仕掛ける
+
+
+def test_fix_script_passes_sh_n(tbl):
+    for fw in (
+        'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="ACCEPT"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nfail2ban=inactive',
+        "ufw=inactive\nnftables=inactive\nfirewalld=inactive",
+    ):
+        f = run_check(tbl, facts_text(firewall=fw))
+        script = machine.fix_script("box", machine.parse_facts(facts_text(firewall=fw)), f)
+        assert machine.OUT_PORTS_NOW in script
+        assert subprocess.run(["sh", "-n"], check=False, input=script, text=True).returncode == 0
+
+
+@pytest.mark.skipif(shutil.which("ss") is None, reason="ss が無い")
+def test_out_ports_count_line_runs():
+    r = subprocess.run(["sh", "-c", machine.OUT_PORTS_NOW], check=False, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == ""
 
 
 def test_firstboot_follows_the_series(tbl):

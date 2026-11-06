@@ -514,6 +514,18 @@ def _needs_confirm(f: Finding) -> bool:
     return not (f.what == "口" and f.result.startswith("表にあって開いていない"))
 
 
+# 防火壁で出る向きを閉じる時の手。手元の口（32768 以上）から出ている繋がりの、相手の口を数える
+OUT_PORTS_NOW = (
+    'ss -Htn state established | awk \'{n=split($3,l,":"); m=split($4,r,":"); if (l[n]+0>=32768) print r[m]}\''
+    " | sort -n | uniq -c | sort -rn"
+)
+UFW_ALLOW_NOTE = (
+    "# 2. 要る通信を許可する。DNS(53)、時刻合わせ(123)、Web(80,443)。"
+    "1 で出た口のうち要る物も足す（ssh と git の push は 22: sudo ufw allow out 22/tcp）"
+)
+UFW_UNDO_TIMER = "sudo systemd-run --unit=ufw-modosu --on-active=10min /usr/sbin/ufw default allow outgoing"
+UFW_UNDO_CANCEL = "sudo systemctl stop ufw-modosu.timer"
+
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-kagi.conf"
 HOW_SSHD = [
     "# 先に、別の窓から鍵で入れる事を確かめる（入れなくなるのを防ぐ）",
@@ -1009,11 +1021,19 @@ def check(
                     "防火壁",
                     "出る向きを既定で通している（連載 第 5 章の形は、入りも出も既定は拒否）",
                     [
-                        "# 先に要る出口を通してから閉じる（順を逆にすると apt と名前解決が止まる）",
+                        "# 1. 先に、この機械が今、外のどの口へ通信しているかを数える（sudo は要らない）",
+                        OUT_PORTS_NOW,
+                        UFW_ALLOW_NOTE,
                         "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
                         "# 家の網の機械（NAS、データベースの機械）へ出るなら: sudo ufw allow out to <LAN>",
+                        "# 3. 10 分後に自動で外向き許可に戻すタイマーを仕掛ける（許可し忘れで何かが止まっても、待てば戻る）",
+                        UFW_UNDO_TIMER,
+                        "# 4. 外向きの通信を原則禁止にする",
                         "sudo ufw default deny outgoing",
-                        "sudo apt update   # 確かめ。止まった通信は: sudo journalctl -k --grep UFW",
+                        "# 5. 確かめる。止められた通信は: sudo journalctl -k --grep 'UFW BLOCK'",
+                        "sudo apt update",
+                        "# 6. 問題が無ければ、3 のタイマーを取り消す（取り消さないと 10 分後に許可に戻る）",
+                        UFW_UNDO_CANCEL,
                     ],
                 )
             )
@@ -1028,11 +1048,18 @@ def check(
                 "防火壁",
                 "動いていない（ufw も firewalld も nftables も）",
                 [
+                    "# 1. 先に、この機械が今、外のどの口へ通信しているかを数える（sudo は要らない）",
+                    OUT_PORTS_NOW,
                     "sudo apt install -y ufw",
                     "sudo ufw default deny incoming && sudo ufw default deny outgoing",
                     "sudo ufw limit 22/tcp   # ssh を先に通す。LAN だけにするなら: sudo ufw allow from <LAN> to any port 22 proto tcp",
+                    UFW_ALLOW_NOTE,
                     "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
+                    "# 3. 10 分後に自動で外向き許可に戻すタイマーを仕掛ける（許可し忘れで何かが止まっても、待てば戻る）",
+                    UFW_UNDO_TIMER,
                     "sudo ufw enable",
+                    "# 4. 問題が無ければ、3 のタイマーを取り消す（取り消さないと 10 分後に許可に戻る）",
+                    UFW_UNDO_CANCEL,
                 ],
             )
         )
