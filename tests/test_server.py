@@ -542,7 +542,9 @@ def test_record_page(settings):
     assert "<h1>にじ</h1>" in t and "徳島県 吉野川市" in t and "discord:niji" in t
     assert "<code>overall</code> 草が大半" in t and "[0.80]" in t and "→ 合う" in t
     assert "<code>did</code> 見ただけ" in t
-    assert "<form" not in t and "seed のアプリで「ほかの人の畑を見たい」" in t  # 静的: 一言の欄は無い（設計書 §7.5）
+    assert (
+        "<form" not in t and "seed のアプリで「ほかの人の畑を見たい」" in t
+    )  # 静的: 一言の欄は無い（設計書 §7.5）
     assert "/public/a-1.md" in t
     assert c.get("/p/none-1").status_code == 404
     assert c.get("/p/Bad_ID").status_code == 404

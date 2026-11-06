@@ -16,7 +16,7 @@ from seed import __version__
 from seed import fields as fields_mod
 from seed import highlights as H
 from seed import records as R
-from seed.app import photo, theme
+from seed.app import capture, photo, theme
 from seed.app.strings import DISCORD_URL, error_text
 from seed.cli import load_plan
 from seed.records import Connection, Observation, Public
@@ -460,7 +460,19 @@ def settings_card(app: App) -> list[ft.Control]:
                 [ft.TextButton(t("set_field_to", name=n), on_click=switch(n)) for n in fl.names if n != now],
             )
         )
-    out.append(setting_row(t("set_folder"), app.folder_label, []))
+    # フォルダーを開くのは PC のアプリだけ（電話と Web 版は箱が一つ）
+    pc = not getattr(app.page, "web", False) and getattr(app.page, "platform", None) not in capture.MOBILE
+
+    async def pick(e) -> None:
+        await app.pick_folder()
+
+    out.append(
+        setting_row(
+            t("set_folder"),
+            app.folder_label,
+            [ft.TextButton(t("set_folder_open"), on_click=pick)] if pc else [],
+        )
+    )
 
     out.append(theme.muted(t("set_server", server=app.settings.server, version=__version__)))
     out.append(

@@ -121,3 +121,42 @@ def test_cli_without_list_keeps_default(seedfolder, monkeypatch, tmp_path):
     monkeypatch.setenv("SEED_FOLDER", str(seedfolder))
     assert cli.main(["init"]) == 0
     assert (seedfolder / "seed.toml").is_file()
+
+
+def test_remember_folder_adds_and_reuses(fields_in_tmp, tmp_path):
+    a = tmp_path / "farm" / "畑A"
+    a.mkdir(parents=True)
+    assert fields_mod.remember_folder(a) == "畑A"
+    fl = fields_mod.load_fields()
+    assert fl.names == ["畑A"] and fl.current == "畑A"
+    # 書き方を変えても同じ名で、重ならない
+    assert fields_mod.remember_folder(a / "." / "..") == "farm"
+    assert fields_mod.remember_folder(a / ".." / "畑A") == "畑A"
+    assert fields_mod.load_fields().names == ["畑A", "farm"]
+    assert fields_mod.load_fields().current == "畑A"
+
+
+def test_remember_folder_distinct_names_and_home(fields_in_tmp, tmp_path):
+    x = tmp_path / "p" / "同じ"
+    y = tmp_path / "q" / "同じ"
+    z = tmp_path / "q" / "同じ" / "同じ"
+    for d in (x, y, z):
+        d.mkdir(parents=True, exist_ok=True)
+    assert fields_mod.remember_folder(x) == "同じ"
+    assert fields_mod.remember_folder(y) == "q/同じ"
+    assert fields_mod.remember_folder(z) == "同じ/同じ"
+    assert fields_mod.load_fields().names == ["同じ", "q/同じ", "同じ/同じ"]
+    # 名と親の名まで同じなら番号
+    w = tmp_path / "r" / "q" / "同じ"
+    w.mkdir(parents=True)
+    assert fields_mod.remember_folder(w) == "q/同じ 2"
+
+
+def test_remember_folder_writes_home_as_tilde(fields_in_tmp, monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    d = tmp_path / "farm" / "畑B"
+    d.mkdir(parents=True)
+    assert fields_mod.remember_folder(d) == "畑B"
+    assert fields_mod.load_fields().get("畑B").folder == "~/farm/畑B"
+    assert fields_mod.remember_folder("~/farm/畑B") == "畑B"
+    assert fields_mod.load_fields().names == ["畑B"]

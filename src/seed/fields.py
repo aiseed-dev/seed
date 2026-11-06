@@ -159,3 +159,46 @@ def selected_name(fl: Fields, root: Path) -> str | None:
         except OSError:
             continue
     return fl.current if fl.get(fl.current) else None
+
+
+def _home_form(folder: Path) -> str:
+    """書く形: ホームの下なら ~ に替える（folder_label と同じ）。"""
+    home = Path.home()
+    try:
+        return f"~/{folder.relative_to(home).as_posix()}"
+    except ValueError:
+        return str(folder)
+
+
+def remember_folder(folder: str | Path, path: Path | str | None = None) -> str:
+    """アプリで開いたフォルダーを一覧に覚え、current にして書く。畑の名を返す（Flet に依らない）。
+
+    同じフォルダー（書き方が違っても）が一覧にあればその名を使い、無ければフォルダー名で足す。
+    名が別のフォルダーで使われていれば「親の名/名」、それも使われていれば「名 2」「名 3」…。
+    """
+    given = Path(folder).expanduser()
+    target = given.resolve()
+    fl = load_fields(path)
+    name = ""
+    for f in fl.fields:
+        try:
+            same = f.path.resolve() == target
+        except OSError:
+            continue
+        if same:
+            name = f.name
+            break
+    if not name:
+        base = given.name if given.name not in ("", ".", "..") else target.name or str(target)
+        name = base
+        if fl.get(name) is not None and target.parent.name:
+            name = f"{target.parent.name}/{base}"
+        n = 2
+        stem = name
+        while fl.get(name) is not None:
+            name = f"{stem} {n}"
+            n += 1
+        fl.add(name, _home_form(given))
+    fl.use(name)
+    save_fields(fl, path)
+    return name

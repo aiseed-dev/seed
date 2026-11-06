@@ -152,6 +152,11 @@ def test_screens_build_on_every_version(app, seedfolder, tmp_path, web, platform
         assert app.page.views[-1].route == "/"
     words = " ".join(texts(app.page.views[-1]))
     assert "入口" not in words
+    # 別のフォルダーを開く札は PC のアプリだけ
+    talk.add(app, card="settings")
+    app.route_change(path="/")
+    has = "別のフォルダーを開く" in texts(app.page.views[-1])
+    assert has == (not web and platform is None)
 
 
 FORMS = (ft.Dropdown, ft.Checkbox, ft.RadioGroup, ft.SegmentedButton, ft.Switch)
@@ -705,3 +710,16 @@ def test_draft_card_shows_outgoing_photos_above_text(app, seedfolder, tmp_path):
     kinds = [type(c).__name__ for c in got]
     assert len(got) == 4 and kinds[1] != "FilledButton"  # 説明、写真、全文、出す
     assert not [c for c in walk(ft.Column(got)) if isinstance(c, FORMS)]
+
+
+def test_open_other_folder_switches_and_remembers(app, tmp_path):
+    from seed import fields as fields_mod
+
+    other = tmp_path / "farm" / "別の畑"
+    other.mkdir(parents=True)
+    app.state["x"] = 1
+    run(app.open_other_folder(str(other)))
+    assert app.folder.root == other
+    assert "x" not in app.state  # 前の畑の物は残らない
+    fl = fields_mod.load_fields()
+    assert fl.current == "別の畑" and fl.get("別の畑").path == other

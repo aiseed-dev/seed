@@ -84,6 +84,18 @@ class App:
         self.open_folder(str(folder))
         await self.go(urlparse(self.page.route or "/").path or "/")
 
+    async def open_other_folder(self, folder: str) -> None:
+        """別のフォルダーを開く: 一覧に覚えて current にし、設定を読み直して、今の画面を描き直す。"""
+        fields_mod.remember_folder(folder)
+        self.open_folder(folder)
+        await self.go(urlparse(self.page.route or "/").path or "/")
+
+    async def pick_folder(self) -> None:
+        """フォルダーを選ぶ窓を出し、選ばれたら開く（PC のアプリ）。"""
+        got = await self.picker.get_directory_path()
+        if got:
+            await self.open_other_folder(got)
+
     # --- 文と道
     def t(self, word: str, **kw) -> str:
         return s(word, self.lang, **kw)
