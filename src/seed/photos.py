@@ -132,6 +132,65 @@ def exif_info(path: Path | str) -> PhotoInfo:
         return PhotoInfo(lat, lon, _taken(exif), heading)
 
 
+def _dms(value: float) -> tuple:
+    """十進の度 → EXIF の (度, 分, 秒)。秒は 1/10000 まで（緯度で約 3 mm）。"""
+    from PIL.TiffImagePlugin import IFDRational
+
+    v = abs(value)
+    d = int(v)
+    m = int((v - d) * 60)
+    sec = round(((v - d) * 60 - m) * 60 * 10000)
+    return (IFDRational(d, 1), IFDRational(m, 1), IFDRational(sec, 10000))
+
+
+def stamp(
+    jpeg: bytes,
+    lat: float,
+    lon: float,
+    when: dt.datetime | None = None,
+    altitude: float | None = None,
+    heading: float | None = None,
+    accuracy: float | None = None,
+) -> bytes:
+    """アプリのカメラで撮った写真（JPEG）に、撮った所と時刻を EXIF で書き込む。
+
+    アプリのカメラの写真には座標が入らないので、撮った時に端末から取った位置をここで書く。
+    書いた後は、電話のカメラの写真と同じに読める（exif_info）。画は圧縮し直さない（量子化の表を保つ）。
+    """
+    from PIL.TiffImagePlugin import IFDRational
+
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        raise PhotoError("not_image", "shot.jpg", "coordinates out of range")
+    try:
+        img = Image.open(io.BytesIO(jpeg))
+        img.load()
+    except (OSError, ValueError) as e:
+        raise PhotoError("not_image", "shot.jpg", "not a photo") from e
+    exif = img.getexif()
+    gps: dict = {1: "N" if lat >= 0 else "S", 2: _dms(lat), 3: "E" if lon >= 0 else "W", 4: _dms(lon)}
+    if altitude is not None:
+        gps[5] = b"\x00" if altitude >= 0 else b"\x01"
+        gps[6] = IFDRational(round(abs(altitude) * 100), 100)
+    if heading is not None:
+        gps[16] = "T"
+        gps[17] = IFDRational(round((heading % 360) * 100), 100)
+    if accuracy is not None and accuracy >= 0:
+        gps[31] = IFDRational(round(accuracy * 100), 100)  # GPSHPositioningError（m）
+    exif[ExifTags.IFD.GPSInfo] = gps
+    if when is not None:
+        text = when.strftime("%Y:%m:%d %H:%M:%S")
+        sub = dict(exif.get_ifd(ExifTags.IFD.Exif))
+        sub[ExifTags.Base.DateTimeOriginal] = text
+        exif[ExifTags.IFD.Exif] = sub
+        exif[ExifTags.Base.DateTime] = text
+    out = io.BytesIO()
+    if img.format == "JPEG":
+        img.save(out, "JPEG", exif=exif, quality="keep", subsampling="keep")
+    else:
+        img.convert("RGB").save(out, "JPEG", exif=exif, quality=QUALITY)
+    return out.getvalue()
+
+
 def shrink(path: Path | str, max_side: int = MAX_SIDE, quality: int = QUALITY) -> bytes:
     """向きを直してから長辺 max_side に縮めた JPEG。EXIF は付けない。"""
     with _open(Path(path)) as img:

@@ -150,7 +150,6 @@ def view(app: App) -> ft.View:
 
     controls: list[ft.Control] = [
         theme.heading(t("tagline")),
-        theme.subheading(t("no_field")),
         theme.body(t("about")),
         theme.muted(t("not_do")),
         theme.muted(t("why_connect")),

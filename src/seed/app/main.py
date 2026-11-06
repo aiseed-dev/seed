@@ -152,7 +152,7 @@ class App:
                 title=ft.Text(f"seed — {self.t(SCREENS[idx].word)}"),
                 actions=[c for c in [self.field_picker()] if c is not None],
             ),
-            controls=[theme.page_column(controls)],
+            controls=[self._column(controls)],
             navigation_bar=ft.NavigationBar(
                 destinations=[
                     ft.NavigationBarDestination(icon=sc.icon, label=self.t(sc.word)) for sc in SCREENS
@@ -163,6 +163,18 @@ class App:
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             padding=0,
         )
+
+    def _column(self, controls: list[ft.Control]) -> ft.Container:
+        """本文の列。窓の幅が変わったら、画面を作り直さずに幅だけを直す（撮っている間も部品を外さない）。"""
+        self._body = theme.page_column(controls, getattr(self.page, "width", None))
+        self.page.on_resize = self._fit
+        return self._body
+
+    def _fit(self, e=None) -> None:
+        body = getattr(self, "_body", None)
+        if body is not None:
+            body.width = theme.fit_width(getattr(self.page, "width", None))
+            self.page.update()
 
     def route_change(self, e=None, path: str | None = None) -> None:
         path = path or urlparse(self.page.route or "/").path or "/"

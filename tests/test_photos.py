@@ -252,3 +252,67 @@ def test_import_research_with_bulk_puts_originals_on_the_other_disk(tmp_path):
     assert (folder.root / rel).exists()
     origs = list((tmp_path / "hdd" / "field" / "originals").rglob("*.png"))
     assert len(origs) == 1 and not (folder.root / "originals").exists()
+
+
+# ---- アプリのカメラで撮った写真に座標を書く（iPhone 版。photos.stamp）
+
+
+def _plain_jpeg(size=(320, 240)) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, (90, 140, 60)).save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+def test_stamp_writes_coordinates_time_and_heading(tmp_path):
+    import datetime as dt
+
+    from seed import photos
+
+    raw = _plain_jpeg()
+    assert not photos.exif_info(_write(tmp_path, "raw.jpg", raw)).has_coord
+    when = dt.datetime(2026, 11, 7, 6, 30, 15)
+    out = photos.stamp(raw, 34.123456, 134.654321, when, altitude=12.3, heading=271.5, accuracy=8.0)
+    info = photos.exif_info(_write(tmp_path, "s.jpg", out))
+    assert abs(info.lat - 34.123456) < 1e-6 and abs(info.lon - 134.654321) < 1e-6
+    assert info.taken == when and abs(info.heading - 271.5) < 0.01
+    # 観察の location も、電話のカメラの写真と同じに作れる
+    loc = photos.location([info])
+    assert loc["points"] == 1 and loc["center"] == [34.123456, 134.654321]
+
+
+def test_stamp_southern_western_and_bad_input(tmp_path):
+    import pytest
+
+    from seed import photos
+
+    out = photos.stamp(_plain_jpeg(), -33.5, -70.25)
+    info = photos.exif_info(_write(tmp_path, "sw.jpg", out))
+    assert abs(info.lat + 33.5) < 1e-6 and abs(info.lon + 70.25) < 1e-6 and info.taken is None
+    with pytest.raises(photos.PhotoError):
+        photos.stamp(_plain_jpeg(), 91.0, 0.0)
+    with pytest.raises(photos.PhotoError):
+        photos.stamp(b"not a photo", 34.0, 134.0)
+
+
+def test_stamp_keeps_the_picture(tmp_path):
+    import io
+
+    from PIL import Image
+
+    from seed import photos
+
+    raw = _plain_jpeg((640, 480))
+    out = photos.stamp(raw, 34.0, 134.0)
+    a, b = Image.open(io.BytesIO(raw)), Image.open(io.BytesIO(out))
+    assert a.size == b.size and a.quantization == b.quantization  # 圧縮し直していない
+    assert a.tobytes()[:1500] == b.tobytes()[:1500]
+
+
+def _write(tmp_path, name: str, data: bytes):
+    p = tmp_path / name
+    p.write_bytes(data)
+    return p

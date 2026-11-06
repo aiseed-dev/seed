@@ -23,7 +23,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav_find": "探す・繋がる",
         "nav_plan": "計画",
         # 入口
-        "tagline": "すべては畑の写真を撮ることから始まる。自分の畑が無くてもよい。",
+        "tagline": "すべては畑の写真を撮ることから始まる。",
         "about": "座標の入った畑の写真を渡すと、その場所の資料（出典付き）と手引きを合わせた「読み」が戻ります。"
         "読みに「合う」「違う」を付け、選んだ行を公開して、人と繋がります。",
         "not_do": "「こうしなさい」とは言いません。読みは、何が見えて、何に拠るか、次に何を見るとよいか、まで。"
@@ -33,7 +33,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "testers": "テスター募集中（11-08 まで）。畑の写真を一枚読ませて、合う／違うを付けてみてください。",
         "discord": "Discord「AI と一緒に自給農」に入る",
         "privacy": "記録（写真と座標を含む）はあなたの PC の {folder} にあります。人に見える所に出るのは、あなたが了解した行だけです。",
-        "no_field": "畑が無くてもよい。写真を撮ることから始まる。",
         "pc_only": "写真は PC 版（seed app）で選んでください。ブラウザには写真を上げません。",
         "observe_button": "畑を観察する",
         "public_records": "公開された記録",
@@ -46,7 +45,23 @@ STRINGS: dict[str, dict[str, str]] = {
         # 観察
         "observe_title": "畑を観察する",
         "choose_photos": "写真を選ぶ",
-        "photos_hint": "位置情報（GPS）の入った写真。一枚でも、歩きながら何枚でも（6 枚まで）。",
+        # 撮る画面（iPhone 版、Android 版、Web 版）
+        "capture_button": "撮る（座標を付ける）",
+        "capture_title": "撮る",
+        "capture_hint": "撮った所と時刻を写真に書き込みます。",
+        "capture_open": "カメラを開く",
+        "capture_shoot": "撮る",
+        "capture_done": "この {n} 枚で観察にする",
+        "capture_waiting": "位置を待っています…",
+        "capture_position_ok": "位置が取れています（誤差 約 {m} m）。",
+        "capture_position_plain": "位置が取れています。",
+        "capture_no_position": "位置がまだ取れていません。",
+        "capture_location_denied": "位置が許されていません（端末の設定）。",
+        "capture_no_camera": "カメラを開けません（端末の設定）。",
+        "capture_remove": "この一枚を外す",
+        "capture_retry_position": "位置を取り直す",
+        "capture_cancel": "やめる",
+        "photos_hint": "位置情報の入った写真。6 枚まで。",
         "photos_n": "写真 {n} 枚",
         "coord": "座標 {lat:.5f}, {lon:.5f}（座標の入った写真 {points} 枚、広がり {extent} m）",
         "no_coord": "座標がありません。写真に位置情報が入っていません（カメラの設定で位置情報を付けて撮る）。",
@@ -54,7 +69,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "read_server": "サーバーで読む",
         "read_claude": "自分の Claude で読む",
         "read_local": "手元の Claude で読む",
-        "read_local_hint": "この PC の Claude Code（claude コマンド、サブスクのログイン）で読みます。API キーは要りません。写真はこの PC から送られます。",
+        "read_local_hint": "この PC の Claude Code で読みます。API キーは要りません。",
         "local_missing": "この PC に claude（Claude Code）が見つかりません。入れてログインするか、サーバーで読んでください。",
         "local_auth": "この PC の Claude Code のログインが切れています。ターミナルで claude を起動して、ログインし直してください。",
         "local_failed": "手元の Claude で読めませんでした。",
@@ -64,8 +79,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "kind": "どこの写真か",
         "own": "自分の畑",
         "candidate": "自分の畑でない（候補地）",
-        "candidate_hint": "気になる耕作放棄地を道から撮る。人の土地には入らない。筆と所有者を調べるのはあなた"
-        "（手引き 13 章）。分かったことは「言ったこと」「そのほか」に。",
+        "candidate_hint": "道から撮る。人の土地には入らない。",
         "owner_warning": "候補地の観察です。所有者の名前・住所は公開しないでください（アプリは電話・メール・"
         "郵便番号の形しか止められません）。",
         "Lend": "貸す",
@@ -86,13 +100,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "said": "言ったこと",
         "note": "そのほか",
         "ask": "知りたいこと",
-        "ask_hint": "典型の物を選ぶ。ほかに知りたいことは、下の「自分の言葉を足す」で「知りたいこと」として書く。"
-        "読みは、知りたいことに関わる行を厚くし、「こうしなさい」とは言わない",
+        "ask_hint": "ほかに知りたいことは、下の「自分の言葉を足す」に。",
         "ask_bad": "--ask は {asks} のどれか（コンマで複数）。",
         # 招待コード
         "invite": "招待コード",
-        "invite_hint": "Discord「AI と一緒に自給農」で渡します。サーバーで読む、公開する、一言を送る、に要ります。"
-        "この PC の Claude で読むだけなら要りません。",
+        "invite_hint": "Discord「AI と一緒に自給農」で渡します。",
         "invite_save": "入れる",
         "invite_set": "招待コードを入れました。",
         "invite_unset": "招待コードを消しました。",
@@ -101,14 +113,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "server_invite": "招待コードが要ります（Discord で渡します）。入口の画面か seed invite CODE で入れてください。",
         # Web 版
         "login_title": "seed — 招待コードで入る",
-        "login_hint": "招待コードは Discord「AI と一緒に自給農」で渡します。このブラウザに覚えさせます。",
+        "login_hint": "招待コードは Discord「AI と一緒に自給農」で渡します。",
         "login_button": "入る",
         "login_bad": "その招待コードは一覧にありません。",
         "logged_in_as": "ログイン中: {name}（Web 版）",
         "logout": "このブラウザから出る",
-        "web_records_note": "Web 版では、あなたの記録（写真と座標を含む）はこのサーバーのあなたのフォルダーに置かれます。"
-        "人に見える所に出るのは、あなたが了解して公開した行だけです。入口の「持ち帰る（zip）」で丸ごと持ち帰れ、"
-        "「全部消す」でフォルダーを消して公開した物も取り下げられます。",
+        "web_records_note": "記録はこのサーバーのあなたのフォルダーに置かれます。人に見えるのは、あなたが公開した行だけです。",
         "export_button": "持ち帰る（zip）",
         "export_working": "zip を作っています…",
         "export_done": "zip を渡しました（{name}）。",
@@ -119,14 +129,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "delete_confirm_yes": "消す",
         "delete_cancel": "やめる",
         "deleted": "消しました（取り下げた公開 {n} 件）。",
-        "web_read_hint": "Web 版の読みはサーバー（作る人の API キー）で行います。一日の回数に上限があります。",
+        "web_read_hint": "読みはサーバーで行います。一日の回数に上限があります。",
         "uploading": "写真を上げています…",
         "upload_failed": "写真を上げられませんでした（{detail}）。",
         "upload_unavailable": "このサーバーは写真の受け取りの設定がありません（SEED_UPLOAD_DIR）。",
         # Pl@ntNet（設計書 §17）
         "identify_button": "草の名を確かめる（Pl@ntNet）",
-        "identify_hint": "写真を一枚ずつ Pl@ntNet に送り、種の候補を plants の行に足します（モデルの読み。Claude の読みとは別の行）。"
-        "名を知りたい草は、花か穂か葉を近くで一枚。座標は送りません。はじめて作る人が、雑草か作物かを見分けるために。",
+        "identify_hint": "写真を Pl@ntNet に送り、種の候補を足します。座標は送りません。",
         "identifying": "Pl@ntNet に送っています…",
         "identify_done": "Pl@ntNet の行を {n} 本足しました。",
         "identify_none": "Pl@ntNet は候補を返しませんでした（植物が小さい、遠い、または植物でない）。",
@@ -139,8 +148,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "identify_failed": "Pl@ntNet の答えを使えませんでした。",
         # 栽培計画
         "plan_title": "栽培計画を立てる",
-        "plan_hint": "借りる・買うことができた畑で。seed の立ち位置（菌根菌を活かす自然農法から）は出発点で、前提ではありません。"
-        "AI の行は仮説で、決めたことは「決めたこと」としてあなたが書きます。数字と混植は書きません（手引き 09 章、04 章）。",
+        "plan_hint": "借りる・買うことができた畑で。AI の行は仮説です。",
         "season": "季節（あなたの言葉で。例: 2026-27 冬）",
         "plan_make": "計画を立てる（この PC の Claude）",
         "plan_remake": "立て直す（この PC の Claude）",
@@ -156,7 +164,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "decided": "決めたこと",
         "key_decided": "決めたこと",
         "plan_record_hint": "決めたこと、したこと（例: 北側は麦。南側は今年は草のまま）",
-        "ai_hint": "AI の行は、言い切りの形でも仮説です。事実は、出典付きの資料、あなたの言葉、あなたの判定だけ。",
+        "ai_hint": "AI の行は仮説です。",
         "too_many_photos": "写真は 6 枚まで。最初の 6 枚にしました。",
         # 記録
         "records_title": "記録",
@@ -166,7 +174,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "next_md": "その次の考え（next.md）",
         "open": "開く",
         "back": "戻る",
-        "edit_hint": "どれも文字のファイルです。エディターで直接直してかまいません。",
+        "edit_hint": "どれも文字のファイルです。",
         # 公開
         "publish_title": "公開する",
         "choose_obs": "観察を選ぶ",
@@ -509,7 +517,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "nav_publish": "Publish",
         "nav_find": "Find & connect",
         "nav_plan": "Plan",
-        "tagline": "Everything starts with a photo of a field. You do not need a field of your own.",
+        "tagline": "Everything starts with a photo of a field.",
         "about": "Give it photos of your field with location, and a reading comes back, built from public sources "
         "about the place (cited) and a guide. You mark each line right or wrong, choose lines to publish, "
         "and connect with people.",
@@ -520,7 +528,6 @@ STRINGS: dict[str, dict[str, str]] = {
         "testers": "Looking for testers (until 8 Nov). Read one photo of your field and mark the lines.",
         "discord": "Join the Discord",
         "privacy": "Your records, photos and coordinates included, stay in {folder} on your PC. Only the lines you choose to publish are shown to others.",
-        "no_field": "You don't need a field. It starts with taking a photo.",
         "pc_only": "Choose photos in the desktop app (seed app). Photos are not uploaded from a browser.",
         "observe_button": "Observe the field",
         "public_records": "Published records",
@@ -532,7 +539,23 @@ STRINGS: dict[str, dict[str, str]] = {
         "observations_n": "{n} observations",
         "observe_title": "Observe the field",
         "choose_photos": "Choose photos",
-        "photos_hint": "Photos with location (GPS). One, or several as you walk (up to 6).",
+        # capture screen (iPhone, Android, web)
+        "capture_button": "Take photos (with location)",
+        "capture_title": "Take photos",
+        "capture_hint": "The place and time are written into each photo.",
+        "capture_open": "Open the camera",
+        "capture_shoot": "Shoot",
+        "capture_done": "Make an observation from these {n}",
+        "capture_waiting": "Waiting for a position…",
+        "capture_position_ok": "Position known (about {m} m).",
+        "capture_position_plain": "Position known.",
+        "capture_no_position": "No position yet.",
+        "capture_location_denied": "Location is not allowed (device settings).",
+        "capture_no_camera": "Cannot open the camera (device settings).",
+        "capture_remove": "Drop this shot",
+        "capture_retry_position": "Get position again",
+        "capture_cancel": "Cancel",
+        "photos_hint": "Photos with location. Up to 6.",
         "photos_n": "{n} photos",
         "coord": "Location {lat:.5f}, {lon:.5f} ({points} photos with location, spread {extent} m)",
         "no_coord": "No location. The photos have no GPS data (turn on location in the camera settings).",
@@ -540,7 +563,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "read_server": "Read on the server",
         "read_claude": "Read with my own Claude",
         "read_local": "Read with Claude on this PC",
-        "read_local_hint": "Reads with the Claude Code on this PC (the claude command, your subscription login). No API key needed. Photos are sent from this PC.",
+        "read_local_hint": "Reads with the Claude Code on this PC. No API key needed.",
         "local_missing": "claude (Claude Code) was not found on this PC. Install it and log in, or read on the server.",
         "local_auth": "The Claude Code login on this PC has expired. Start claude in a terminal and log in again.",
         "local_failed": "Claude on this PC could not read.",
@@ -550,9 +573,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "kind": "Where the photos are from",
         "own": "My own field",
         "candidate": "Not my field (a candidate site)",
-        "candidate_hint": "Photograph an abandoned field you are curious about from the road; do not enter other "
-        "people's land. Finding the parcel and the owner is up to you (guide chapter 13). Write what you learn "
-        "under 'said' or 'note'.",
+        "candidate_hint": "Photograph from the road. Do not enter other people's land.",
         "owner_warning": "This is a candidate site. Do not publish the owner's name or address (the app can only "
         "stop phone numbers, emails and postcodes).",
         "Lend": "Lend land",
@@ -573,13 +594,11 @@ STRINGS: dict[str, dict[str, str]] = {
         "said": "said",
         "note": "note",
         "ask": "What you want to know",
-        "ask_hint": 'Pick the typical ones. Anything else, add below under "Add your own words" as '
-        '"what you want to know". The reading gives more weight to those lines and still gives no orders',
+        "ask_hint": 'Anything else, add below under "Add your own words".',
         "ask_bad": "--ask takes one of {asks} (several with commas).",
         # invite
         "invite": "Invite code",
-        "invite_hint": "Handed out on the Discord. Needed to read on the server, to publish and to send a word. "
-        "Not needed to read with Claude on this PC.",
+        "invite_hint": "Handed out on the Discord.",
         "invite_save": "Save",
         "invite_set": "Invite code saved.",
         "invite_unset": "Invite code removed.",
@@ -588,15 +607,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "server_invite": "An invite code is needed (handed out on the Discord). Enter it on the entry screen or with seed invite CODE.",
         # web
         "login_title": "seed — enter with an invite code",
-        "login_hint": "Invite codes are handed out on the Discord. This browser will remember it.",
+        "login_hint": "Invite codes are handed out on the Discord.",
         "login_button": "Enter",
         "login_bad": "That invite code is not on the list.",
         "logged_in_as": "Signed in as {name} (web)",
         "logout": "Leave on this browser",
-        "web_records_note": "On the web version your records (photos and coordinates included) are kept in your own folder "
-        "on this server. Only the lines you choose to publish are shown to others. On the entry screen, "
-        '"Take home (zip)" gives you everything, and "Delete everything" removes your folder and withdraws what you '
-        "published.",
+        "web_records_note": "Your records are kept in your own folder on this server. Others see only the lines you publish.",
         "export_button": "Take home (zip)",
         "export_working": "Making the zip…",
         "export_done": "The zip was handed over ({name}).",
@@ -607,15 +623,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "delete_confirm_yes": "Delete",
         "delete_cancel": "Cancel",
         "deleted": "Deleted ({n} published records withdrawn).",
-        "web_read_hint": "On the web version, readings run on the server (the maker's API key). There is a daily limit.",
+        "web_read_hint": "Readings run on the server. There is a daily limit.",
         "uploading": "Uploading photos…",
         "upload_failed": "The photos could not be uploaded ({detail}).",
         "upload_unavailable": "This server is not set up to receive photos (SEED_UPLOAD_DIR).",
         # Pl@ntNet
         "identify_button": "Check plant names (Pl@ntNet)",
-        "identify_hint": "Sends each photo to Pl@ntNet and adds species candidates as plants lines (a model reading, "
-        "separate from Claude's). For a name, take one close photo of the flower, ear or leaf. No coordinates are sent. "
-        "For first-time growers, to tell a weed from a crop.",
+        "identify_hint": "Sends the photos to Pl@ntNet and adds species candidates. No coordinates are sent.",
         "identifying": "Sending to Pl@ntNet…",
         "identify_done": "Added {n} Pl@ntNet line(s).",
         "identify_none": "Pl@ntNet returned no candidates (plant too small, too far, or not a plant).",
@@ -628,9 +642,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "identify_failed": "Pl@ntNet's answer could not be used.",
         # plan
         "plan_title": "Make a growing plan",
-        "plan_hint": "For a field you were able to rent or buy. seed's stance (start from natural farming that keeps "
-        "mycorrhizal fungi) is a starting point, not a premise. AI lines are hypotheses; what you decide goes under "
-        '"decided". No figures and no mixed-planting lines (guide chapters 09 and 04).',
+        "plan_hint": "For a field you were able to rent or buy. AI lines are hypotheses.",
         "season": "Season (in your words, e.g. winter 2026-27)",
         "plan_make": "Make the plan (Claude on this PC)",
         "plan_remake": "Remake it (Claude on this PC)",
@@ -646,8 +658,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "decided": "decided",
         "key_decided": "Decided",
         "plan_record_hint": "What you decided or did (e.g. wheat on the north side; the south stays in grass this year)",
-        "ai_hint": "AI lines are hypotheses, even when they sound certain. Facts are only cited data, "
-        "your own words, and your marks.",
+        "ai_hint": "AI lines are hypotheses.",
         "too_many_photos": "Up to 6 photos. Kept the first 6.",
         "records_title": "Records",
         "no_observations": "No observations yet. Start with 'Observe the field'.",
@@ -656,7 +667,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "next_md": "Thoughts on what comes next (next.md)",
         "open": "Open",
         "back": "Back",
-        "edit_hint": "These are plain text files. You may edit them directly.",
+        "edit_hint": "These are plain text files.",
         "publish_title": "Publish",
         "choose_obs": "Choose observations",
         "select_lines": "Tick the lines to publish (marked lines by default)",

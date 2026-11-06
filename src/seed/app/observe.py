@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from seed import identify, local, photos
-from seed.app import theme
+from seed.app import capture, theme
 from seed.app.strings import error_text
 from seed.cli import claude_steps, identify_photos, read_local, read_on_server
 from seed.client import ClientError
@@ -185,8 +185,16 @@ def view(app: App) -> ft.View:
     async def choose(e) -> None:
         try:
             paths = await app.pick_photos()
-            if not paths:
-                return
+        except (OSError, TimeoutError) as ex:
+            st.update(err=str(ex), msg=None)
+            app.refresh()
+            return
+        if paths:
+            await take_in(paths)
+
+    async def take_in(paths: list) -> None:
+        """写真（選んだ物、撮った物）を記録のフォルダーに取り込み、観察にする。"""
+        try:
             rel = await asyncio.to_thread(photos.import_photos, app.folder, paths, app.settings.keep)
             new = await asyncio.to_thread(photos.observation_for, app.folder, rel, app.lang)
             app.cleanup_uploads()
@@ -253,9 +261,43 @@ def view(app: App) -> ft.View:
             st.update(err=error_text(ex, app.lang, server=app.settings.server), msg=None)
         app.refresh()
 
+    async def start_capture(e) -> None:
+        st["capture"] = capture.Session()
+        app.refresh()
+
+    async def end_capture(paths: list | None = None) -> None:
+        sess = st.pop("capture", None)
+        st.pop("capture_parts", None)
+        if paths:
+            await take_in(paths)  # 取り込みが済んでから、一時の場所を消す
+        else:
+            app.refresh()
+        if sess is not None:
+            sess.close()
+
+    if st.get("capture") is not None:  # 撮っている間は、撮る画面だけを出す
+        return app.view("/observe", capture.view(app, end_capture, end_capture))
+
+    can_capture = capture.available(app.page)
     controls += [
         theme.muted(t("photos_hint")),
-        ft.FilledButton(t("choose_photos"), icon=ft.Icons.ADD_PHOTO_ALTERNATE_OUTLINED, on_click=choose),
+        ft.Row(
+            [
+                *(
+                    [
+                        ft.FilledButton(
+                            t("capture_button"), icon=ft.Icons.PHOTO_CAMERA_OUTLINED, on_click=start_capture
+                        )
+                    ]
+                    if can_capture
+                    else []
+                ),
+                (ft.OutlinedButton if can_capture else ft.FilledButton)(
+                    t("choose_photos"), icon=ft.Icons.ADD_PHOTO_ALTERNATE_OUTLINED, on_click=choose
+                ),
+            ],
+            wrap=True,
+        ),
     ]
     has_local = local.available() is not None and not app.web  # Web 版はサーバーだけ
     buttons = ft.Row(

@@ -81,11 +81,16 @@ def line_text(line: Line, language: str) -> ft.Text:
     return ft.Text(spans=spans, selectable=True)
 
 
-def page_column(controls: list[ft.Control]) -> ft.Container:
+def fit_width(page_width: float | None) -> float:
+    """本文の幅。窓が狭い時（電話）は窓の幅に合わせる。決めた幅のままだと右が切れる。"""
+    return min(MAX_WIDTH, page_width) if page_width else MAX_WIDTH
+
+
+def page_column(controls: list[ft.Control], page_width: float | None = None) -> ft.Container:
     """画面の本文。幅を抑えて中央に置き、縦に流す。"""
     return ft.Container(
         content=ft.Column(controls, spacing=14, scroll=ft.ScrollMode.AUTO, expand=True),
-        width=MAX_WIDTH,
+        width=fit_width(page_width),
         padding=ft.Padding.symmetric(horizontal=16, vertical=12),
         expand=True,
     )

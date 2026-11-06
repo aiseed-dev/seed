@@ -28,7 +28,9 @@ server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pill
 # （作者 2026-11-05。前は期間前のコミット 2bc2c4f）。記録の一行の形は仕様（fieldnotes の docs/records.md）で
 # 揃え、コードは共有しない（設計書 §13 の 2 と 18）。
 lookup = ["fieldnotes-farm==0.2.0"]
-dev = ["pytest", "ruff", "seed-farm[app,server,grow]"]
+# 撮る画面（電話のアプリと Web 版。カメラと位置の部品。PC の窓では使わない）
+capture = ["flet-camera==1.1.0", "flet-geolocator==1.1.0"]
+dev = ["pytest", "ruff", "seed-farm[app,server,grow,capture]"]
 
 [project.scripts]
 seed = "seed.cli:main"
@@ -37,6 +39,33 @@ kagi = "kagi.cli:main"
 [project.urls]
 Homepage = "https://seed.aiseed.dev"
 Source = "https://github.com/aiseed-dev/seed"
+
+# 電話のアプリ（flet build ipa / apk。docs/iPhone 版.md）。入口は src/seed_mobile.py
+[tool.flet]
+product = "seed"
+org = "dev.aiseed"
+bundle_id = "dev.aiseed.seed"
+build_number = 1
+
+[tool.flet.app]
+path = "src"
+module = "seed_mobile.py"
+exclude = ["kagi", "seed/server", "seed_farm.egg-info"]
+
+[tool.flet.ios]
+dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx"]
+
+[tool.flet.ios.info]
+NSCameraUsageDescription = "畑の写真を撮ります。"
+NSLocationWhenInUseUsageDescription = "撮った所を写真に書き込みます。"
+
+[tool.flet.android]
+dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx"]
+
+[tool.flet.android.permission]
+"android.permission.CAMERA" = true
+"android.permission.ACCESS_FINE_LOCATION" = true
+"android.permission.ACCESS_COARSE_LOCATION" = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
