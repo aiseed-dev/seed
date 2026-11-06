@@ -42,9 +42,9 @@ def state_rows(app: App, o: dict) -> list[tuple[str, str]]:
         (t("admin_read"), t("admin_yes") if o.get("read") else t("admin_no")),
         (t("admin_keys"), t("admin_keys_n", claude=have("claude"), plantnet=have("plantnet"))),
         (t("admin_audit"), t(f"admin_audit_{o.get('audit', 'off')}")),
-        (t("admin_today"), t("admin_reads_left", n=left.get("reads", "?"))),
+        (t("admin_today"), t("admin_reads_left", n=left.get("reads", "?"), talks=left.get("talks", "?"))),
         (t("admin_public"), t("admin_public_n", records=o.get("records", 0), connections=o.get("connections", 0))),
-        (t("admin_people"), t("admin_people_n", tokens=tk.get("live", 0), invites=o.get("invites", 0), boxes=o.get("boxes", 0))),
+        (t("admin_people"), t("admin_people_n", tokens=tk.get("live", 0), invites=o.get("invites", 0))),
     ]  # fmt: skip
 
 

@@ -97,8 +97,11 @@ class Client:
             if r.status_code == 429:
                 raise ClientError("server_limit", "today's limit is reached", detail, 429)
             if r.status_code == 503:
-                if _error_word(r) == "paused":  # 動かす人が受け付けを止めている（設計書 §5.10）
+                word = _error_word(r)
+                if word == "paused":  # 動かす人が受け付けを止めている（設計書 §5.10）
                     raise ClientError("server_paused", "the server is not accepting requests now", None, 503)
+                if word in ("talk_unavailable", "talk_closed"):  # 話す口が無いか閉じている（設計書 §7.6）
+                    raise ClientError("server_no_talk", "the server does not talk now", None, 503)
                 raise ClientError("server_busy", "the server is not reading now", detail, 503)
             if r.status_code in (401, 403):
                 if "invite_required" in (r.text or ""):
@@ -218,17 +221,13 @@ class Client:
         )
         return int(data.get("count") or 0)
 
-    def _me_headers(self) -> dict:
-        """持ち帰りと消去の認証（設計書 §5.3）。GET に本文が無いので、URL でなくヘッダで送る。"""
-        return {"X-Seed-Token": self.token, **({"X-Seed-Invite": self.invite} if self.invite else {})}
+    def talk(self, messages: list[dict]) -> dict:
+        """話す（POST /api/talk）。やり取り（Messages API の形）を送り、{content, stop_reason, usage, model} を受ける。
 
-    def export(self) -> bytes:
-        """Web 版: 自分の箱を zip で受け取る。"""
-        return self._call("GET", "/api/export", headers=self._me_headers()).content
-
-    def delete_me(self) -> dict:
-        """Web 版: 自分の箱を消し、公開した物を全部取り下げる。{"deleted", "withdrawn"}。"""
-        return self._json(self._call("DELETE", "/api/me", headers=self._me_headers()))
+        system と道具の形はサーバーが持つ物を使う（ここからは送らない）。
+        """
+        body = {"messages": messages, "language": self.language, **self._inv()}
+        return self._json(self._call("POST", "/api/talk", json=body))
 
     # --- 管理の口（動かす人。範囲 admin の token を招待コードの所に入れて使う）
     def _admin_headers(self) -> dict:

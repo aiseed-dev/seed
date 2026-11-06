@@ -53,14 +53,14 @@ module = "seed_mobile.py"
 exclude = ["kagi", "seed/server", "seed_farm.egg-info"]
 
 [tool.flet.ios]
-dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx"]
+dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx", "pyyaml"]
 
 [tool.flet.ios.info]
 NSCameraUsageDescription = "畑の写真を撮ります。"
 NSLocationWhenInUseUsageDescription = "撮った所を写真に書き込みます。"
 
 [tool.flet.android]
-dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx"]
+dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx", "pyyaml"]
 
 [tool.flet.android.permission]
 "android.permission.CAMERA" = true

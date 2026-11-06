@@ -256,6 +256,21 @@ def read_local(st: Settings, folder: Folder, obs: Observation, model: str | None
     return reading
 
 
+def read_with_key(st: Settings, folder: Folder, obs: Observation):
+    """本人の Claude の鍵（credentials.toml の anthropic_key）で、この端末から直に読み、観察に入れる。
+
+    指示はサーバーの /api/read と同じ（prompts.read_request）。失敗は DirectError（ClientError）のまま上げる。
+    """
+    from . import client, direct
+
+    skill = folder.skill if (folder.skill / "SKILL.md").is_file() else package_skill()
+    before = list(obs.reading)
+    reading = direct.read_with_key(st, folder, obs, skill)
+    client.apply_reading(obs, reading)
+    keep_model_lines(obs, before)
+    return reading
+
+
 def how_to_read(args) -> str:
     """observe の読み方。--server / --local / --claude-code が無ければ、claude があれば手元、無ければサーバー。"""
     from . import local

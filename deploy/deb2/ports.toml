@@ -1,7 +1,7 @@
 # deb2 の口の表（K-07）。seed の配備（docs/deb2 の配備.md）が済んだ後の形。kagi の形（[[port]] の並び）。
 # 使い方（手順.md の a）: 作者の作業の場所の ports.toml にこの中身を足し、
 #   kagi machine collect --host deb2 → kagi machine check --host deb2
-# 配備の前は、8010 と 8560 が「表にあって開いていない」と出る。それが残りの作業。
+# 配備の前は、8010 が「表にあって開いていない」と出る。それが残りの作業。
 # 外から届くのは Cloudflare を通る 443 だけ（22 と 2222 は ufw で決まる。この表は「どの口が開いているか」まで）。
 # IP アドレスはこの表に書かない（127.0.0.1 は機械の中の意味なので書く）。
 
@@ -19,7 +19,7 @@ port = 443
 proto = "tcp"
 service = "caddy"
 bind = "*"
-reason = "Cloudflare の後ろ。seed、seed-app、office、aiai、git、auth、analytics の入口"
+reason = "Cloudflare の後ろ。seed、office、aiai、git、auth、analytics の入口"
 
 [[port]]
 host = "deb2"
@@ -36,14 +36,6 @@ proto = "tcp"
 service = "seed の API（seed.service、uvicorn）"
 bind = "127.0.0.1"
 reason = "Caddy の後ろ。/api/* と /health だけを通す"
-
-[[port]]
-host = "deb2"
-port = 8560
-proto = "tcp"
-service = "seed の Web 版（seed-app.service、Flet）"
-bind = "127.0.0.1"
-reason = "Caddy の後ろ（seed-app.aiseed.dev）。入口は招待コード"
 
 [[port]]
 host = "deb2"

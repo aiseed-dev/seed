@@ -7,28 +7,35 @@
 やり取りは記録のファイルから組む。観察一件が一往復: 人の側は撮った写真と本人の言葉、Claude の側は今日の一枚、
 見つけた事（読みの行）、問い、次の一枚。文字を打てる所は、一番下の一行だけ。
 
+Claude を呼ぶ所（route。設定の札の一行で変えられる）は、PC が「手元の Claude Code → 自分の鍵 → サーバー」、
+電話が「自分の鍵 → サーバー」の順で、在る物（設計書 §7.6）。
+
 送った時の分かれ道（send）:
-- 写真あり → 新しい観察にし、読む（読み方は設定。既定は手元の Claude が在ればそれ、無ければサーバー）
-- 言葉だけ、手元の Claude あり → Claude Code に渡す（間違いの指摘、計画、公開などの細かい作業）
-- 言葉だけ、手元の Claude なし → 一番新しい観察に本人の言葉として足し、サーバーで読み直す
+- 写真あり → 新しい観察にし、読む（Claude を呼ぶ所の通り）
+- 言葉だけ、手元の Claude Code → Claude Code に渡す（間違いの指摘、計画、公開などの細かい作業）
+- 言葉だけ、自分の鍵かサーバー → 同じ事を、アプリの中の道具の繰り返しで（seed/direct.py）。公開は下書きまで。
+  送るのは、下書きの全文を見せ、本人が「出す」を押した時
+- 言葉だけ、どれも使えない（招待コードも鍵も無い、上限、止めている）→ 一番新しい観察に本人の言葉として足し、理由を返す
 - サーバーが要るのに招待コードが無い → 「招待コードを貼ってください」。次の一行は招待コードとして保存し、やり取りに残さない
+- 鍵を入れる（設定の札）→ 次の一行は鍵として保存し、やり取りにも記録にもログにも残さない
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import flet as ft
 
-from seed import album, land, local, photos
+from seed import album, direct, land, local, photos
 from seed import highlights as H
 from seed.app import capture, cards, photo, theme
 from seed.app.strings import error_text
-from seed.cli import read_local, read_on_server
+from seed.cli import package_skill, read_local, read_on_server, read_with_key
 from seed.client import ClientError
 from seed.records import Folder, Line, Observation
 
@@ -145,15 +152,38 @@ def say(app: App, text: str, **kw) -> None:
 # ---------------------------------------------------------------- 送る
 
 
+def routes(app: App) -> list[str]:
+    """今使える、Claude を呼ぶ所（順に: 手元の Claude Code、自分の鍵、サーバー）。サーバーは招待コードが在れば。"""
+    out = []
+    if local.available() is not None:
+        out.append("local")
+    if app.settings.anthropic_key:
+        out.append("key")
+    if app.settings.invite:
+        out.append("server")
+    return out
+
+
+def route(app: App) -> str | None:
+    """Claude を呼ぶ所。設定（seed.toml の read）が使えればそれ、無ければ使える物の先頭。どれも無ければ None。"""
+    have = routes(app)
+    if app.settings.read in have:
+        return app.settings.read
+    return have[0] if have else None
+
+
 def read_via(app: App) -> str:
-    """読み方。手元の Claude が無ければサーバー。在れば設定の通り（無ければ手元の Claude）。"""
-    if local.available() is None:
-        return "server"
-    return app.settings.read if app.settings.read in ("local", "server") else "local"
+    """写真を読む所。どれも無ければサーバー（招待コードを頼む）。"""
+    return route(app) or "server"
 
 
 def can_talk_local(app: App) -> bool:
-    return local.available() is not None
+    return route(app) == "local"
+
+
+def can_talk(app: App) -> bool:
+    """言葉で頼む細かい作業ができるか（手元の Claude Code、自分の鍵、サーバーのどれか）。"""
+    return route(app) is not None
 
 
 def ask_invite(app: App) -> None:
@@ -161,10 +191,37 @@ def ask_invite(app: App) -> None:
     say(app, app.t("talk_invite_ask"))
 
 
+def ask_key(app: App) -> None:
+    """自分の Claude の鍵を頼む。次に送られた一行を鍵として保存する。"""
+    app.state.pop("await_invite", None)
+    app.state["await_key"] = True
+    say(app, app.t("talk_key_ask"))
+
+
+async def take_key(app: App, key: str) -> None:
+    """鍵を保存する（端末の中の秘密の置き場。credentials.toml）。その一行はやり取りにも記録にも残さない。"""
+    app.state["await_key"] = False
+    key = key.strip()
+    if not key or any(c.isspace() for c in key) or len(key) < 20 or len(key) > 400:
+        say(app, app.t("talk_key_bad_shape"))
+        return
+    app.settings.anthropic_key = key
+    app.settings.save()
+    app.state.pop("direct_messages", None)
+    say(app, app.t("talk_key_set"))
+
+
+def forget_key(app: App) -> None:
+    app.settings.anthropic_key = ""
+    app.settings.save()
+    app.state.pop("direct_messages", None)
+    say(app, app.t("talk_key_removed"))
+
+
 async def read_obs(app: App, obs: Observation) -> bool:
     """観察を読む（読み方は設定の通り）。読めたら True。招待コードが要れば頼む。
 
-    サーバーの Claude を呼ぶのは、写真を送って読み取る時だけ（作者の鍵の費用。言葉だけでは呼ばない）。
+    サーバーの Claude を呼ぶのは、写真の読み取り（/api/read）と、言葉で頼む作業（/api/talk）。
     """
     via = read_via(app)
     if via == "server" and not app.settings.invite:
@@ -173,6 +230,8 @@ async def read_obs(app: App, obs: Observation) -> bool:
     try:
         if via == "local":
             await asyncio.to_thread(read_local, app.settings, app.folder, obs)
+        elif via == "key":
+            await asyncio.to_thread(read_with_key, app.settings, app.folder, obs)
         else:
             await asyncio.to_thread(read_on_server, app.settings, app.folder, obs)
     except (ClientError, photos.PhotoError) as ex:
@@ -203,12 +262,14 @@ async def send_photos(app: App, paths: list[Path], text: str) -> None:
 
 
 async def send_words(app: App, text: str) -> None:
-    """言葉だけ。手元の Claude が在れば Claude Code に渡す（直す、計画、公開などの細かい作業）。
+    """言葉だけ。Claude を呼ぶ所の通りに頼む（直す、計画、公開の下書きなどの細かい作業）。
 
-    無い端末（電話）は、一番新しい観察に本人の言葉として足すだけ（AI は呼ばない）。次に写真を送った時の
-    読み取りが、前の観察の本人の言葉を「本人が直した事」として先に読む。
+    手元の Claude Code はそれに渡す。自分の鍵かサーバーは、アプリの中の道具の繰り返しで同じ事をする。
+    どれも使えない（招待コードも鍵も無い、上限、止めている）時は、一番新しい観察に本人の言葉として足すだけにし、
+    理由を返す。次に写真を送った時の読み取りが、前の観察の本人の言葉を「本人が直した事」として先に読む。
     """
-    if can_talk_local(app):
+    via = route(app)
+    if via == "local":
         before = readings(app.folder)
         try:
             reply, session = await asyncio.to_thread(
@@ -218,21 +279,114 @@ async def send_words(app: App, text: str) -> None:
             say(app, error_text(ex, app.lang))
             return
         app.state["claude_session"] = session
-        after = readings(app.folder)
-        fixed = [l for n, lines in after.items() if before.get(n) for l in changed_lines(before[n], lines)]
-        add(app, who="claude", text=reply or app.t("talk_done"), fixed=fixed, reply=True)
+        add_reply(app, before, reply or app.t("talk_done"))
         return
+    if via in ("key", "server"):
+        await talk_direct(app, text, via)
+        return
+    if note_words(app, text):
+        say(app, app.t("talk_noted") + app.t("talk_noted_how"))
+
+
+def note_words(app: App, text: str) -> bool:
+    """一番新しい観察に本人の言葉として足す（問いが残っていれば、その答えとして）。観察が無ければ False。"""
     name = last_name(app)
     if name is None:
         say(app, app.t("talk_first_photo"))
-        return
+        return False
     path = app.folder.observations / f"{name}.md"
     obs = Observation.read(path)
     q = H.question(obs)
     line = H.answer_line(q, text, app.lang) if q and not H.answered(obs, q) else Line("said", text)
     obs.record.append(Line(line.key, line.text.replace("\n", " ")))
     obs.write(path)
-    say(app, app.t("talk_noted"))
+    return True
+
+
+def add_reply(app: App, before: dict[str, list[Line]], text: str, **kw) -> None:
+    """Claude の返事。読み直して変わった行（直した所）を先に出す。"""
+    after = readings(app.folder)
+    fixed = [l for n, lines in after.items() if before.get(n) for l in changed_lines(before[n], lines)]
+    add(app, who="claude", text=text, fixed=fixed, reply=True, **kw)
+
+
+def transport(app: App, via: str):
+    """Claude を呼ぶ運び方。自分の鍵は、手引き（本人のフォルダーの skill/、無ければ包みの物）を添えて。"""
+    if via == "key":
+        skill = app.folder.skill if (app.folder.skill / "SKILL.md").is_file() else package_skill()
+        return direct.KeyTransport(app.settings.anthropic_key, app.settings.model, skill, app.lang)
+    return direct.ServerTransport(app.settings)
+
+
+STOP_WORDS = {
+    "max_rounds": "talk_max_rounds",
+    "stopped": "talk_stopped",
+    "max_tokens": "talk_cut",
+    "refusal": "talk_refused",
+}
+
+
+async def talk_direct(app: App, text: str, via: str) -> None:
+    """自分の鍵かサーバーで、道具の繰り返し。待つ間も画面は動き、「止める」で次の一往復の前に止まる。"""
+    messages: list[dict] = app.state.setdefault("direct_messages", [])
+    desk = direct.Desk(app.folder, app.settings)
+    stop = threading.Event()
+    app.state["talk_stop"] = stop
+    app.refresh()  # 待つ間の印に「止める」を出す
+    before = readings(app.folder)
+    try:
+        out = await asyncio.to_thread(direct.run, transport(app, via), desk, messages, text, stop)
+    except ClientError as ex:
+        # 使えなかった: 本人の言葉は観察に残し、理由を人の言葉で
+        reason = error_text(ex, app.lang, server=app.settings.server)
+        if last_name(app) is not None and note_words(app, text):
+            reason += "\n" + app.t("talk_noted")
+        say(app, reason)
+        return
+    finally:
+        app.state.pop("talk_stop", None)
+    reply = out.text or app.t("talk_done")
+    if out.stopped:
+        reply = (out.text + "\n\n" if out.text else "") + app.t(STOP_WORDS[out.stopped])
+    add_reply(app, before, reply)
+    for rel in out.drafts:
+        add_draft(app, rel)
+
+
+def add_draft(app: App, rel: str) -> None:
+    """公開の下書きを、全文と「出す」で出す。送るのは本人が押した時だけ。"""
+    try:
+        text = (app.folder.root / rel).read_text(encoding="utf-8")
+    except OSError:
+        say(app, app.t("talk_draft_missing"))
+        return
+    add(app, who="claude", draft=rel, draft_text=text)
+
+
+async def send_draft(app: App, item: dict) -> None:
+    """「出す」を押した。見せた全文と今のファイルが同じ時だけ、その中身をそのまま送る。"""
+    path = app.folder.root / item["draft"]
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        say(app, app.t("talk_draft_missing"))
+        app.refresh()
+        return
+    if text != item.get("draft_text"):
+        item["draft_text"] = text
+        say(app, app.t("talk_draft_changed"))
+        app.refresh()
+        return
+    try:
+        got = await app.call("publish", text)
+    except ClientError as ex:
+        say(app, error_text(ex, app.lang, server=app.settings.server))
+        app.refresh()
+        return
+    item["sent"] = True
+    app.index = None
+    say(app, app.t("published", url=got.get("url") or got.get("id")))
+    app.refresh()
 
 
 async def take_invite(app: App, code: str) -> None:
@@ -279,6 +433,9 @@ async def send(app: App, text: str, paths: list[Path] | None = None, as_example:
     text = (text or "").strip()
     paths = list(paths or [])
     if not text and not paths:
+        return
+    if app.state.get("await_key") and text and not paths:
+        await take_key(app, text)
         return
     if app.state.get("await_invite") and text and not paths:
         await take_invite(app, text)
@@ -481,7 +638,30 @@ def item_controls(app: App, item: dict) -> list[ft.Control]:
         side += places_controls(app)
     if item.get("examples"):
         side.append(example_chips(app, item["examples"]))
+    if item.get("draft"):
+        side += draft_controls(app, item)
     return [claude_side(side)]
+
+
+def draft_controls(app: App, item: dict) -> list[ft.Control]:
+    """公開の下書きの全文と「出す」。押すまでは送らない。"""
+
+    async def go(e) -> None:
+        if not app.state.get("pending") and not item.get("sent"):
+            await send_draft(app, item)
+
+    return [
+        theme.muted(app.t("talk_draft", path=item["draft"])),
+        ft.Container(
+            theme.mono(item.get("draft_text") or ""),
+            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
+            padding=12,
+            border_radius=12,
+        ),
+        ft.FilledButton(
+            app.t("talk_draft_send"), icon=ft.Icons.PUBLISH, on_click=go, disabled=bool(item.get("sent"))
+        ),
+    ]
 
 
 def pending_controls(app: App, pending: dict) -> list[ft.Control]:
@@ -496,14 +676,16 @@ def pending_controls(app: App, pending: dict) -> list[ft.Control]:
         me.append(words_text(pending["text"]))
     if me:
         out.append(me_bubble(app, me))
-    word = pending.get("word") or (
-        "talk_reading" if pending.get("photos") or not can_talk_local(app) else "talk_thinking"
-    )
-    out.append(
-        claude_side(
-            [ft.Row([ft.ProgressRing(width=18, height=18, stroke_width=2), theme.muted(app.t(word))])]
-        )
-    )
+    word = pending.get("word") or ("talk_reading" if pending.get("photos") else "talk_thinking")
+    row: list[ft.Control] = [ft.ProgressRing(width=18, height=18, stroke_width=2), theme.muted(app.t(word))]
+    stop = app.state.get("talk_stop")
+    if stop is not None:
+
+        def halt(e) -> None:
+            stop.set()
+
+        row.append(ft.TextButton(app.t("talk_stop"), icon=ft.Icons.STOP_CIRCLE_OUTLINED, on_click=halt))
+    out.append(claude_side([ft.Row(row, wrap=True)]))
     return out
 
 
@@ -537,14 +719,13 @@ def conversation(app: App) -> list[ft.Control]:
 # ---------------------------------------------------------------- 「こういう事ができます」の例
 #
 # 入力の上に、人が言いそうな言葉で例を出す。押すとその言葉を送った物として扱い、答えを下に出す。
-# AI 無しでアプリが答えられる物は、どの端末でもその場で。手元の Claude が要る物は、無い端末では PC での
-# やり方を一言添えて返す。
+# AI 無しでアプリが答えられる物は、どの端末でもその場で。Claude が要る物は、使えない端末ではやり方を一言添えて返す。
 
 
 @dataclass(frozen=True)
 class Example:
     key: str
-    needs_claude: bool = False  # 手元の Claude（Claude Code）が要る
+    needs_claude: bool = False  # Claude が要る（手元の Claude Code、自分の鍵、サーバーのどれか）
 
 
 EXAMPLES = {
@@ -601,7 +782,7 @@ def examples(app: App, everything: bool = False) -> list[str]:
     if any(app.folder.public.glob("*.md")) if app.folder.public.exists() else False:
         keys.remove("published")
         keys.insert(2, "published")
-    if not can_talk_local(app):
+    if not can_talk(app):
         keys.sort(key=lambda k: EXAMPLES[k].needs_claude)
     if everything:
         return keys
@@ -628,7 +809,7 @@ async def run_example(app: App, key: str) -> None:
         await add_photos(app, "")
         return
     phrase = app.t(f"ex_{key}")
-    if ex.needs_claude and can_talk_local(app):
+    if ex.needs_claude and can_talk(app):
         await send(app, phrase, as_example=False)
         return
     add(app, who="me", text=phrase)
@@ -800,7 +981,10 @@ def composer(app: App) -> ft.Control:
     t = app.t
     busy = bool(app.state.get("pending"))
     to = app.state.get("talk_to")
-    if app.state.get("await_invite"):
+    secret = bool(app.state.get("await_key"))
+    if secret:
+        hint = t("talk_hint_key")
+    elif app.state.get("await_invite"):
         hint = t("talk_hint_invite")
     elif to:
         hint = t("talk_hint_to", to=to)
@@ -811,10 +995,11 @@ def composer(app: App) -> ft.Control:
         expand=True,
         border_radius=24,
         dense=True,
-        autocorrect=not app.state.get("await_invite"),
-        shift_enter=True,
+        autocorrect=not (app.state.get("await_invite") or secret),
+        password=secret,  # 鍵は画面に出さない
+        shift_enter=not secret,
         min_lines=1,
-        max_lines=4,
+        max_lines=1 if secret else 4,
     )
 
     def take() -> str:

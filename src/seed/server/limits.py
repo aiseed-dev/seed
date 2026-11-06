@@ -50,12 +50,16 @@ class Limits:
     per_token_reads: int
     per_ip_reads: int
     daily_usd: float
+    daily_talks: int = 0  # 話す（/api/talk）の 1 日の回数。0 ならこの口は閉じる
+    per_token_talks: int = 0  # 話すの、相手（招待コードか token）ごとの 1 日の回数
     day: str = ""
     by_token: Counter = field(default_factory=Counter)
     by_ip: Counter = field(default_factory=Counter)
     lookups_by_ip: Counter = field(default_factory=Counter)
     connects_by_ip: Counter = field(default_factory=Counter)
+    talks_by: Counter = field(default_factory=Counter)
     reads: int = 0
+    talks: int = 0
     spent_usd: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -71,7 +75,9 @@ class Limits:
             self.by_ip.clear()
             self.lookups_by_ip.clear()
             self.connects_by_ip.clear()
+            self.talks_by.clear()
             self.reads = 0
+            self.talks = 0
             self.spent_usd = 0.0
 
     def take(self, token: str, ip: str) -> None:
@@ -90,6 +96,25 @@ class Limits:
             self.by_token[h] += 1
             self.by_ip[ip] += 1
             self.reads += 1
+
+    def take_talk(self, who: str) -> None:
+        """話すの一回（Claude を一回呼ぶ。道具の一往復も一回）を数える。費用の上限は読みと共通。
+
+        who は相手（招待コードか token。ハッシュにして持つ）。0 ならこの口は閉じている（closed）。
+        """
+        h = token_hash(who)
+        with self._lock:
+            self._roll()
+            if self.daily_talks <= 0:
+                raise LimitReached("closed")
+            if self.talks >= self.daily_talks:
+                raise LimitReached("daily")
+            if self.spent_usd >= self.daily_usd:
+                raise LimitReached("budget")
+            if self.talks_by[h] >= self.per_token_talks:
+                raise LimitReached("token")
+            self.talks_by[h] += 1
+            self.talks += 1
 
     def take_lookup(self, ip: str) -> None:
         """照会（/api/lookup）の回数。外のサービスに出るので IP ごとに読みの 3 倍まで。"""
@@ -119,5 +144,6 @@ class Limits:
             self._roll()
             return {
                 "reads": max(0, self.daily_reads - self.reads),
+                "talks": max(0, self.daily_talks - self.talks),
                 "usd": round(max(0.0, self.daily_usd - self.spent_usd), 2),
             }

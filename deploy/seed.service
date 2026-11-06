@@ -7,15 +7,21 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=dev
-Group=dev
+# 専用の利用者 seed で動かす（作者 11-06「サービスは専用の利用者で動かす」）。AI が動くアカウント dev とは分ける。
+# seed が書くのは /var/lib/seed の下だけ。/opt/seed（コード）は dev が置き、seed は読むだけ
+User=seed
+Group=seed
 WorkingDirectory=/opt/seed
+# 秘密でない設定だけ（URL、置き場、上限、モデル）。鍵は書かない
 EnvironmentFile=/etc/seed/env
-# 持ち帰り（/api/export）と消去（/api/me）が Web 版の人の箱を読む・消すため。seed-app.service と同じ場所
-Environment=SEED_USERS_DIR=/var/lib/seed/users
-# 記録（SEED_AUDIT）の署名の鍵。root だけが読めるファイルを、systemd がこのサービスにだけ渡す（K-03。環境変数に出さない）
-# 鍵を置いていなければこの行を # にする（記録は書かれず、/health の audit が off）
+# 鍵は root だけが読めるファイル（600 root）。systemd がこのサービスにだけ、$CREDENTIALS_DIRECTORY の下に渡す
+# （K-03。環境変数に出さない）。サーバーは在ればそれを読み、無ければ環境変数を読む（server/settings.py）
+# 記録（SEED_AUDIT）の署名の鍵。置いていなければこの行を # にする（記録は書かれず、/health の audit が off）
 LoadCredential=kagi-log-key:/etc/seed/log-key
+# Claude の鍵（/api/read と /api/talk）。置いていなければこの行を # にする（その二つが 503）
+LoadCredential=anthropic:/etc/seed/keys/anthropic
+# Pl@ntNet の鍵（/api/identify）。置いていなければこの行を # にする（/api/identify が 503）
+LoadCredential=plantnet:/etc/seed/keys/plantnet
 # --no-access-log: /api/lookup は招待コードを query で受けるので、uvicorn の一行のログ（journald）にコードが残る（11-05 に手元で見た）
 # uvicorn は 127.0.0.1（Caddy）からの X-Forwarded-For と X-Forwarded-Proto を既定で信じる（返す url が https://seed.aiseed.dev/ になる。11-05 に手元で確かめた）
 ExecStart=/opt/seed/.venv/bin/uvicorn seed.server.main:app --host 127.0.0.1 --port 8010 --no-access-log

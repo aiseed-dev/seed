@@ -1,4 +1,4 @@
-# 招待コードの一覧の見本（設計書 §7.5）。本物は /etc/seed/invites.toml に root が置き、chmod 640（group dev）。
+# 招待コードの一覧の見本（設計書 §7.5）。本物は /etc/seed/invites.toml に root が置き、root:seed 640（サービスだけが読める。dev は読めない）。
 # コードは作る人が Discord で一人に一つ渡す。呼び名は一言の送り主として相手に見える。本名は書かない。
 # コードの作り方の例: python3 -c "import secrets; print(secrets.token_urlsafe(9))"
 [codes]

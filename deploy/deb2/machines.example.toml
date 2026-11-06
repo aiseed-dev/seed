@@ -9,7 +9,7 @@ os = "debian-13"
 users = ["dev"]                 # 入れてよい人
 admins = ["owner"]              # sudo を持ってよい人（dev は持たない）
 keys = ["dev-debpc"]            # 入れてよい鍵
-services = ["caddy", "seed", "seed-app"]   # 動いているべき物。止まると「直す」に出る
+services = ["caddy", "seed"]   # 動いているべき物。止まると「直す」に出る（seed は専用の利用者 seed で動く）
 # hostkey = "SHA256:…"          # 機械の画面で見て書く
 
 # 入口の表: 外から来る入口ごとに、誰が、何で守られて入るか。who と auth は見本。本物は作者が書く。
@@ -17,13 +17,7 @@ services = ["caddy", "seed", "seed-app"]   # 動いているべき物。止ま�
 [[door]]
 host = "deb2"
 site = "seed.aiseed.dev"
-who = "入口と公開された記録は誰でも。/api/* は招待した人"
-auth = "app"
-
-[[door]]
-host = "deb2"
-site = "seed-app.aiseed.dev"
-who = "招待した人（招待コード）"
+who = "入口、公開された記録、使い方の説明は誰でも。/api/* は招待した人"
 auth = "app"
 
 # seed の外の入口（office、aiai、git、auth、analytics）も、同じ形で一件ずつ書く。

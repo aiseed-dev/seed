@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """seed.aiseed.dev の FastAPI（設計書 §7.1）。
 
-API キーが無くても起きる（/api/read だけが 503）。CORS の許可は付けない（同一オリジンだけ）。
+API キーが無くても起きる（/api/read と /api/talk が 503）。CORS の許可は付けない（同一オリジンだけ）。
 Web に出すのは入口（/）と公開された記録の閲覧（/p/<id>）と「一言を送る」だけ（設計書 §3、§6）。
 観察・記録・公開の画面は出さない。データは本人の PC にある。HTML はテンプレート無しの文字列で、
 本人の文はすべてエスケープする。
@@ -9,6 +9,7 @@ Web に出すのは入口（/）と公開された記録の閲覧（/p/<id>）�
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -16,19 +17,20 @@ from pathlib import Path
 import anthropic
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from .. import __version__, index, lang
+from .. import prompts as PR
 from .. import records as R
 from . import connect as C
 from . import gate, pages
 from . import lookup as L
-from . import me as ME
 from . import publish as P
 from . import read as RD
+from . import talk as TK
 from .limits import PHOTO_MAX, PHOTOS_MAX, PHOTOS_TOTAL_MAX, LimitReached, Limits
 from .settings import Settings
 
@@ -36,6 +38,8 @@ log = logging.getLogger("seed.server")
 
 FIELD_MAX = 16 * 1024  # center、record、place_data、previous、language、token のそれぞれ
 BODY_MAX = PHOTOS_TOTAL_MAX + 6 * FIELD_MAX + 64 * 1024  # multipart の区切りの分の余り
+# 話すの要求の全体（写真は base64 で 4/3 倍。文の上限と JSON の余り）
+TALK_BODY_MAX = PR.TALK_IMAGES_MAX * PR.TALK_PHOTO_MAX * 4 // 3 + PR.TALK_TOTAL_TEXT_MAX * 2 + 64 * 1024
 JPEG_MAGIC = b"\xff\xd8\xff"
 # 外の物は何も読まない。一言のフォームの小さな script だけが同じオリジンの /api/connect を呼ぶ
 CSP = (
@@ -131,7 +135,7 @@ NO_LEDGER = "このサーバーには token の台帳が無い（SEED_TOKENS）"
 
 
 def _paused(settings: Settings) -> JSONResponse | None:
-    """受け付けを止めている間は 503（設計書 §5.10）。公開、一言、写真の読み取り、草の名の口だけが見る。"""
+    """受け付けを止めている間は 503（設計書 §5.10）。公開、一言、写真の読み取り、話す、草の名の口だけが見る。"""
     if settings.paused():
         return _error(503, "paused", reason="paused", detail=[PAUSED])
     return None
@@ -167,7 +171,14 @@ def _actor(who: gate.Who) -> str:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
-    limits = Limits(settings.daily_reads, settings.per_token_reads, settings.per_ip_reads, settings.daily_usd)
+    limits = Limits(
+        settings.daily_reads,
+        settings.per_token_reads,
+        settings.per_ip_reads,
+        settings.daily_usd,
+        settings.daily_talks,
+        settings.per_token_talks,
+    )
     client = anthropic.AsyncAnthropic(api_key=settings.api_key, timeout=180.0) if settings.api_key else None
 
     app = FastAPI(title="seed", version=__version__, docs_url=None, redoc_url=None, openapi_url=None)
@@ -186,6 +197,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             "version": __version__,
             "read": app.state.client is not None,
+            "talk": app.state.client is not None
+            and settings.daily_talks > 0,  # 話す口（/api/talk）が使えるか
             "lookup": L.available(),
             "model": settings.model,
             "remaining": limits.remaining(),
@@ -302,14 +315,84 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out.update(refused=True, category=reading.category)
         return out
 
+    @app.post("/api/talk")
+    async def api_talk(request: Request):
+        """話す（設計書 §7.6）。やり取りを受け、サーバーの system と道具の形とサーバーの鍵で Claude を一回呼ぶ。
+
+        道具を動かすのは端末。中身は盤にもログにも書かない。記録には、誰が、talk、通した・断った、の一行だけ。
+        """
+        if (closed := _paused(settings)) is not None:
+            return closed
+        if app.state.client is None:
+            return _error(503, "talk_unavailable", detail=["このサーバーには Claude の鍵が無い"])
+        if settings.daily_talks <= 0:
+            return _error(503, "talk_closed", detail=["このサーバーは今、話す口を閉じている"])
+        if int(request.headers.get("content-length") or 0) > TALK_BODY_MAX:
+            return _error(413, "too_large", detail=["やり取りが大きすぎる"])
+        raw = bytearray()
+        try:
+            async for chunk in _counted(request.stream(), TALK_BODY_MAX):
+                raw += chunk
+        except TooLarge:
+            return _error(413, "too_large", detail=["やり取りが大きすぎる"])
+        try:
+            body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            return _error(400, "bad_talk", detail=["JSON でない"])
+        if not isinstance(body, dict):
+            return _error(400, "bad_talk", detail=["JSON の表でない"])
+        inv = body.get("invite")
+        code = inv if isinstance(inv, str) else None
+        who = _invite(settings, code, "talk", note=False)
+        if not isinstance(who, str):
+            return who
+        actor = who or "?"
+        try:
+            messages = PR.clean_messages(body.get("messages"))
+        except PR.TalkTooLarge as e:
+            settings.journal.record(actor, "talk", "断った: too_large")
+            return _error(413, "too_large", detail=[str(e)])
+        except ValueError as e:
+            settings.journal.record(actor, "talk", "断った: bad_talk")
+            return _error(400, "bad_talk", detail=[str(e)])
+        language = lang.normalize(str(body.get("language") or "")) or lang.FALLBACK
+        try:
+            limits.take_talk((code or "").strip() or f"ip:{_client_ip(request)}")
+        except LimitReached as e:
+            settings.journal.record(actor, "talk", f"断った: limit {e.kind}")
+            return _error(429, "limit", kind=e.kind, detail=["今日はここまで"])
+        settings.journal.record(actor, "talk", "通した")
+        try:
+            out = await TK.talk(
+                app.state.client,
+                model=settings.model,
+                skill_dir=settings.skill_dir,
+                language=language,
+                messages=messages,
+            )
+        except RD.ReadError as e:
+            limits.spend(e.usage)
+            resp = _error(e.status, "talk_failed", kind=e.kind)
+            if e.retry_after:
+                resp.headers["Retry-After"] = e.retry_after
+            return resp
+        cost = limits.spend(out["usage"])
+        log.info("talk model=%s usd=%.4f", out["model"], cost)
+        return out
+
+    def _plantnet() -> str | None:
+        """Pl@ntNet の鍵。systemd が渡した物（settings）か、環境変数。"""
+        from .. import identify as I
+
+        return settings.plantnet_key or I.key_from_env()
+
     @app.post("/api/identify")
     async def api_identify(request: Request):
         """草の名を Pl@ntNet で（設計書 §17）。サーバーの鍵 PLANTNET_API_KEY。写真は 1〜5 枚、JPEG。"""
-        from .. import identify as I
 
         if (closed := _paused(settings)) is not None:
             return closed
-        if not I.available():
+        if not _plantnet():
             return _error(503, "identify_unavailable", detail=["このサーバーには Pl@ntNet の鍵が無い"])
         form, err = await _multipart(request)
         if err is not None:
@@ -345,7 +428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except LimitReached as e:
             return _error(429, "limit", kind=e.kind)
         try:
-            result = await run_in_threadpool(I.identify, photos, None, language)
+            result = await run_in_threadpool(I.identify, photos, _plantnet(), language)
         except I.IdentifyError as e:
             status = {"identify_limit": 429, "identify_unreachable": 503}.get(e.word, 502)
             return _error(status, e.word, detail=[e.detail] if e.detail else None)
@@ -389,7 +472,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(e.status, "publish_rejected", detail=e.reasons)
         await run_in_threadpool(P.note_publisher, settings, pub.id, who)  # 管理の画面の「公開した人」
-        # 外向きの url。Web 版は 127.0.0.1 で叩くので、SEED_PUBLIC_URL があればそれを基底にする（11-05）
+        # 外向きの url。SEED_PUBLIC_URL があればそれを基底にする（127.0.0.1 で叩かれても外の url を返す。11-05）
         base = (settings.public_url or str(request.base_url)).rstrip("/")
         return {"id": pub.id, "url": f"{base}/public/{pub.id}.md"}
 
@@ -403,48 +486,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(e.status, "withdraw_rejected", detail=e.reasons)
         return {"id": record_id, "withdrawn": True}
-
-    def _box(request: Request):
-        """Web 版の人の箱。招待コードと token はヘッダで（GET に本文が無く、URL に秘密を載せないため）。"""
-        return ME.box_for(settings, request.headers.get("x-seed-invite"), request.headers.get("x-seed-token"))
-
-    def _note(request: Request, action: str, detail: str) -> None:
-        """Web 版の箱の口の記録。呼び名は招待コードから（分からなければ ?）。"""
-        who, _ = settings.who(request.headers.get("x-seed-invite"))
-        settings.journal.record(who.name if who else "?", action, detail)
-
-    @app.get("/api/export")
-    async def api_export(request: Request):
-        """自分の箱を zip で持ち帰る（設計書 §5.3）。"""
-        try:
-            box = await run_in_threadpool(_box, request)
-            data = await run_in_threadpool(ME.export_zip, box)
-        except P.PublishError as e:
-            _note(request, "export", f"断った: {e.status}")
-            return _error(e.status, "export_rejected", detail=e.reasons)
-        _note(request, "export", "持ち帰った")
-        return Response(
-            data,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{ME.export_name()}"',
-                "Cache-Control": "no-store",
-            },
-        )
-
-    @app.delete("/api/me")
-    async def api_delete_me(request: Request):
-        """自分の箱を消し、自分が公開した物を全部取り下げ、site を書き直す（設計書 §5.3）。"""
-        try:
-            box = await run_in_threadpool(_box, request)
-            token = request.headers.get("x-seed-token") or ""
-            withdrawn = await run_in_threadpool(ME.delete_box, settings, box, token)
-        except P.PublishError as e:
-            _note(request, "delete_me", f"断った: {e.status}")
-            return _error(e.status, "delete_rejected", detail=e.reasons)
-        _note(request, "delete_me", f"箱を消した（取り下げ {len(withdrawn)} 件）")
-        log.info("web: 箱を消した（取り下げ %d 件）", len(withdrawn))
-        return {"deleted": True, "withdrawn": withdrawn}
 
     # ---- 管理の口（動かす人だけ。範囲 admin。招待コードと同じ所に入れた token をヘッダで受ける）
     def _admin(request: Request, action: str, detail: str = "") -> str | JSONResponse:
@@ -463,20 +504,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         who = _admin(request, "admin.overview")
         if not isinstance(who, str):
             return who
-        from .. import identify as I
-
         idx = await run_in_threadpool(pages.load_index, settings)
         rows = await run_in_threadpool(_token_rows)
-        boxes = 0
-        if settings.users_dir is not None and settings.users_dir.is_dir():
-            boxes = sum(1 for p in settings.users_dir.iterdir() if p.is_dir())
         tokens = {st: sum(1 for r in rows if r["state"] == st) for st in ("live", "expired", "revoked")}
         tokens["expiring"] = sum(1 for r in rows if gate.expiring(r))
         return {
             "version": __version__,
             "records": idx.get("total", {}).get("records", 0),
             "connections": idx.get("total", {}).get("connections", 0),
-            "boxes": boxes,
             "tokens": tokens,
             "invites": len(settings._book.codes()),
             "read": app.state.client is not None,
@@ -484,7 +519,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "remaining": limits.remaining(),
             "paused": settings.paused(),
             # 外の鍵は在るか無いかだけ。値は出さない
-            "keys": {"claude": bool(settings.api_key), "plantnet": I.available()},
+            "keys": {"claude": bool(settings.api_key), "plantnet": bool(_plantnet())},
             "denied_today": await run_in_threadpool(settings.journal.denied_today),
         }
 

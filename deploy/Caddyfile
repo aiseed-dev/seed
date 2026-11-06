@@ -1,7 +1,7 @@
 # seed — deb2 の /etc/caddy/Caddyfile に足すブロック（設計書 §7.4、§7.5）。
 # deb2 は Cloudflare の後ろ（既存の (cf) スニペット: origin 証明書、zstd/gzip、Server ヘッダ無し）。
-# DNS は Cloudflare で seed.aiseed.dev と seed-app.aiseed.dev を deb2 に向ける（proxied）。
-# 二段の副ドメイン（app.seed.aiseed.dev）は Cloudflare の無料の証明書に入らないので seed-app にする。
+# DNS は Cloudflare で seed.aiseed.dev を deb2 に向ける（proxied）。
+# Web に出すのは入口、公開された記録、使い方の説明だけ（Web 版のアプリは無い。作者 11-06「Web 版は、マニュアル的なものだけにする」）。
 # 入口と公開された記録は静的サイト（/var/lib/seed/public/site。uvicorn が書き出す）。/api/* と /health だけ uvicorn へ。
 # .owners.json と connections/ は site/ の外にあるので外から見えない。
 # 11-05 に手元（caddy 無し）で目で確かめた。caddy validate は deb2 で（deb2 の配備 §0）。
@@ -40,8 +40,3 @@ seed.aiseed.dev {
 	}
 }
 
-# Web 版のアプリ（スマートフォンの人。設計書 §6.2）。seed-app.service（uvicorn + Flet、8560）。WebSocket（/ws）はそのまま通る
-seed-app.aiseed.dev {
-	import cf
-	reverse_proxy 127.0.0.1:8560
-}

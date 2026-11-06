@@ -95,8 +95,8 @@ def post_read(c: TestClient, photos=(JPEG,), **fields):
 def test_health_without_key_and_read_is_503(settings):
     c = client_for(replace(settings, api_key=None))
     h = c.get("/health").json()
-    assert h["read"] is False and h["lookup"] is False
-    assert h["remaining"] == {"reads": 200, "usd": 20.0}
+    assert h["read"] is False and h["lookup"] is False and h["talk"] is False
+    assert h["remaining"] == {"reads": 200, "talks": 300, "usd": 20.0}
     assert post_read(c).status_code == 503
 
 
@@ -439,7 +439,7 @@ def test_publish_rejects(settings, markdown):
 
 @pytest.mark.parametrize("public_url", ["https://seed.aiseed.dev", "https://seed.aiseed.dev/"])
 def test_publish_url_uses_public_url(settings, public_url):
-    # Web 版は 127.0.0.1:8010 で叩く。答えの url は外から開ける物でないといけない
+    # 127.0.0.1:8010 で叩かれても、答えの url は外から開ける物でないといけない
     c = TestClient(create_app(replace(settings, public_url=public_url)), base_url="http://127.0.0.1:8010")
     r = c.post("/api/publish", json={"token": TOKEN, "markdown": public_md()})
     assert r.status_code == 200, r.text
@@ -752,7 +752,7 @@ def test_identify_endpoint(settings, calls, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["candidates"][0]["scientific"] == "Miscanthus sinensis" and body["remaining"] == 10
-    assert seen == {"n": 1, "key": None, "language": "ja"}
+    assert seen == {"n": 1, "key": "k-server", "language": "ja"}  # サーバーの鍵（systemd が渡すか、環境変数）
     assert c.post("/api/identify", data={"token": TOKEN}, files=files * 6).status_code == 400
     assert (
         c.post(
@@ -861,153 +861,3 @@ def test_pages_and_index_have_no_fine_coords(settings, tmp_path):
     c = client_for(settings)
     assert c.get("/p/fine-1").status_code == 404 and c.get("/p/fine-2").status_code == 404
     assert c.get("/p/coarse-1").status_code == 200
-
-
-# ---------------------------------------------------------------- Web 版の持ち帰りと消去（設計書 §5.3）
-
-INVITE_B = "inv-test-code-5678"
-TOKEN_B = "b" * 32
-
-
-def _make_box(users: Path, code: str, token: str, name: str) -> Path:
-    from seed.server.settings import user_slug
-
-    box = users / user_slug(code)
-    (box / "photos").mkdir(parents=True)
-    (box / "observations").mkdir()
-    (box / "public").mkdir()
-    (box / "photos" / "2026-11-05-1.jpg").write_bytes(JPEG)
-    (box / "observations" / "2026-11-05-1000.md").write_text(f"# {name} の観察\n", encoding="utf-8")
-    (box / "plan.md").write_text(f"# {name} の計画\n", encoding="utf-8")
-    (box / "public" / "2026-11-05-x.md").write_text("公開の写し\n", encoding="utf-8")
-    (box / "seed.toml").write_text(f'name = "{name}"\nlanguage = "ja"\n', encoding="utf-8")
-    (box / "credentials.toml").write_text(f'token = "{token}"\ninvite = "{code}"\n', encoding="utf-8")
-    return box
-
-
-@pytest.fixture
-def boxes(settings, tmp_path):
-    users = tmp_path / "users"
-    st = replace(settings, users_dir=users, invites={INVITE: "てすと", INVITE_B: "べつ"})
-    a = _make_box(users, INVITE, TOKEN, "てすと")
-    b = _make_box(users, INVITE_B, TOKEN_B, "べつ")
-    return SimpleNamespace(settings=st, a=a, b=b, c=client_for(st))
-
-
-def _me(invite, token):
-    return {"X-Seed-Invite": invite, "X-Seed-Token": token}
-
-
-def test_export_zip_matches_box(boxes):
-    import io
-    import zipfile
-
-    r = boxes.c.get("/api/export", headers=_me(INVITE, TOKEN))
-    assert r.status_code == 200, r.text
-    assert r.headers["content-type"] == "application/zip"
-    assert "attachment" in r.headers["content-disposition"]
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    names = set(z.namelist())
-    want = {
-        p.relative_to(boxes.a).as_posix()
-        for p in boxes.a.rglob("*")
-        if p.is_file() and p.name != "credentials.toml"
-    }
-    assert names == want
-    assert {"photos/2026-11-05-1.jpg", "observations/2026-11-05-1000.md", "plan.md", "seed.toml"} <= names
-    assert "public/2026-11-05-x.md" in names
-    for n in names - {"seed.toml"}:
-        assert z.read(n) == (boxes.a / n).read_bytes()
-    # 秘密は入らない
-    assert "credentials.toml" not in names
-    blob = b"".join(z.read(n) for n in names)
-    assert TOKEN.encode() not in blob and INVITE.encode() not in blob
-    # 他人の箱の物は入らない
-    assert "べつ".encode() not in blob
-
-
-def test_export_strips_secrets_from_old_seed_toml(boxes):
-    import io
-    import zipfile
-
-    (boxes.a / "credentials.toml").unlink()
-    (boxes.a / "seed.toml").write_text(
-        f'name = "てすと"\nlanguage = "ja"\ntoken = "{TOKEN}"\ninvite = "{INVITE}"\n', encoding="utf-8"
-    )
-    r = boxes.c.get("/api/export", headers=_me(INVITE, TOKEN))  # 古い箱は seed.toml の token で
-    assert r.status_code == 200, r.text
-    text = zipfile.ZipFile(io.BytesIO(r.content)).read("seed.toml").decode()
-    assert 'name = "てすと"' in text and TOKEN not in text and INVITE not in text
-
-
-def test_export_and_delete_refuse_other_token(boxes):
-    # 自分の招待コードに他人の token、他人の招待コードに自分の token: どちらも 403
-    for headers in (_me(INVITE, TOKEN_B), _me(INVITE_B, TOKEN)):
-        assert boxes.c.get("/api/export", headers=headers).status_code == 403
-        assert boxes.c.request("DELETE", "/api/me", headers=headers).status_code == 403
-    assert boxes.a.is_dir() and boxes.b.is_dir()
-    # 招待コードが無い・一覧に無い、token が無い
-    assert boxes.c.get("/api/export", headers={"X-Seed-Token": TOKEN}).status_code == 403
-    assert boxes.c.get("/api/export", headers=_me("inv-nope-0000", TOKEN)).status_code == 403
-    assert boxes.c.get("/api/export", headers={"X-Seed-Invite": INVITE}).status_code == 400
-
-
-def test_export_without_users_dir_is_404(settings):
-    c = client_for(settings)
-    assert c.get("/api/export", headers=_me(INVITE, TOKEN)).status_code == 404
-
-
-def test_delete_me_withdraws_and_removes_box(boxes):
-    c, st = boxes.c, boxes.settings
-    md_a = public_md(id_="a-1")
-    md_a2 = public_md(id_="a-2")
-    md_b = public_md(id_="b-1")
-    for md, tok in ((md_a, TOKEN), (md_a2, TOKEN), (md_b, TOKEN_B)):
-        assert c.post("/api/publish", json={"token": tok, "markdown": md}).status_code == 200
-    assert c.get("/index.json").json()["total"]["records"] == 3
-
-    r = c.request("DELETE", "/api/me", headers=_me(INVITE, TOKEN))
-    assert r.status_code == 200, r.text
-    assert r.json() == {"deleted": True, "withdrawn": ["a-1", "a-2"]}
-    assert not boxes.a.exists() and boxes.b.is_dir()
-    # 公開も取り下げ、site も書き直した
-    assert [x["id"] for x in c.get("/index.json").json()["records"]] == ["b-1"]
-    assert not (st.public_dir / "a-1.md").exists()
-    assert not (st.site_dir / "p" / "a-1.html").exists() and (st.site_dir / "p" / "b-1.html").exists()
-    assert c.get("/p/a-1").status_code == 404
-    owners = json.loads(st.owners_path.read_text())
-    assert set(owners) == {"b-1"}
-    # 消した後は 404
-    assert c.get("/api/export", headers=_me(INVITE, TOKEN)).status_code == 404
-    assert c.request("DELETE", "/api/me", headers=_me(INVITE, TOKEN)).status_code == 404
-    # 他人の箱はそのまま
-    assert c.get("/api/export", headers=_me(INVITE_B, TOKEN_B)).status_code == 200
-
-
-def test_users_dir_from_env(monkeypatch, tmp_path):
-    monkeypatch.setenv("SEED_USERS_DIR", str(tmp_path / "u"))
-    assert Settings.from_env().users_dir == tmp_path / "u"
-    monkeypatch.delenv("SEED_USERS_DIR")
-    assert Settings.from_env().users_dir is None
-
-
-def test_client_export_and_delete_send_headers():
-    import httpx
-
-    from seed.client import Client
-
-    seen = []
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen.append((req.method, req.url.path, dict(req.headers), str(req.url.query)))
-        if req.method == "GET":
-            return httpx.Response(200, content=b"PK\x05\x06" + b"\0" * 18)
-        return httpx.Response(200, json={"deleted": True, "withdrawn": []})
-
-    with Client("http://s", TOKEN, "ja", transport=httpx.MockTransport(handler), invite=INVITE) as c:
-        assert c.export().startswith(b"PK")
-        assert c.delete_me()["deleted"] is True
-    for method, path, headers, query in seen:
-        assert headers["x-seed-token"] == TOKEN and headers["x-seed-invite"] == INVITE
-        assert TOKEN not in query  # 秘密を URL に載せない
-    assert [(m, p) for m, p, *_ in seen] == [("GET", "/api/export"), ("DELETE", "/api/me")]

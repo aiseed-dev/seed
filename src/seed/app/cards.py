@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from seed import __version__, local
+from seed import __version__
 from seed import fields as fields_mod
 from seed import highlights as H
 from seed.app import photo, theme
@@ -50,9 +50,10 @@ def card(app: App, key: str) -> ft.Control:
 
 
 def claude_hint(app: App, word: str) -> ft.Control:
-    """細かい作業は Claude に頼む、の一行。手元の Claude が無い時は PC の Claude Code へ。"""
-    has = local.available() is not None
-    return theme.note(app.t(f"{word}_here" if has else f"{word}_pc"))
+    """細かい作業は Claude に頼む、の一行。Claude を呼べない時（鍵も招待コードも無い）は PC の Claude Code へ。"""
+    from seed.app.talk import can_talk
+
+    return theme.note(app.t(f"{word}_here" if can_talk(app) else f"{word}_pc"))
 
 
 # ---------------------------------------------------------------- 計画
@@ -337,30 +338,62 @@ def settings_card(app: App) -> list[ft.Control]:
         )
     )
 
-    # 読み取り（手元の Claude が在る PC だけ選べる）
-    from seed.app.talk import read_via
+    # 自分の Claude の鍵（Anthropic の API の鍵）。値は出さない。入れるのは下の入力から、外すのは二度押し
+    have_key = bool(app.settings.anthropic_key)
 
-    via = read_via(app)
-    if local.available() is not None:
+    def put_key(e) -> None:
+        from seed.app.talk import ask_key
 
-        def flip(e) -> None:
-            app.settings.read = "server" if via == "local" else "local"
-            app.settings.save()
+        ask_key(app)
+        app.refresh()
+
+    def drop_key(e) -> None:
+        from seed.app.talk import forget_key
+
+        if st.get("confirm") != ("forget_key",):
+            st["confirm"] = ("forget_key",)
             app.refresh()
+            return
+        st["confirm"] = None
+        forget_key(app)
+        app.refresh()
 
-        out.append(
-            setting_row(
-                t("set_read"),
-                t("set_read_local") if via == "local" else t("set_read_server"),
-                [
-                    ft.TextButton(
-                        t("set_read_to_server") if via == "local" else t("set_read_to_local"), on_click=flip
-                    )
-                ],
+    key_actions: list[ft.Control] = [
+        ft.TextButton(t("set_key_put") if not have_key else t("set_invite_again"), on_click=put_key)
+    ]
+    if have_key:
+        sure = st.get("confirm") == ("forget_key",)
+        key_actions.append(
+            (ft.FilledButton if sure else ft.TextButton)(
+                t("set_key_remove_sure") if sure else t("set_key_remove"), on_click=drop_key
             )
         )
-    else:
-        out.append(setting_row(t("set_read"), t("set_read_server"), []))
+    out.append(
+        setting_row(t("set_key"), t("set_invite_in") if have_key else t("set_invite_out"), key_actions)
+    )
+
+    # Claude を呼ぶ所（読み取りと話す）。使える物が二つ以上あれば、押して次へ
+    from seed.app.talk import route, routes
+
+    now, have = route(app), routes(app)
+    label = {
+        "local": t("set_read_local"),
+        "key": t("set_read_key", model=app.settings.model),
+        "server": t("set_read_server"),
+        None: t("set_read_none"),
+    }[now]
+    actions: list[ft.Control] = []
+    if now is not None and len(have) >= 2:
+        nxt = have[(have.index(now) + 1) % len(have)]
+
+        def flip(e, nxt=nxt) -> None:
+            app.settings.read = nxt
+            app.settings.save()
+            app.state.pop("direct_messages", None)
+            app.refresh()
+
+        actions.append(ft.TextButton(t(f"set_read_to_{nxt}"), on_click=flip))
+    out.append(setting_row(t("set_read"), label, actions))
 
     # 今見ている畑（自分の畑か、候補地か）。次に撮る写真に付く
     kind = st.get("kind", "own")

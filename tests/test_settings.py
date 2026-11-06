@@ -79,14 +79,22 @@ def test_bulk_makes_folder_put_originals_elsewhere(tmp_path):
 
 def test_secrets_not_written_to_seed_toml(tmp_path, credentials_in_tmp):
     s = settings.load(tmp_path / "f")
-    s.invite, s.draw_token = "inv-fake-0001", "draw-fake-0001"
+    s.invite, s.draw_token, s.anthropic_key = "inv-fake-0001", "draw-fake-0001", "sk-fake-key-0001"
     s.save()
     text = (tmp_path / "f" / "seed.toml").read_text(encoding="utf-8")
     assert s.token not in text and "inv-fake-0001" not in text and "draw-fake-0001" not in text
+    assert "sk-fake-key-0001" not in text and "sk-fake-key-0001" not in repr(
+        s
+    )  # 鍵は例外の文やログにも出ない
     for key in settings.SECRETS:
         assert key not in tomllib.loads(text)
     cred = tomllib.loads(credentials_in_tmp.read_text(encoding="utf-8"))
-    assert cred == {"token": s.token, "invite": "inv-fake-0001", "draw_token": "draw-fake-0001"}
+    assert cred == {
+        "token": s.token,
+        "invite": "inv-fake-0001",
+        "draw_token": "draw-fake-0001",
+        "anthropic_key": "sk-fake-key-0001",
+    }
     again = settings.load(tmp_path / "f")
     assert (again.token, again.invite, again.draw_token) == (s.token, "inv-fake-0001", "draw-fake-0001")
 

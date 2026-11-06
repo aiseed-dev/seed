@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""サーバーの設定。環境変数だけから読む。
+"""サーバーの設定。環境変数と、systemd が渡す鍵のファイルから読む。
 
-.env は読まない。deb2 では systemd の EnvironmentFile（/etc/seed/env）が入れる。
-API キーはここにだけ入り、ログにも応答にも出さない。
+.env は読まない。deb2 では、秘密でない設定を systemd の EnvironmentFile（/etc/seed/env）が入れ、
+Claude と Pl@ntNet の鍵は root だけが読めるファイル（/etc/seed/keys/*）を LoadCredential= が
+このサービスにだけ渡す（$CREDENTIALS_DIRECTORY/anthropic、…/plantnet）。在ればそれを、無ければ環境変数を読む
+（手元で動かす時とテスト）。鍵はここにだけ入り、ログにも応答にも出さない。
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import threading
@@ -27,6 +28,31 @@ def _int(name: str, default: int) -> int:
     return int(v) if v else default
 
 
+ENV_CREDENTIALS_DIR = "CREDENTIALS_DIRECTORY"  # systemd が LoadCredential= の物を置く所
+CRED_ANTHROPIC = "anthropic"  # LoadCredential=anthropic:/etc/seed/keys/anthropic
+CRED_PLANTNET = "plantnet"
+
+
+def credential(name: str, env: str) -> str | None:
+    """鍵を一つ。$CREDENTIALS_DIRECTORY/<name> が在ればその中身（前後の空白を除く）、無ければ環境変数 env。
+
+    読めない時は値を出さずにログに一行（どの鍵かと理由の種類だけ）。
+    """
+    d = os.environ.get(ENV_CREDENTIALS_DIR, "").strip()
+    if d:
+        path = Path(d) / name
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            value = ""
+        except (OSError, UnicodeDecodeError) as e:
+            log.warning("鍵 %s を読めない（%s）", name, type(e).__name__)
+            value = ""
+        if value:
+            return value
+    return os.environ.get(env, "").strip() or None
+
+
 def _float(name: str, default: float) -> float:
     v = os.environ.get(name, "").strip()
     return float(v) if v else default
@@ -34,7 +60,7 @@ def _float(name: str, default: float) -> float:
 
 @dataclass(frozen=True)
 class Settings:
-    api_key: str | None
+    api_key: str | None = field(repr=False)  # Claude の鍵。値を repr（例外の文、ログ）に出さない
     public_dir: Path
     daily_usd: float
     daily_reads: int
@@ -47,12 +73,16 @@ class Settings:
     invites_path: Path | None = None  # SEED_INVITES。あれば要求ごとに stat し、変わっていれば読み直す
     # SEED_PUBLIC_URL。公開の url の外から見た基底（https://seed.aiseed.dev）。空なら要求の base_url から作る
     public_url: str = ""
-    # SEED_USERS_DIR。Web 版の人ごとの箱の親（設計書 §5.3）。無ければ持ち帰りと消去の口は 404
-    users_dir: Path | None = None
     # SEED_TOKENS。相手ごとの token の台帳（ハッシュ、範囲、期限、取り消し。設計書 §5.9）。無ければ招待コードの一覧だけ
     tokens_path: Path | None = None
     # SEED_AUDIT。誰が何をしたかの記録（kagi の形）。署名の鍵（KAGI_LOG_KEY_FILE か credential）が無ければ書かない
     audit_path: Path | None = None
+    # SEED_DAILY_TALKS、SEED_PER_TOKEN_TALKS。話す（/api/talk）の 1 日の回数。0 で閉じる（設計書 §7.6）
+    daily_talks: int = 300
+    per_token_talks: int = 60
+    plantnet_key: str | None = field(
+        default=None, repr=False
+    )  # Pl@ntNet の鍵（無ければ環境変数 PLANTNET_API_KEY）
     _book: InviteBook = field(init=False, repr=False, compare=False)
     _tokens: gate.TokenBook = field(init=False, repr=False, compare=False)
     journal: gate.Journal = field(init=False, repr=False, compare=False)
@@ -77,7 +107,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
-            api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
+            api_key=credential(CRED_ANTHROPIC, "ANTHROPIC_API_KEY"),
             public_dir=Path(os.environ.get("SEED_PUBLIC_DIR") or "/var/lib/seed/public"),
             daily_usd=_float("SEED_DAILY_USD", 20.0),
             daily_reads=_int("SEED_DAILY_READS", 200),
@@ -88,9 +118,11 @@ class Settings:
             invites_path=Path(p) if (p := os.environ.get("SEED_INVITES")) else None,
             open=os.environ.get("SEED_OPEN", "").strip() in ("1", "true", "yes"),
             public_url=os.environ.get("SEED_PUBLIC_URL", "").strip(),
-            users_dir=Path(u).expanduser() if (u := os.environ.get("SEED_USERS_DIR", "").strip()) else None,
             tokens_path=Path(t).expanduser() if (t := os.environ.get(gate.ENV_TOKENS, "").strip()) else None,
             audit_path=Path(a).expanduser() if (a := os.environ.get(gate.ENV_AUDIT, "").strip()) else None,
+            daily_talks=_int("SEED_DAILY_TALKS", 300),
+            per_token_talks=_int("SEED_PER_TOKEN_TALKS", 60),
+            plantnet_key=credential(CRED_PLANTNET, "PLANTNET_API_KEY"),
         )
 
     @property
@@ -126,20 +158,10 @@ class Settings:
             return gate.Who("", frozenset({"member"}), "open"), ""
         return None, why
 
-    def known_invite(self, code: str | None) -> bool:
-        """招待した人（member）の招待コードか token か（open でも一覧と台帳で決める。Web 版の箱を開くのに使う）。"""
-        w, _ = self.who(code)
-        return w is not None and w.via != "open" and bool(w.scopes & {"member", "admin"})
-
     def invite_name(self, code: str | None) -> str | None:
         """招待コードか token の呼び名。無ければ None。open なら無しでも "" を返す（通す）。"""
         w, _ = self.who(code)
         return w.name if w is not None else None
-
-
-def user_slug(code: str) -> str:
-    """Web 版の人ごとの箱の名（招待コードのハッシュの頭 16 桁）。app と server で同じ物を使う。"""
-    return hashlib.sha256(code.strip().encode("utf-8")).hexdigest()[:16]
 
 
 def _parse_invites(text: str) -> dict[str, str]:

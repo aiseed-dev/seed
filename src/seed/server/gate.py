@@ -6,7 +6,7 @@
 - 台帳は JSON（`~/.config/aiseed/tokens.json` の形。研究室 §5b）。持つのは token のハッシュだけで、
   token そのものは出した時に一度だけ画面に出る。台帳が漏れても token は分からない。
 - 一件に、呼び名、アプリ、範囲（scope）、作った日、期限、取り消した日。
-- 範囲は三つ。`member`（招待した人。読み、公開、一言、Web 版）、`buyer`（買い手。公開の記録に一言を送るだけ）、
+- 範囲は三つ。`member`（招待した人。読み、話す、公開、一言）、`buyer`（買い手。公開の記録に一言を送るだけ）、
   `admin`（動かす人。管理の画面。member の事も全部できる）。
 - 記録は kagi の形（追記だけ、連番とハッシュの連鎖と署名。`kagi log verify` で確かめられる）。
   書くのは呼び名、した事、結果。token も招待コードも書かない。
@@ -327,7 +327,7 @@ class Journal:
         return out
 
     def denied_today(self, today: dt.date | None = None) -> int:
-        """今日の、断った行の数（門で断った物と、Web 版の箱の口で断った物）。書いていなければ 0。"""
+        """今日の、断った行の数（門で断った物）。書いていなければ 0。"""
         if self._key is None or self.path is None:
             return 0
         day = (today or dt.date.today()).isoformat()

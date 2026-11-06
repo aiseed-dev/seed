@@ -2,9 +2,8 @@
 """設定 seed.toml（docs/記録の形.md §7）と秘密 credentials.toml の読み書き。
 
 seed.toml の置き場所は記録のフォルダーの中（既定は ~/seed/seed.toml）。無ければ作り、language を決める。
-秘密（token、invite、draw_token）は記録のフォルダーに置かない（設計書 §5.1）。
+秘密（token、invite、draw_token、anthropic_key）は記録のフォルダーに置かない（設計書 §5.1）。
 ~/.config/seed/credentials.toml（許可 600。SEED_CREDENTIALS で場所を変えられる）に分ける。
-Web 版は人ごとの箱の中の credentials.toml（load の credentials で渡す）。
 seed.toml に古い token / invite があれば credentials へ移して seed.toml から消し、標準エラーに一行知らせる。
 書くのは tomllib が読める素の形だけ（値は文字だけなので、依存を足さずに自分で書く）。
 """
@@ -31,14 +30,17 @@ ENV_FOLDER = "SEED_FOLDER"  # テストや別の畑用に、既定のフォル�
 ENV_SERVER = "SEED_SERVER_URL"
 ENV_CREDENTIALS = "SEED_CREDENTIALS"  # 秘密の置き場を変える（テストや別の人）
 DEFAULT_CREDENTIALS = "~/.config/seed/credentials.toml"
-CREDENTIALS_FILENAME = "credentials.toml"  # Web 版の人ごとの箱の中の名
-SECRETS = ("token", "invite", "draw_token")  # seed.toml に書かない欄
+CREDENTIALS_FILENAME = "credentials.toml"
+SECRETS = ("token", "invite", "draw_token", "anthropic_key")  # seed.toml に書かない欄
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"  # 自分の鍵で呼ぶ時の既定（サーバーの読みと同じ）
+ROUTES = ("local", "key", "server")  # Claude を呼ぶ所: 手元の Claude Code、自分の鍵、サーバー
 
 COMMENTS = {
     "language": "本人の言葉の言語。無ければ OS の言語",
     "place_level": " / ".join(PLACE_LEVELS),
     "keep": " / ".join(KEEP_LEVELS) + "。どれだけ残すか（seed keep で変える）",
-    "read": "local / server。アプリで写真を読む所。空なら手元の Claude が在ればそれ、無ければサーバー",
+    "read": "local / key / server。アプリで Claude を呼ぶ所（読み取りと話す）。空なら手元の Claude、自分の鍵、サーバーの順",
+    "claude_model": "自分の鍵で呼ぶモデル。空なら claude-opus-5-5。費用は本人に掛かる（claude-sonnet-5-5、claude-haiku-5-5 は安い）",
     "bulk": "重い物（写真の元 originals/）を置く別の盤の道。空なら記録のフォルダーの中（seed keep --bulk で変える）",
 }
 
@@ -46,6 +48,7 @@ CREDENTIAL_COMMENTS = {
     "token": "触らない。公開の書き直しと取り下げに使う",
     "invite": "招待コード（Discord で渡す）。サーバーで読む・公開・一言に要る",
     "draw_token": "seed grow --draw の描く機械（halo の門）の token。Authorization: Bearer で送る",
+    "anthropic_key": "自分の Claude の鍵（Anthropic の API の鍵）。アプリが Anthropic の API に直に送るだけ",
 }
 
 
@@ -58,10 +61,12 @@ class Settings:
     place_level: str = "city"
     keep: str = "photos"
     bulk: str = ""
-    read: str = ""  # アプリの読み方（local / server）。空なら手元の Claude が在ればそれ
+    read: str = ""  # Claude を呼ぶ所（local / key / server）。空なら在る物を ROUTES の順に
+    claude_model: str = ""  # 自分の鍵で呼ぶモデル。空なら DEFAULT_CLAUDE_MODEL
     token: str = ""
     invite: str = ""
     draw_token: str = ""
+    anthropic_key: str = field(default="", repr=False)  # 値を repr（例外の文、ログ）に出さない
     extra: dict = field(default_factory=dict)  # 知らない鍵。消さずに書き戻す
     path: Path | None = field(default=None, compare=False)
     override_url: str | None = field(default=None, compare=False)  # この回だけのサーバー。書かない
@@ -73,6 +78,11 @@ class Settings:
     @property
     def records(self) -> Folder:
         return Folder(Path(self.folder), bulk=Path(self.bulk).expanduser() if self.bulk else None)
+
+    @property
+    def model(self) -> str:
+        """自分の鍵で呼ぶモデル。"""
+        return self.claude_model.strip() or DEFAULT_CLAUDE_MODEL
 
     @property
     def server(self) -> str:
@@ -159,7 +169,7 @@ def write_secret(path: Path, text: str) -> None:
 
 
 def credentials_path(given: Path | str | None = None) -> Path:
-    """秘密の置き場。given（Web 版の箱）→ 環境変数 SEED_CREDENTIALS → ~/.config/seed/credentials.toml。"""
+    """秘密の置き場。given → 環境変数 SEED_CREDENTIALS → ~/.config/seed/credentials.toml。"""
     return Path(given or os.environ.get(ENV_CREDENTIALS) or DEFAULT_CREDENTIALS).expanduser()
 
 
@@ -208,7 +218,7 @@ def load(
     """設定を読む。無ければ（create なら）作って書く。足りない token と language は足して書き戻す。
 
     folder を渡すと、そのフォルダーの seed.toml を使い、folder もそこにする。
-    秘密は credentials（Web 版の箱の credentials.toml）か credentials_path() から読む。
+    秘密は credentials（渡された置き場）か credentials_path() から読む。
     seed.toml に古い token / invite / draw_token があれば credentials へ移し、seed.toml から消す。
     """
     path = settings_path(folder)

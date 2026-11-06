@@ -290,7 +290,7 @@ def test_send_words_with_local_claude(app, seedfolder, tmp_path, monkeypatch):
 
 
 def test_send_words_without_local_claude_only_notes(app, seedfolder, tmp_path, monkeypatch):
-    """言葉だけ、手元の Claude なし（電話）→ 一番新しい観察に本人の言葉として足すだけ。AI は呼ばない。"""
+    """言葉だけ、Claude を呼ぶ所がどれも無い（鍵も招待コードも無い）→ 本人の言葉として足すだけ。AI は呼ばない。"""
     monkeypatch.setattr(talk, "read_on_server", lambda *a: pytest.fail("言葉だけでサーバーを呼ばない"))
     run(talk.send(app, "あれはススキ"))
     assert app.state["talk"][-1]["text"] == app.t("talk_first_photo")  # 観察がまだ無い
@@ -301,7 +301,7 @@ def test_send_words_without_local_claude_only_notes(app, seedfolder, tmp_path, m
     assert H.answered(obs, "北側は雨の後に水が溜まりますか") == "雨の後だけ溜まる"
     run(talk.send(app, "3 行目は違う。あれはオギ"))
     assert Observation.read(path).record[-1] == Line("said", "3 行目は違う。あれはオギ")
-    assert app.state["talk"][-1]["text"] == app.t("talk_noted")
+    assert app.state["talk"][-1]["text"] == app.t("talk_noted") + app.t("talk_noted_how")  # 理由も返す
     assert "雨の後だけ溜まる" in texts(talk.view(app))
 
 
@@ -603,7 +603,8 @@ def test_settings_card_switches_field(app, seedfolder, tmp_path):
     fl.add("知人の田", str(tmp_path / "other"))
     fields_mod.save_fields(fl)
     words = " ".join(texts(cards.frame(app, "settings", cards.settings_card(app))))
-    assert "知人の田 に変える" in words and "自分の畑" in words and "サーバーで" in words
+    assert "知人の田 に変える" in words and "自分の畑" in words
+    assert "使える物がありません。自分の Claude の鍵か招待コードを入れます" in words  # 鍵も招待コードも無い
 
 
 def test_local_talk_command(seedfolder, monkeypatch):
@@ -645,12 +646,11 @@ OVERVIEW = {
     "version": "0.0.1",
     "records": 2,
     "connections": 3,
-    "boxes": 1,
     "tokens": {"live": 2, "expired": 1, "revoked": 0},
     "invites": 4,
     "read": False,
     "audit": "off",
-    "remaining": {"reads": 0, "usd": 20.0},
+    "remaining": {"reads": 0, "talks": 0, "usd": 20.0},
 }
 
 
@@ -669,12 +669,15 @@ def test_admin_says_what_to_do(tmp_path, monkeypatch):
     app = _admin_app(tmp_path, monkeypatch)
     warns = admin.attention(app, OVERVIEW, {"verified": False})
     assert len(warns) == 5
-    said = dict(warns)
     # 何が起きているか → サーバーで打つコマンド（文とコマンドは分かれている。コマンドは一行に一つ）
-    assert said["写真を読み取れません。Claude の鍵が入っていません。サーバーで次を打ちます。"] == [
-        "sudoedit /etc/seed/env   # ANTHROPIC_API_KEY= の後に鍵を入れる",
+    (read_off,) = [w for w in warns if w[0].startswith("写真を読み取れず、話す口も使えません。")]
+    # 鍵は root だけが読めるファイルに（無い時だけ作る。systemd が seed.service にだけ渡す）
+    assert read_off[1] == [
+        "sudo install -d -o root -g root -m 700 /etc/seed/keys",
+        "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
         "sudo systemctl restart seed",
     ]
+    assert "鍵がもう在る時は作り直しません" in read_off[0]
     (audit_off,) = [w for w in warns if w[0].startswith("操作の記録を書いていません。")]
     assert "鍵がもう在る時は作り直しません" in audit_off[0]
     assert audit_off[1] == [
@@ -688,7 +691,7 @@ def test_admin_says_what_to_do(tmp_path, monkeypatch):
     err = admin.attention(app, {**OVERVIEW, "audit": "error"})
     assert ["df -h /var/lib/seed", "ls -ld /var/lib/seed/audit"] in [c for _, c in err]
     good = {**OVERVIEW, "read": True, "audit": "on", "tokens": {"live": 2, "expired": 0, "revoked": 0}}
-    good["remaining"] = {"reads": 180}
+    good["remaining"] = {"reads": 180, "talks": 290}
     good["denied_today"] = admin.DENIED_MANY - 1
     good["keys"] = {"claude": True, "plantnet": False}
     assert admin.attention(app, good, {"verified": True}) == []
@@ -696,11 +699,11 @@ def test_admin_says_what_to_do(tmp_path, monkeypatch):
     assert (
         rows["写真の読み取り（Claude）"] == "できます"
         and rows["操作の記録"] == "書いています"
-        and rows["今日の残り"] == "読み取り 180 回"
+        and rows["今日の残り"] == "読み取り 180 回、話す 290 回"
         and rows["受け付け"] == "受け付けています"
         and rows["外の鍵"] == "Claude 在る、Pl@ntNet 無い"
         and rows["公開"] == "記録 2 件、寄せられた一言 3 件"
-        and rows["入れる人"] == "token 2 人、招待コード 4 人、Web 版で記録を置いている人 1 人"
+        and rows["入れる人"] == "token 2 人、招待コード 4 人"
     )
     # 止めている、断った要求が多い、もうすぐ切れる token
     busy = {**good, "paused": True, "denied_today": admin.DENIED_MANY}

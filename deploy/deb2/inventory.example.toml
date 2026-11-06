@@ -6,50 +6,38 @@
 [[secret]]
 id = "deb2-anthropic-key"
 kind = "token"
-where = "deb2:/etc/seed/env の ANTHROPIC_API_KEY（root:dev 640）"
+where = "deb2:/etc/seed/keys/anthropic（root:root 600。systemd の LoadCredential= が seed.service にだけ渡す。dev も seed も直には読めない）"
 holder = "yniji"
-role = "seed のサーバーが Claude を呼ぶ（/api/read）。他には使わない（K-01）"
+role = "seed のサーバーが Claude を呼ぶ（/api/read、/api/talk）。他には使わない（K-01）"
 # made = 2026-11-XX
 # expires = 2027-02-XX
 rotate_days = 90
-lost = "Anthropic の Console で新しい鍵を作り、/etc/seed/env を書き換えて systemctl restart seed"
+lost = "Anthropic の Console で新しい鍵を作り、/etc/seed/keys/anthropic を置き換えて（root:root 600）systemctl restart seed"
 leaked = "Console で失効 → Console の使用量で範囲を知る → 新しい鍵を置く → 知らせる → 書く（K-15）"
 
 [[secret]]
 id = "deb2-plantnet-key"
 kind = "token"
-where = "deb2:/etc/seed/env の PLANTNET_API_KEY"
+where = "deb2:/etc/seed/keys/plantnet（root:root 600。LoadCredential= で seed.service にだけ渡す）"
 holder = "yniji"
 role = "seed のサーバーが Pl@ntNet に草の名を尋ねる（/api/identify）"
 # made = 2026-11-XX
 # expires = 2027-11-XX
 rotate_days = 365
-lost = "my.plantnet.org で新しい鍵を作り、/etc/seed/env を書き換えて systemctl restart seed"
+lost = "my.plantnet.org で新しい鍵を作り、/etc/seed/keys/plantnet を置き換えて（root:root 600）systemctl restart seed"
 leaked = "my.plantnet.org で失効 → 使用量で範囲を知る → 新しい鍵を置く → 書く"
 
 [[secret]]
 id = "deb2-invites"
 kind = "other"
-where = "deb2:/etc/seed/invites.toml（root:dev 640）。渡した先は Discord の一人ずつ"
+where = "deb2:/etc/seed/invites.toml（root:seed 640。サービスだけが読める）。渡した先は Discord の一人ずつ"
 holder = "yniji"
-role = "seed の /api/* と Web 版の門。招待コードは一人に一つ"
+role = "seed の /api/* の門。招待コードは一人に一つ"
 # made = 2026-11-XX
 # expires = 2027-05-XX
 rotate_days = 180
 lost = "その人の行を消し（次の要求から効かない）、新しいコードを一行足して渡し直す"
-leaked = "その行を消す → /var/lib/seed の公開と箱でその呼び名の物を見る → 新しいコードを渡す → 書く"
-
-[[secret]]
-id = "deb2-web-boxes"
-kind = "token"
-where = "deb2:/var/lib/seed/users/<箱>/credentials.toml（700 の中。Web 版の人ごとの token）"
-holder = "Web 版の本人（機械の持ち主は yniji）"
-role = "Web 版の人が自分の公開を書き直す・取り下げる"
-# made = 2026-11-XX
-# expires は無い（本人が箱を消すまで）。無いと「抜け」と出るので、見直す日を書く
-rotate_days = 365
-lost = "本人が Web 版の入口から箱を消して作り直す"
-leaked = "その箱の公開を取り下げ、招待コードを替える（deb2-invites）"
+leaked = "その行を消す → /var/lib/seed の公開と記録（audit.log）でその呼び名の物を見る → 新しいコードを渡す → 書く"
 
 [[secret]]
 id = "deb2-log-key"
