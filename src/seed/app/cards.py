@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from seed import __version__
+from seed import __version__, local
 from seed import fields as fields_mod
 from seed import highlights as H
 from seed import records as R
@@ -346,6 +346,58 @@ def setting_row(label: str, value: str, actions: list[ft.Control]) -> ft.Control
     )
 
 
+def remote_rows(app: App) -> list[ft.Control]:
+    """「スマートフォンから使う」の行（PC のアプリだけ）。状態は remote.Remote が持つ。"""
+    import base64
+
+    from seed import remote
+
+    t, r = app.t, app.state.get("remote")
+
+    def do(method: str):
+        async def h(e) -> None:
+            await getattr(app, method)()
+
+        return h
+
+    def btn(word: str, method: str) -> ft.Control:
+        return ft.TextButton(t(word), on_click=do(method))
+
+    label = t("set_remote")
+    if r is None:
+        return [setting_row(label, t("set_remote_none"), [btn("set_remote_start", "remote_start")])]
+    st = r.state
+    if st == "starting":
+        return [setting_row(label, t("set_remote_starting"), [btn("set_remote_stop", "remote_stop")])]
+    if st == "asking":
+        return [
+            setting_row(
+                label,
+                t("set_remote_asking"),
+                [btn("set_remote_yes", "remote_yes"), btn("set_remote_stop", "remote_stop")],
+            )
+        ]
+    if st == "untrusted":
+        return [
+            setting_row(label, t("set_remote_untrusted"), [btn("set_remote_stop", "remote_stop")]),
+            theme.muted(app.folder_label),
+        ]
+    if st == "stopped":
+        return [
+            setting_row(label, t("set_remote_stopped"), [btn("set_remote_again", "remote_start")]),
+            *[theme.muted(x) for x in r.lines[-3:]],
+        ]
+    out = [setting_row(label, t("set_remote_running"), [btn("set_remote_stop", "remote_stop")])]
+    url = r.url
+    if url:
+        png = remote.qr_png(url)
+        if png:
+            out.append(ft.Image(src=base64.b64encode(png).decode(), width=160, height=160))
+        out.append(ft.Text(url, size=theme.BODY_SIZE, selectable=True))
+    out.append(theme.muted(t("set_remote_how", name=app.state.get("remote_name", ""))))
+    return out
+
+
 def settings_card(app: App) -> list[ft.Control]:
     t, st = app.t, app.state
     out: list[ft.Control] = []
@@ -473,6 +525,9 @@ def settings_card(app: App) -> list[ft.Control]:
             [ft.TextButton(t("set_folder_open"), on_click=pick)] if pc else [],
         )
     )
+
+    if pc and local.available():
+        out += remote_rows(app)
 
     out.append(theme.muted(t("set_server", server=app.settings.server, version=__version__)))
     out.append(

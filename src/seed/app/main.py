@@ -71,6 +71,9 @@ class App:
 
     def open_folder(self, folder: str | None) -> None:
         """記録のフォルダーを開く（設定を読み、手引きを写す）。畑を切り替えた時も呼ぶ。"""
+        old = getattr(self, "state", {}).get("remote")
+        if old is not None:  # 前の畑のリモートコントロールは止める
+            old.stop()
         self.settings = settings_mod.load(folder)
         self.folder = self.settings.records
         prepare(self.folder)  # 手引きの写しも（もうあれば触らない）
@@ -95,6 +98,42 @@ class App:
         got = await self.picker.get_directory_path()
         if got:
             await self.open_other_folder(got)
+
+    # --- スマートフォンから使う（Claude Code の Remote Control。remote.py）
+    async def remote_start(self) -> None:
+        """この畑のフォルダーで立てる。立つまで 1 秒ごとに札を描き直す（最大 60 秒）。"""
+        from seed import remote
+
+        old = self.state.pop("remote", None)
+        if old is not None:
+            old.stop()
+        name = fields_mod.selected_name(fields_mod.load_fields(), self.folder.root) or self.folder.root.name
+        self.state["remote_name"] = name
+        self.state["remote"] = await asyncio.to_thread(remote.Remote.start, self.folder.root, name)
+        self.refresh()
+        self.remote_poll = asyncio.create_task(self._remote_poll(self.state["remote"]))
+
+    async def _remote_poll(self, r) -> None:
+        for _ in range(60):
+            await asyncio.sleep(1)
+            if self.state.get("remote") is not r:
+                return
+            self.refresh()
+            if r.state != "starting":  # asking は人の「はい」を待つ。押されたらまた回す
+                return
+
+    async def remote_yes(self) -> None:
+        r = self.state.get("remote")
+        if r is not None:
+            r.answer_yes()
+            self.refresh()
+            self.remote_poll = asyncio.create_task(self._remote_poll(r))
+
+    async def remote_stop(self) -> None:
+        r = self.state.pop("remote", None)
+        if r is not None:
+            await asyncio.to_thread(r.stop)
+        self.refresh()
 
     # --- 文と道
     def t(self, word: str, **kw) -> str:

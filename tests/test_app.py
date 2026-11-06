@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import shutil
 
 import flet as ft
 import pytest
@@ -723,3 +724,77 @@ def test_open_other_folder_switches_and_remembers(app, tmp_path):
     assert "x" not in app.state  # 前の畑の物は残らない
     fl = fields_mod.load_fields()
     assert fl.current == "別の畑" and fl.get("別の畑").path == other
+
+
+# ---------------------------------------------------------------- スマートフォンから使う（Remote Control）
+
+
+def fake_claude(tmp_path, monkeypatch):
+    from test_remote import ASKING
+
+    p = tmp_path / "claude"
+    p.write_text(ASKING)
+    p.chmod(0o755)
+    monkeypatch.setenv("SEED_CLAUDE", str(p))
+    monkeypatch.setattr(local, "available", lambda: shutil.which(local.command()))  # conftest の None を戻す
+
+
+def settings_texts(app):
+    talk.add(app, card="settings")
+    app.route_change(path="/")
+    return texts(app.page.views[-1])
+
+
+@pytest.mark.parametrize("web,platform", [(False, None), (True, None), (False, ft.PagePlatform.IOS)])
+def test_remote_row_only_on_pc_with_claude(app, tmp_path, monkeypatch, web, platform):
+    app.page.web, app.page.platform = web, platform
+    assert "スマートフォンから使う" not in settings_texts(app)
+    fake_claude(tmp_path, monkeypatch)
+    assert ("スマートフォンから使う" in settings_texts(app)) == (not web and platform is None)
+
+
+def test_remote_flow(app, tmp_path, monkeypatch):
+
+    fake_claude(tmp_path, monkeypatch)
+
+    async def until(word, seconds=10):
+        for _ in range(int(seconds * 20)):
+            app.refresh()
+            if word in texts(app.page.views[-1]):
+                return True
+            await asyncio.sleep(0.05)
+        return False
+
+    async def flow():
+        talk.add(app, card="settings")
+        app.route_change(path="/")
+        await app.remote_start()
+        assert await until("はい")
+        await app.remote_yes()
+        assert await until("止める")
+        for _ in range(100):
+            if app.state["remote"].url:
+                break
+            await asyncio.sleep(0.1)
+        app.refresh()
+        words = texts(app.page.views[-1])
+        assert "https://claude.ai/code/abc123" in words
+        assert any(isinstance(c, ft.Image) for c in walk(app.page.views[-1]))
+        await app.remote_stop()
+        assert "remote" not in app.state
+        assert "始める" in texts(app.page.views[-1])
+
+    run(flow())
+
+
+def test_open_folder_stops_remote(app, tmp_path, monkeypatch):
+    fake_claude(tmp_path, monkeypatch)
+
+    async def flow():
+        await app.remote_start()
+        return app.state["remote"]
+
+    r = run(flow())
+    app.open_folder(str(app.folder.root))
+    assert r.returncode is not None
+    assert "remote" not in app.state
