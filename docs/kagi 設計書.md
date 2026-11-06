@@ -239,7 +239,7 @@ auth = "app"                  # public | app | gate | lan
 | 10 データを守る | restic、`backup.service` と `backup.timer`、合言葉は `/etc/restic/backup.env`（600）、復元の演習 | `timers = ["backup"]` が止まれば直す物。`data` の置き場が無ければ直す物。合言葉は在庫表に一件（値は書かない） |
 | 11 サーバーを育てる | 週 15 分の定例（`df`、`free`、エラー、失敗したサービス、ログイン試行、fail2ban、データベース）、先週の出力と比べる、月の保守 | `kagi weekly`（全部の機械の写しを取り直し、一枚の報告を `weekly-<日>.md` に書く）。写しに盤、メモリ、この 7 日のエラーの行数、落ちている unit。前の写しから増えた・消えた直す物を出す |
 
-**連載と違えてある所（一つ）。** ssh の設定を書くファイルの名。連載は `/etc/ssh/sshd_config.d/99-hardening.conf`、kagi は `10-kagi.conf`。sshd は同じ項目が二度出ると**最初の値**を使い、Debian は `sshd_config.d/*.conf` を名の順で先に読む。最小インストールには他のファイルが無いので `99-` でも効くが、VPS の雛形に `50-cloud-init.conf`（`PasswordAuthentication yes`）のような物が在ると、`99-` の値は効かない。kagi の突き合わせは「最初に出た値」で読むので、その時は「パスワードで入れる」が消えずに残る。連載の側に一行足すかは作者が決める。
+**連載と違えてある所（一つ）。** ssh の設定を書くファイルの名。連載は `/etc/ssh/sshd_config.d/99-hardening.conf`、kagi は `10-kagi.conf`。sshd は同じ項目が二度出ると**最初の値**を使い、Debian は `sshd_config.d/*.conf` を名の順で先に読む。最小インストールには他のファイルが無いので `99-` でも効くが、VPS の雛形に `50-cloud-init.conf`（`PasswordAuthentication yes`）のような物が在ると、`99-` の値は効かない。kagi の突き合わせは「最初に出た値」で読むので、その時は「パスワードで入れる」が消えずに残る。
 
 **連載に在って kagi にまだ無い物。** needrestart、PostgreSQL の中（第 7 章）、restic の中身と復元の演習の記録、月の保守の日付の記録、`journalctl` のエラーの中身（数だけ見ている）。
 

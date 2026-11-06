@@ -27,7 +27,7 @@ port = 2222
 proto = "tcp"
 service = "forgejo の ssh（git）"
 bind = "*"
-reason = "seed の外の物。作者が要るかを決める"
+reason = "seed の外の物。git の ssh"
 
 [[port]]
 host = "deb2"
@@ -91,6 +91,6 @@ port = 631
 proto = "tcp"
 service = "cups（印刷）"
 bind = "127.0.0.1"
-reason = "机の PC の形で入れた名残。サーバーに要るかは作者が決める（要らなければ止めて、この行を消す）"
+reason = "机の PC の形で入れた名残。止めたら、この行を消す（連載 第 5 章: 要らないサービスを止める）"
 
 # 8000 は aiai の申し込みに取ってある口（docs/deb2 の配備.md）。開いたら、ここに 127.0.0.1 で足す。
