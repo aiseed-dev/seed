@@ -278,7 +278,7 @@ def test_app_screens_import():
     # 画面は import できることだけ確かめる（動かすのは flet run で）
     from seed.app import main
 
-    assert [sc.route for sc in main.SCREENS] == ["/", "/observe", "/records", "/plan", "/publish", "/find"]
+    assert [sc.route for sc in main.SCREENS] == ["/", "/observe", "/records", "/plan", "/publish", "/find", "/admin"]
     assert callable(main.main) and callable(main.run)
 
 

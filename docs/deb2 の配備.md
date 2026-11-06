@@ -56,14 +56,13 @@ python3 -c "import ensurepip" 2>/dev/null && echo "venv: ある" || sudo apt ins
 
 ```bash
 sudo install -d -o dev -g dev -m 755 /opt/seed /var/lib/seed /var/lib/seed/public
-sudo install -d -o dev -g dev -m 700 /var/lib/seed/users /var/lib/seed/uploads /var/lib/seed/audit
+sudo install -d -o dev -g dev -m 700 /var/lib/seed/users /var/lib/seed/uploads /var/lib/seed/audit /var/lib/seed/gate
 sudo install -d -o root -g dev -m 750 /etc/seed
-sudo sh -c 'echo "{\"tokens\": []}" > /etc/seed/tokens.json && chown root:dev /etc/seed/tokens.json && chmod 640 /etc/seed/tokens.json'
 sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
 ls -ld /opt/seed /var/lib/seed /var/lib/seed/* /etc/seed
 ```
 
-`tokens.json` は相手ごとの token の台帳（空）、`log-key` は記録の署名の鍵（`seed.service` が読む。無いとサービスが起きない）。`public` は Caddy（ユーザー caddy）が読むので 755。`users`（Web 版の人ごとの記録）と `uploads`（写真の一時置き場）は Caddy も他の人も読まないので 700。
+`gate/` は相手ごとの token の台帳の置き場（管理の画面から出すので、サーバーが書ける所）、`log-key` は記録の署名の鍵（`seed.service` が読む。無いとサービスが起きない）。`public` は Caddy（ユーザー caddy）が読むので 755。`users`（Web 版の人ごとの記録）と `uploads`（写真の一時置き場）は Caddy も他の人も読まないので 700。
 
 ### 0-2. [dev] clone、.venv、テスト
 
@@ -111,10 +110,10 @@ ls -l /etc/seed/
 買い手に token を出す時（出た一行を、その人にだけ渡す。台帳に残るのはハッシュだけ）:
 
 ```bash
-sudo /opt/seed/.venv/bin/seed token add "買い手の呼び名" --scope buyer --days 30 --file /etc/seed/tokens.json
+sudo /opt/seed/.venv/bin/seed token add "買い手の呼び名" --scope buyer --days 30 --file /var/lib/seed/gate/tokens.json
 ```
 
-取り消しは `seed token revoke "呼び名" --file /etc/seed/tokens.json`（次の要求から効かない）。一覧は `seed token list --file /etc/seed/tokens.json`。記録の確かめ:
+取り消しは `seed token revoke "呼び名" --file /var/lib/seed/gate/tokens.json`（次の要求から効かない）。一覧は `seed token list --file /var/lib/seed/gate/tokens.json`。記録の確かめ:
 
 ```bash
 sudo KAGI_LOG_KEY_FILE=/etc/seed/log-key /opt/seed/.venv/bin/kagi log verify --dir /var/lib/seed/audit
@@ -127,6 +126,12 @@ sudo KAGI_LOG_KEY_FILE=/etc/seed/log-key /opt/seed/.venv/bin/kagi log verify --d
 ```
 
 `N 件` と呼び名が出る。見本の `にじ`（`exam…`）が残っていたら 0-3 に戻る。
+
+動かす人の token を一つ出す（管理の画面に入る鍵。出た一行を、自分のアプリの招待コードの欄に入れる。出るのはこの一度だけ）:
+
+```bash
+sudo -u dev /opt/seed/.venv/bin/seed token add "自分の呼び名" --scope admin --days 365 --file /var/lib/seed/gate/tokens.json
+```
 
 ### 0-5. [root] systemd
 

@@ -264,3 +264,126 @@ def test_field_picker_only_with_two_fields(app, seedfolder, tmp_path):
     assert picker is not None and picker.value == "自分の畑"
     assert [o.key for o in picker.options] == ["自分の畑", "知人の田"]
     assert len(records.view(app).appbar.actions) == 1
+
+
+# ---- 管理の画面（動かす人）
+
+
+def _admin_app(tmp_path, monkeypatch, scopes=("admin",)):
+    monkeypatch.setenv("SEED_CREDENTIALS", str(tmp_path / "cred.toml"))
+    app = App(FakePage(), str(tmp_path / "seed"))
+    app.scopes = set(scopes)
+    return app
+
+
+OVERVIEW = {
+    "version": "0.0.1",
+    "records": 2,
+    "connections": 3,
+    "boxes": 1,
+    "tokens": {"live": 2, "expired": 1, "revoked": 0},
+    "invites": 4,
+    "read": False,
+    "audit": "off",
+    "remaining": {"reads": 0, "usd": 20.0},
+}
+
+
+def test_admin_tab_only_for_the_operator(tmp_path, monkeypatch):
+    app = _admin_app(tmp_path, monkeypatch, scopes=("member",))
+    assert "/admin" not in [sc.route for sc in app.screens()]
+    app.route_change(path="/admin")  # 入れない人が道を打っても、入口に戻る
+    assert "管理" not in texts(app.page.views[-1])
+    app.scopes = {"admin"}
+    assert [sc.route for sc in app.screens()][-1] == "/admin"
+
+
+def test_admin_says_what_to_do(tmp_path, monkeypatch):
+    from seed.app import admin
+
+    app = _admin_app(tmp_path, monkeypatch)
+    warns = admin.attention(app, OVERVIEW, {"verified": False})
+    assert len(warns) == 5
+    assert any("ANTHROPIC_API_KEY" in w for w in warns) and any("log-key" in w for w in warns)
+    assert any("書き換えられています" in w for w in warns) and any("出し直します" in w for w in warns)
+    good = {**OVERVIEW, "read": True, "audit": "on", "tokens": {"live": 2, "expired": 0, "revoked": 0}}
+    good["remaining"] = {"reads": 180}
+    assert admin.attention(app, good, {"verified": True}) == []
+    rows = dict(admin.state_rows(app, good))
+    assert (
+        rows["読み（Claude）"] == "できます"
+        and rows["記録"] == "書いています"
+        and rows["今日の残り"] == "読み 180 回"
+    )
+    tokens = [
+        {
+            "name": "b",
+            "scope": ["buyer"],
+            "state": "revoked",
+            "created": "2026-11-01",
+            "expires": "2026-12-01",
+        },
+        {
+            "name": "a",
+            "scope": ["admin"],
+            "state": "live",
+            "created": "2026-11-06",
+            "expires": "2027-02-04",
+            "note": "n",
+        },
+    ]
+    tr = admin.token_rows(app, tokens)
+    assert [(r["name"], r["live"]) for r in tr] == [("a", True), ("b", False)]
+    assert tr[0]["scope"] == "動かす人（この画面）" and tr[1]["state"] == "取り消し済み"
+    lines = [
+        {"ts": "2026-11-06T16:55:01+09:00", "actor": "?", "action": "publish", "detail": "断った: scope"},
+        {
+            "ts": "2026-11-06T16:54:00+09:00",
+            "actor": "にじ",
+            "action": "admin.token.add",
+            "detail": "買い手 buyer",
+        },
+    ]
+    assert admin.audit_rows(app, lines) == [
+        ["2026-11-06 16:55", "知らない人", "公開した", "断った: scope"],
+        ["2026-11-06 16:54", "にじ", "管理: token を出した", "買い手 buyer"],
+    ]
+
+
+def test_admin_view_builds_from_loaded_state(tmp_path, monkeypatch):
+    app = _admin_app(tmp_path, monkeypatch)
+    app.state["admin"] = {
+        "loaded": True,
+        "overview": OVERVIEW,
+        "tokens": [
+            {
+                "name": "買い手 A",
+                "scope": ["buyer"],
+                "state": "live",
+                "created": "2026-11-06",
+                "expires": "2026-12-06",
+            }
+        ],
+        "audit": {"state": "off", "verified": None, "lines": []},
+        "records": [{"id": "2026-11-06-x-1", "name": "にじ", "place": "徳島県", "since": "2026-11-06"}],
+        "new_token": {"name": "買い手 A", "code": "not-a-real-token-000"},
+    }
+    app.route_change(path="/admin")
+    seen = " ".join(texts(app.page.views[-1]))
+    for word in (
+        "今の状態",
+        "気を付ける事",
+        "人に渡す token",
+        "公開された記録",
+        "誰が何をしたか",
+        "買い手 A",
+        "取り消す",
+        "取り下げる",
+        "出るのはこの一度だけ",
+        "not-a-real-token-000",
+    ):
+        assert word in seen, word
+    # まだ読んでいなければ、尋ねている事だけを出す
+    app.state["admin"] = {}
+    app.route_change(path="/admin")
+    assert "サーバーに尋ねています…" in texts(app.page.views[-1])

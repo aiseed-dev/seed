@@ -23,9 +23,9 @@ from starlette.formparsers import MultiPartException, MultiPartParser
 from .. import __version__, index, lang
 from .. import records as R
 from . import connect as C
+from . import gate, pages
 from . import lookup as L
 from . import me as ME
-from . import pages
 from . import publish as P
 from . import read as RD
 from .limits import PHOTO_MAX, PHOTOS_MAX, PHOTOS_TOTAL_MAX, LimitReached, Limits
@@ -91,6 +91,17 @@ class WithdrawBody(BaseModel):
     invite: str | None = None
 
 
+class TokenBody(BaseModel):
+    name: str
+    scope: str = "member"
+    days: int = 90
+    note: str | None = None
+
+
+class RevokeBody(BaseModel):
+    name: str
+
+
 class ConnectBody(BaseModel):
     token: str | None = None  # あれば from は自分の公開の id。無ければ from は招待コードの呼び名
     to: str
@@ -124,8 +135,8 @@ def _invite(
     need は入ってよい範囲（どれか一つを持っていれば通る）。通した事も断った事も記録に一行（token は書かない）。
     """
     who, why = settings.who(code)
-    if who is not None and not (who.scopes & set(need)):
-        who, why = None, "scope"
+    if who is not None and "admin" not in who.scopes and not (who.scopes & set(need)):
+        who, why = None, "scope"  # admin は member の事も全部できる
     if who is None:
         settings.journal.record("?", action, f"断った: {why}" + (f" {detail}" if detail else ""))
         return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
@@ -404,6 +415,118 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _note(request, "delete_me", f"箱を消した（取り下げ {len(withdrawn)} 件）")
         log.info("web: 箱を消した（取り下げ %d 件）", len(withdrawn))
         return {"deleted": True, "withdrawn": withdrawn}
+
+    # ---- 管理の口（動かす人だけ。範囲 admin。招待コードと同じ所に入れた token をヘッダで受ける）
+    def _admin(request: Request, action: str, detail: str = "") -> str | JSONResponse:
+        return _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), detail=detail)
+
+    @app.get("/api/whoami")
+    async def api_whoami(request: Request):
+        """入れてある token の呼び名と範囲。アプリが、管理の画面を出すかを決めるのに使う。"""
+        who, why = settings.who(request.headers.get("x-seed-invite"))
+        if who is None:
+            return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
+        return {"name": who.name, "scopes": sorted(who.scopes)}
+
+    @app.get("/api/admin/overview")
+    async def admin_overview(request: Request):
+        who = _admin(request, "admin.overview")
+        if not isinstance(who, str):
+            return who
+        idx = await run_in_threadpool(pages.load_index, settings)
+        rows = await run_in_threadpool(_token_rows)
+        boxes = 0
+        if settings.users_dir is not None and settings.users_dir.is_dir():
+            boxes = sum(1 for p in settings.users_dir.iterdir() if p.is_dir())
+        return {
+            "version": __version__,
+            "records": idx.get("total", {}).get("records", 0),
+            "connections": idx.get("total", {}).get("connections", 0),
+            "boxes": boxes,
+            "tokens": {st: sum(1 for r in rows if r["state"] == st) for st in ("live", "expired", "revoked")},
+            "invites": len(settings._book.codes()),
+            "read": app.state.client is not None,
+            "audit": settings.journal.state,
+            "remaining": limits.remaining(),
+        }
+
+    def _token_rows() -> list[dict]:
+        if settings.tokens_path is None:
+            return []
+        try:
+            return gate.rows(settings.tokens_path)
+        except gate.GateError:
+            return []
+
+    @app.get("/api/admin/tokens")
+    async def admin_tokens(request: Request):
+        who = _admin(request, "admin.tokens")
+        if not isinstance(who, str):
+            return who
+        return {"tokens": await run_in_threadpool(_token_rows), "ledger": settings.tokens_path is not None}
+
+    @app.post("/api/admin/tokens")
+    async def admin_token_add(body: TokenBody, request: Request):
+        who = _admin(request, "admin.token.add", f"{body.name[:60]} {body.scope}")
+        if not isinstance(who, str):
+            return who
+        if settings.tokens_path is None:
+            return _error(503, "no_ledger", detail=["このサーバーには token の台帳が無い（SEED_TOKENS）"])
+        try:
+            code = await run_in_threadpool(
+                gate.add, settings.tokens_path, body.name, [body.scope], body.days, body.note or ""
+            )
+        except gate.GateError as e:
+            return _error(400, "token_rejected", detail=[str(e)])
+        except OSError as e:
+            return _error(503, "ledger_unwritable", detail=[f"台帳に書けない ({type(e).__name__})"])
+        return {"token": code, "name": body.name.strip(), "scope": body.scope, "days": body.days}
+
+    @app.post("/api/admin/tokens/revoke")
+    async def admin_token_revoke(body: RevokeBody, request: Request):
+        who = _admin(request, "admin.token.revoke", body.name[:60])
+        if not isinstance(who, str):
+            return who
+        if settings.tokens_path is None:
+            return _error(503, "no_ledger", detail=["このサーバーには token の台帳が無い（SEED_TOKENS）"])
+        try:
+            n = await run_in_threadpool(gate.revoke, settings.tokens_path, body.name)
+        except gate.GateError as e:
+            return _error(400, "token_rejected", detail=[str(e)])
+        except OSError as e:
+            return _error(503, "ledger_unwritable", detail=[f"台帳に書けない ({type(e).__name__})"])
+        return {"revoked": n}
+
+    @app.get("/api/admin/audit")
+    async def admin_audit(request: Request, limit: int = 100):
+        who = _admin(request, "admin.audit")
+        if not isinstance(who, str):
+            return who
+        j = settings.journal
+        return {
+            "state": j.state,
+            "verified": await run_in_threadpool(j.verified),
+            "lines": await run_in_threadpool(j.tail, max(1, min(limit, 500))),
+        }
+
+    @app.get("/api/admin/records")
+    async def admin_records(request: Request):
+        who = _admin(request, "admin.records")
+        if not isinstance(who, str):
+            return who
+        idx = await run_in_threadpool(pages.load_index, settings)
+        return {"records": idx.get("records", [])}
+
+    @app.delete("/api/admin/records/{record_id}")
+    async def admin_withdraw(record_id: str, request: Request):
+        who = _admin(request, "admin.withdraw", record_id[:80])
+        if not isinstance(who, str):
+            return who
+        try:
+            await run_in_threadpool(P.withdraw_as_admin, settings, record_id)
+        except P.PublishError as e:
+            return _error(e.status, "withdraw_rejected", detail=e.reasons)
+        return {"id": record_id, "withdrawn": True}
 
     @app.post("/api/connect")
     async def api_connect(body: ConnectBody, request: Request):

@@ -247,7 +247,7 @@ auth = "app"                  # public | app | gate | lan
 
 ### 3.5 `kagi check tokens` — 相手に出した token の台帳（11-06 夜。K-05、K-14）
 
-アプリの門（seed のサーバーなど）に入る token を、誰に、どのアプリの、どの範囲で、いつまで出したか。台帳は `~/.config/aiseed/tokens.json`（`--file` で別の場所。サーバーでは `/etc/seed/tokens.json`）で、書くのはアプリ（`seed token add`。seed の設計書 §5.9）。在るのはハッシュだけで、kagi はハッシュも出さない。token そのものの欄（`token`、`code`、`value`）があれば読まずに拒む（終了コード 2）。
+アプリの門（seed のサーバーなど）に入る token を、誰に、どのアプリの、どの範囲で、いつまで出したか。台帳は `~/.config/aiseed/tokens.json`（`--file` で別の場所。サーバーでは `/var/lib/seed/gate/tokens.json`）で、書くのはアプリ（`seed token add`。seed の設計書 §5.9）。在るのはハッシュだけで、kagi はハッシュも出さない。token そのものの欄（`token`、`code`、`value`）があれば読まずに拒む（終了コード 2）。
 
 出すのは、期限切れのまま取り消していない物（直す。終了コード 1）、期限の近い物（`--days`、既定 30）、生きている物、取り消した物。期限の無い物は期限切れと同じ扱い。机の画面では「鍵」の画面の下に同じ表。kagi は seed のコードを使わない（JSON を読むだけ）。機械に入る鍵（`[[key]]`）と、アプリに入る token（この台帳）が、同じ画面に並ぶ。
 

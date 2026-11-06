@@ -119,6 +119,19 @@ def publish(settings: Settings, token: str, markdown: str) -> R.Public:
     return pub
 
 
+def withdraw_as_admin(settings: Settings, record_id: str) -> None:
+    """動かす人の取り下げ（管理の画面）。持ち主の token を問わない。繋がりの記録は残す。"""
+    path = public_path(settings, record_id)
+    with write_lock:
+        if not path.exists():
+            raise PublishError(404, ["その id の公開は無い"])
+        owners = load_owners(settings.owners_path)
+        path.unlink()
+        owners.pop(record_id, None)
+        save_owners(settings.owners_path, owners)
+        rebuild(settings)
+
+
 def withdraw(settings: Settings, token: str, record_id: str) -> None:
     """取り下げ。公開ファイルを消して索引から外す。繋がりの記録（connections/<id>/）は残す。"""
     check_token(token)

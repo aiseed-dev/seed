@@ -6,7 +6,8 @@
 - 台帳は JSON（`~/.config/aiseed/tokens.json` の形。研究室 §5b）。持つのは token のハッシュだけで、
   token そのものは出した時に一度だけ画面に出る。台帳が漏れても token は分からない。
 - 一件に、呼び名、アプリ、範囲（scope）、作った日、期限、取り消した日。
-- 範囲は二つ。`member`（招待した人。読み、公開、一言、Web 版）と `buyer`（買い手。公開の記録に一言を送るだけ）。
+- 範囲は三つ。`member`（招待した人。読み、公開、一言、Web 版）、`buyer`（買い手。公開の記録に一言を送るだけ）、
+  `admin`（動かす人。管理の画面。member の事も全部できる）。
 - 記録は kagi の形（追記だけ、連番とハッシュの連鎖と署名。`kagi log verify` で確かめられる）。
   書くのは呼び名、した事、結果。token も招待コードも書かない。
 """
@@ -25,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 APP = "seed"
-SCOPES = ("member", "buyer")
+SCOPES = ("member", "buyer", "admin")  # admin は動かす人。member の事も全部できる
 ENV_TOKENS = "SEED_TOKENS"
 ENV_AUDIT = "SEED_AUDIT"
 DEFAULT_TOKENS = "~/.config/aiseed/tokens.json"
@@ -269,3 +270,32 @@ class Journal:
         except Exception as e:  # noqa: BLE001  記録に書けなくても要求は通す。書けなかった事は /health に出す
             self.state = "error"
             log.error("記録に書けない（%s）: %s", self.path, type(e).__name__)
+
+    def tail(self, limit: int = 100) -> list[dict]:
+        """記録の終わりの limit 行（新しい物が先）。管理の画面が読む。署名とハッシュは返さない。"""
+        if self.path is None:
+            return []
+        try:
+            lines = [ln for ln in self.path.read_text("utf-8").splitlines() if ln.strip()]
+        except OSError:
+            return []
+        out = []
+        for ln in reversed(lines[-max(1, limit) :]):
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            out.append({k: r.get(k) for k in ("seq", "ts", "actor", "action", "detail")})
+        return out
+
+    def verified(self) -> bool | None:
+        """記録が書き換えられていないか（kagi log verify と同じ確かめ）。確かめられなければ None。"""
+        if self._key is None or self.path is None or not self.path.exists():
+            return None
+        try:
+            from kagi import audit
+
+            _n, fails = audit.verify(self.path, self._key)
+        except Exception:  # noqa: BLE001
+            return None
+        return not fails

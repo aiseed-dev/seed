@@ -106,7 +106,7 @@ def test_ledger_rules(ledger):
     for args, msg in (
         (("a", ["member"], 90), "もうある"),
         (("", ["member"], 90), "呼び名"),
-        (("b", ["admin"], 90), "範囲"),
+        (("b", ["root"], 90), "範囲"),
         (("b", [], 90), "範囲"),
         (("b", ["member"], 0), "期限"),
     ):
@@ -272,3 +272,83 @@ def test_cli_token(ledger, capsys, tmp_path):
     assert cli.main([*base, "list", "--file", str(ledger)]) == 0
     assert "取り消した" in capsys.readouterr().out
     assert gate.TokenBook(ledger).find(code) == (None, "revoked")
+
+
+# ---- 管理の口（動かす人。範囲 admin）
+
+
+def hdr(code):
+    return {"X-Seed-Invite": code} if code else {}
+
+
+def test_admin_scope_and_whoami(tmp_path, ledger):
+    admin = gate.add(ledger, "動かす人", ["admin"], 90)
+    member = gate.add(ledger, "仲間", ["member"], 90)
+    c = TestClient(create_app(make(tmp_path, ledger)))
+    assert c.get("/api/whoami", headers=hdr(admin)).json() == {"name": "動かす人", "scopes": ["admin"]}
+    assert c.get("/api/whoami", headers=hdr(INVITE)).json() == {"name": "てすと", "scopes": ["member"]}
+    assert c.get("/api/whoami").status_code == 403
+    # admin は member の事も全部できる
+    assert publish(c, admin).status_code == 200
+    # 管理の口は admin だけ
+    for path in ("/api/admin/overview", "/api/admin/tokens", "/api/admin/audit", "/api/admin/records"):
+        assert c.get(path, headers=hdr(admin)).status_code == 200, path
+        for code in (member, INVITE, None, "nope"):
+            assert c.get(path, headers=hdr(code)).status_code == 403, (path, code)
+    assert c.post("/api/admin/tokens", json={"name": "x"}, headers=hdr(member)).status_code == 403
+    assert c.request("DELETE", f"/api/admin/records/{RID}", headers=hdr(member)).status_code == 403
+
+
+def test_admin_issues_and_revokes_tokens(tmp_path, ledger):
+    admin = gate.add(ledger, "動かす人", ["admin"], 90)
+    c = TestClient(create_app(make(tmp_path, ledger)))
+    publish(c, admin)
+    body = {"name": "買い手 C", "scope": "buyer", "days": 14, "note": "直売"}
+    r = c.post("/api/admin/tokens", json=body, headers=hdr(admin))
+    assert r.status_code == 200, r.text
+    code = r.json()["token"]
+    assert code not in ledger.read_text()  # 台帳にはハッシュだけ
+    assert connect(c, code).status_code == 200 and publish(c, code).status_code == 403
+    rows = c.get("/api/admin/tokens", headers=hdr(admin)).json()["tokens"]
+    assert [(t["name"], t["scope"], t["state"]) for t in rows] == [
+        ("動かす人", ["admin"], "live"),
+        ("買い手 C", ["buyer"], "live"),
+    ]
+    assert "sha256" not in rows[0]
+    # 同じ呼び名は二重に出せない。範囲に無い語も通さない
+    for bad in ({"name": "買い手 C"}, {"name": "y", "scope": "root"}, {"name": "", "scope": "buyer"}):
+        assert c.post("/api/admin/tokens", json=bad, headers=hdr(admin)).status_code == 400
+    r = c.post("/api/admin/tokens/revoke", json={"name": "買い手 C"}, headers=hdr(admin))
+    assert r.json() == {"revoked": 1}
+    assert connect(c, code).json()["reason"] == "revoked"
+    assert (
+        c.post("/api/admin/tokens/revoke", json={"name": "買い手 C"}, headers=hdr(admin)).status_code == 400
+    )
+    o = c.get("/api/admin/overview", headers=hdr(admin)).json()
+    assert o["records"] == 1 and o["tokens"] == {"live": 1, "expired": 0, "revoked": 1} and o["invites"] == 1
+
+
+def test_admin_reads_the_journal_and_withdraws(tmp_path, ledger, keyfile):
+    admin = gate.add(ledger, "動かす人", ["admin"], 90)
+    log = tmp_path / "audit" / "audit.log"
+    c = TestClient(create_app(make(tmp_path, ledger, log)))
+    publish(c, INVITE)
+    connect(c, "wrong-code-zzzz")
+    recs = c.get("/api/admin/records", headers=hdr(admin)).json()["records"]
+    assert [r["id"] for r in recs] == [RID]
+    r = c.request("DELETE", f"/api/admin/records/{RID}", headers=hdr(admin))
+    assert r.json() == {"id": RID, "withdrawn": True}
+    assert c.get("/api/admin/records", headers=hdr(admin)).json()["records"] == []
+    assert c.get(f"/public/{RID}.md").status_code == 404
+    assert c.request("DELETE", f"/api/admin/records/{RID}", headers=hdr(admin)).status_code == 404
+    a = c.get("/api/admin/audit", headers=hdr(admin)).json()
+    assert a["state"] == "on" and a["verified"] is True
+    seen = [(x["actor"], x["action"], x["detail"]) for x in a["lines"]]
+    assert ("動かす人", "admin.withdraw", RID) in seen and ("?", "connect", f"断った: unknown {RID}") in seen
+    assert seen[0][1] == "admin.audit"  # 新しい物が先。見た事も残る
+    assert set(a["lines"][0]) == {"seq", "ts", "actor", "action", "detail"}  # 署名とハッシュは返さない
+    for secret in (admin, INVITE, "wrong-code-zzzz"):
+        assert secret not in log.read_text()
+    # 記録を書き換えると、管理の画面に出る
+    log.write_text(log.read_text().replace("断った: unknown", "通した", 1))
+    assert c.get("/api/admin/audit", headers=hdr(admin)).json()["verified"] is False

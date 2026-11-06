@@ -45,6 +45,7 @@ def invite_block(app: App) -> list[ft.Control]:
         app.settings.invite = (code.value or "").strip()
         app.settings.save()
         app.toast(t("invite_set") if app.settings.invite else t("invite_unset"))
+        app.page.run_task(app.load_scopes)  # 入れた物が動かす人の token なら、管理の画面が出る
 
     code.on_submit = save
     return [

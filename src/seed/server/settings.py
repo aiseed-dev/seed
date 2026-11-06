@@ -119,7 +119,7 @@ class Settings:
     def known_invite(self, code: str | None) -> bool:
         """招待した人（member）の招待コードか token か（open でも一覧と台帳で決める。Web 版の箱を開くのに使う）。"""
         w, _ = self.who(code)
-        return w is not None and w.via != "open" and "member" in w.scopes
+        return w is not None and w.via != "open" and bool(w.scopes & {"member", "admin"})
 
     def invite_name(self, code: str | None) -> str | None:
         """招待コードか token の呼び名。無ければ None。open なら無しでも "" を返す（通す）。"""

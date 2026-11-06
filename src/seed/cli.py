@@ -1352,7 +1352,7 @@ def parser() -> argparse.ArgumentParser:
         if name == "add":
             t.add_argument(
                 "--scope",
-                choices=("member", "buyer"),
+                choices=("member", "buyer", "admin"),
                 default="member",
                 help="member: 招待した人。buyer: 買い手（一言を送るだけ）",
             )

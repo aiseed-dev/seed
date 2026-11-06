@@ -63,7 +63,7 @@ rotate_days = 365
 lost = "新しい鍵を置いて systemctl restart seed。前の記録は前の鍵でしか確かめられないので、記録のファイルを分けて残す"
 leaked = "記録を別の場所に写して確かめる → 新しい鍵 → 記録のファイルを新しくする → 書く（K-15）"
 
-# 相手に出した token（seed token add）は、台帳 /etc/seed/tokens.json が在庫表（誰に、範囲、期限、取り消し。ハッシュだけ）。
+# 相手に出した token（seed token add）は、台帳 /var/lib/seed/gate/tokens.json が在庫表（誰に、範囲、期限、取り消し。ハッシュだけ）。
 # 期限は kagi check tokens --file で見る。
 
 [[secret]]
