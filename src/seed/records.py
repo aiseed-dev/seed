@@ -575,6 +575,41 @@ WORD_MAX = 200
 PERSONAL_RE = re.compile(r"(\d{2,4}-\d{2,4}-\d{3,4}|[\w.+-]+@[\w-]+\.[\w.]+|〒?\d{3}-\d{4})")
 HTML_RE = re.compile(r"<[a-zA-Z/!][^>]*>")
 
+# 公開の写真（記録の形 §5）。日の見出しの下の `- photo: <公開の名>`。名は手元の道から一つに決まる:
+# photos/2026-11-02/101500.jpg ↔ 2026-11-02_101500.jpg
+PHOTO_KEY = "photo"
+PUBLIC_PHOTO_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,95}\.jpg$")
+PUBLIC_PHOTO_REL_RE = re.compile(r"^(?P<day>\d{4}-\d{2}-\d{2})_(?P<file>[0-9A-Za-z][0-9A-Za-z._-]*\.jpg)$")
+PUBLIC_PHOTOS_PER_DAY = 3
+PUBLIC_PHOTOS_MAX = 12
+PUBLIC_PHOTO_SIDE = 1280  # 送る時と、サーバーが書き直す時の長い辺
+PUBLIC_PHOTO_BYTES = 600 * 1024  # 一枚
+
+
+def safe_photo_name(name: object) -> bool:
+    """公開の写真の名か（英数字と ._-、終わりは .jpg。.. と / は無い）。"""
+    return isinstance(name, str) and bool(PUBLIC_PHOTO_RE.match(name)) and ".." not in name
+
+
+def public_photo_name(rel: str) -> str | None:
+    """手元の写真の相対の道 → 公開の名。photos/<日>/<名>.jpg の形でなければ None。"""
+    parts = str(rel).split("/")
+    if len(parts) != 3 or parts[0] != "photos" or not DATE_RE.match(parts[1]):
+        return None
+    name = f"{parts[1]}_{parts[2]}"
+    return name if safe_photo_name(name) and PUBLIC_PHOTO_REL_RE.match(name) else None
+
+
+def photo_url(record_id: str, name: str) -> str:
+    """公開された写真のサーバーの上の道（/photos/<id>/<名>）。ページの <img> とアプリの札が使う。"""
+    return f"/photos/{record_id}/{name}"
+
+
+def photo_rel(name: str) -> str | None:
+    """公開の名 → 手元の写真の相対の道（public_photo_name の逆）。形が違えば None。"""
+    m = PUBLIC_PHOTO_REL_RE.match(name) if safe_photo_name(name) else None
+    return f"photos/{m['day']}/{m['file']}" if m else None
+
 
 @dataclass
 class Public:
@@ -596,6 +631,25 @@ class Public:
     @property
     def observations(self) -> int:
         return len(self.days)
+
+    def photo_names(self) -> list[str]:
+        """`photo` の行が指す写真の名（日の順、重なりは一つに）。"""
+        names = [n for d in sorted(self.days) for n in self.day_parts(d)[0]]
+        return list(dict.fromkeys(names))
+
+    def day_parts(self, day: str) -> tuple[list[str], list[Line]]:
+        """その日の (写真の名, 文の行)。写真は日の頭に大きく、文は行のまま見せる（ページとアプリで同じ決まり）。"""
+        lines = self.days.get(day, [])
+        shots = [l.text.strip() for l in lines if l.key == PHOTO_KEY and safe_photo_name(l.text.strip())]
+        return list(dict.fromkeys(shots)), [l for l in lines if l.key != PHOTO_KEY]
+
+    def cover(self) -> str | None:
+        """一覧に小さく出す一枚: 写真のある一番新しい日の、最初の写真の名。無ければ None。"""
+        for day in sorted(self.days, reverse=True):
+            shots, _ = self.day_parts(day)
+            if shots:
+                return shots[0]
+        return None
 
     def check(self) -> list[str]:
         """仕様に合わない所を文で返す。空なら通る。サーバーも同じ検査をする。"""
@@ -620,6 +674,14 @@ class Public:
         for d in self.days:
             if not DATE_RE.match(d):
                 bad.append(f"本文の見出しは日: {d!r}")
+            shots = [l for l in self.days[d] if l.key == PHOTO_KEY]
+            for l in shots:
+                if not safe_photo_name(l.text.strip()) or l.by_ai or l.judged:
+                    bad.append(f"photo の行は写真の名（英数字と ._-、.jpg）だけ: {l.text[:60]!r}")
+            if len(shots) > PUBLIC_PHOTOS_PER_DAY:
+                bad.append(f"写真は一日 {PUBLIC_PHOTOS_PER_DAY} 枚まで: {d}")
+        if len(self.photo_names()) > PUBLIC_PHOTOS_MAX:
+            bad.append(f"写真は全部で {PUBLIC_PHOTOS_MAX} 枚まで")
         text = self.render()
         if HTML_RE.search(text):
             bad.append("HTML は書かない")

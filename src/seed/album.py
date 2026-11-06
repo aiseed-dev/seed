@@ -187,6 +187,26 @@ def by_place(folder: Folder, within_m: float = SPOT_M) -> list[Spot]:
     return spots + ([nowhere] if nowhere.shots else [])
 
 
+def growth(folder: Folder, observations: list[Observation], within_m: float = SPOT_M) -> dict[str, str]:
+    """成長の記録の写真（観察の日 → 相対の道）。渡した観察の写真のうち、同じ場所を一番多くの日に撮った所から、日ごとに一枚。
+
+    分かるのは場所と時だけで、同じ物が写っているかは見ていない（それは写真を見る Claude が選ぶ。draft_public の photos）。
+    二日以上に渡る場所が無ければ空（一日だけ、位置の無い写真だけ、など）。
+    """
+    day_of = {r: o.date for o in observations for r in o.photos}
+    best: dict[str, str] = {}
+    for sp in by_place(folder, within_m):
+        if sp.number == 0:
+            continue
+        per: dict[str, str] = {}
+        for shot in sp.shots:
+            if shot.rel in day_of:
+                per.setdefault(day_of[shot.rel], shot.rel)
+        if len(per) > len(best):
+            best = per
+    return best if len(best) >= 2 else {}
+
+
 def where_text(spot: Spot, language: str) -> str:
     """「中心から北西へ 44 m」。位置なしは「位置なし」。"""
     ja = language == "ja"

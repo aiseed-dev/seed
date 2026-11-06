@@ -686,6 +686,8 @@ def talk_rules(folder: Folder, latest: str | None, language: str) -> str:
             (
                 "- 公開は手引き SKILL.md の決まりの通り: 下書きを `seed publish … --local` で作り、全文を返事に出します。"
                 "本人が全文を読んで「出す」と言ったら、`seed publish --folder … --file public/<id>.md` で送ります。"
+                "公開は成長の記録です。写真は、同じ場所を日を追って撮った物が日ごとに一枚 `photo` の行で入り（別の写真にする時は `--photo`）、送る時に縮めて位置の情報を外して一緒に送られます。"
+                "本人が別の写真を頼んだら `--photo <写真の名>`（何度でも。一日 3 枚、全部で 12 枚まで）で下書きを作り直します。"
             ),
             "- 草の名は `seed identify --folder … <観察> <写真の名>` で確かめます。",
             "- 写真を消す、移すことはしません。token、招待コード、鍵の値には触れず、返事にも書きません。",

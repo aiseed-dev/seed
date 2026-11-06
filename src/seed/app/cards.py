@@ -15,6 +15,7 @@ import flet as ft
 from seed import __version__
 from seed import fields as fields_mod
 from seed import highlights as H
+from seed import records as R
 from seed.app import photo, theme
 from seed.app.strings import DISCORD_URL, error_text
 from seed.cli import load_plan
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
 
 SOURCE_URL = "https://github.com/aiseed-dev/seed"
 PLANT_PHOTOS = 6
+BIG_W = 560  # 公開された記録の写真の幅の上限（話すの今日の一枚と同じ）
 
 
 def frame(app: App, key: str, body: list[ft.Control]) -> ft.Control:
@@ -192,9 +194,16 @@ def others_card(app: App) -> list[ft.Control]:
         if not r.get("id"):
             continue
         head = " · ".join(x for x in (r.get("name"), r.get("place"), r.get("since")) if x)
+        cover = r.get("photo")
+        pic = (
+            [web_image(server_url(app, cover), photo.SMALL, photo.SMALL * 0.75)]
+            if isinstance(cover, str) and cover.startswith("/photos/")
+            else []
+        )
         out.append(
             ft.Column(
                 [
+                    *pic,
                     theme.muted(head),
                     theme.body(r.get("word", "")),
                     theme.muted(
@@ -228,6 +237,22 @@ def others_card(app: App) -> list[ft.Control]:
     return out
 
 
+def server_url(app: App, path: str) -> str:
+    """サーバーの上の道（/photos/<id>/<名>）を、設定のサーバーの URL に。"""
+    return app.settings.server.rstrip("/") + path
+
+
+def web_image(url: str, w: float, h: float) -> ft.Control:
+    """公開された写真（サーバーから）。"""
+    return ft.Container(
+        ft.Image(src=url, width=w, height=h, fit=ft.BoxFit.COVER),
+        width=w,
+        height=h,
+        border_radius=12,
+        clip_behavior=ft.ClipBehavior.HARD_EDGE,
+    )
+
+
 def record_card(app: App, rid: str) -> ft.Control:
     """公開された記録を一つ開いた札。"""
     t, st = app.t, app.state
@@ -258,8 +283,11 @@ def record_card(app: App, rid: str) -> ft.Control:
             ]
             if pub.contact:
                 body.append(theme.muted(pub.contact))
-            for day, lines in sorted(pub.days.items()):
+            w = min(BIG_W, theme.fit_width(getattr(app.page, "width", None)) - 72)
+            for day in sorted(pub.days):
+                shots, lines = pub.day_parts(day)  # 分け方はページと同じ（Public.day_parts）
                 body.append(theme.muted(day))
+                body += [web_image(server_url(app, R.photo_url(pub.id, n)), w, w * 0.75) for n in shots]
                 body += [theme.line_text(l, app.lang) for l in lines]
         except (ValueError, TypeError):
             body = [theme.mono(got[1])]

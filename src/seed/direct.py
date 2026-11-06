@@ -368,7 +368,7 @@ def t_identify_plant(desk: Desk, inp: dict) -> str:
 
 
 def t_draft_public(desk: Desk, inp: dict) -> str:
-    from .cli import make_public
+    from .cli import make_public, resolve_photos
 
     names = inp.get("observations")
     if not isinstance(names, list) or not names:
@@ -381,6 +381,15 @@ def t_draft_public(desk: Desk, inp: dict) -> str:
     def tags(v: object) -> list[str]:
         return [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) else []
 
+    chosen = None  # 無ければ日ごとに今日の一枚
+    if "photos" in inp:
+        if not isinstance(inp["photos"], list):
+            raise ToolError("photos は写真の名の並び")
+        try:
+            chosen = resolve_photos(observations, [str(x) for x in inp["photos"]])
+        except ValueError as e:
+            raise ToolError(f"その写真は、選んだ観察に無い: {e.args[0]}") from None
+
     pub = make_public(
         desk.settings,
         observations,
@@ -392,6 +401,8 @@ def t_draft_public(desk: Desk, inp: dict) -> str:
         with_coord=bool(inp.get("coord")),
         contact=str(inp.get("contact") or "") or None,
         name=str(inp.get("name") or "") or None,
+        photos=chosen,
+        folder=desk.folder,
     )
     bad = pub.check()
     if not pub.days:

@@ -20,6 +20,7 @@ from test_app import NEW_READING, FakePage, observe, texts
 
 from seed import direct, local
 from seed import prompts as P
+from seed import records as R
 from seed.app import talk
 from seed.app.main import App
 from seed.client import ClientError
@@ -235,7 +236,9 @@ def test_draft_is_made_but_not_sent(app, seedfolder, tmp_path, monkeypatch):
     words = texts(talk.view(app))
     assert "出す" in words and any("草の畑" in w for w in words)
     run(talk.send_draft(app, item))
-    assert sent == [("publish", (item["draft_text"],))] and item["sent"]
+    # 文と、その日の一枚（選んだ物が無ければ最初の写真）が一緒に出る
+    assert [s[0] for s in sent] == ["publish"] and sent[0][1][0] == item["draft_text"] and item["sent"]
+    assert list(sent[0][1][1]) == ["2026-11-05_142107.jpg"]
     assert any("公開しました" in (i.get("text") or "") for i in app.state["talk"])
 
 
@@ -535,3 +538,108 @@ def test_new_path_imports_without_server_and_sdk():
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, check=False)
     assert r.returncode == 0 and r.stdout.strip() == "ok", r.stderr
+
+
+# ---------------------------------------------------------------- 公開の写真
+
+
+def _draft(app, path, **extra):
+    desk = direct.Desk(app.folder, app.settings)
+    inp = {"observations": [path.stem], "id": "north-1", "place": "徳島県", "word": "草の畑", "name": "にじ"}
+    return direct.run_tool(desk, "draft_public", {**inp, **extra})
+
+
+def test_draft_has_photo_of_the_day(app, seedfolder, tmp_path):
+    path = observe(seedfolder, tmp_path, [Line("overall", "今日の一枚: 142200。穂が出ている", 0.8, "right")])
+    out, err = _draft(app, path)
+    assert not err, out
+    pub = R.Public.read(seedfolder / "public" / "north-1.md")
+    assert pub.days["2026-11-05"][0] == Line("photo", "2026-11-05_142200.jpg")
+    # 本人が選び直した物が先
+    obs = Observation.read(path)
+    obs.record.append(Line("note", "今日の一枚: 142107"))
+    obs.write(path)
+    _draft(app, path)
+    assert R.Public.read(seedfolder / "public" / "north-1.md").photo_names() == ["2026-11-05_142107.jpg"]
+
+
+def test_draft_without_a_chosen_photo_takes_the_first(app, seedfolder, tmp_path):
+    """選んだ一枚が無くても、写真の無い公開にしない。アプリが今日の一枚として見せている物（最初の写真）が入る。"""
+    path = observe(seedfolder, tmp_path, [Line("overall", "草が大半", 0.8, "right")])
+    assert not _draft(app, path)[1]
+    assert R.Public.read(seedfolder / "public" / "north-1.md").photo_names() == ["2026-11-05_142107.jpg"]
+
+
+def test_draft_photos_can_be_chosen_and_are_limited(app, seedfolder, tmp_path):
+    path = observe(seedfolder, tmp_path, [Line("overall", "今日の一枚: 142200。穂", 0.8, "right")])
+    out, err = _draft(app, path, photos=["142107", "photos/2026-11-05/142200.jpg"])
+    assert not err, out
+    pub = R.Public.read(seedfolder / "public" / "north-1.md")
+    assert pub.photo_names() == ["2026-11-05_142107.jpg", "2026-11-05_142200.jpg"]
+    assert not _draft(app, path, photos=[])[1]
+    assert R.Public.read(seedfolder / "public" / "north-1.md").photo_names() == []
+    out, err = _draft(app, path, photos=["999999"])
+    assert err and "999999" in out
+    out, err = _draft(app, path, photos="142107")
+    assert err
+
+
+def test_photo_limit_per_day_in_draft(app, seedfolder, tmp_path):
+    from test_photos import make_jpeg
+
+    from seed import photos as photos_mod
+
+    path = observe(seedfolder, tmp_path, [Line("overall", "草", 0.8, "right")])
+    extra = [
+        make_jpeg(tmp_path / "in" / f"c{i}.jpg", taken=f"2026:11:05 14:23:0{i}", lat=None, lon=None)
+        for i in range(2)
+    ]
+    rels = photos_mod.import_photos(app.folder, extra)
+    obs = Observation.read(path)
+    obs.photos += rels
+    obs.write(path)
+    out, err = _draft(app, path, photos=[Path(r).stem for r in obs.photos])
+    assert err and "一日 3 枚" in out
+
+
+def test_send_draft_sends_shrunk_photos_or_says_missing(app, seedfolder, tmp_path, monkeypatch):
+    import base64 as b64mod
+    import io
+
+    from PIL import Image
+
+    from seed.client import Client
+
+    path = observe(seedfolder, tmp_path, [Line("overall", "今日の一枚: 142200。穂", 0.8, "right")])
+    assert not _draft(app, path)[1]
+    rel = "public/north-1.md"
+    text_ = (seedfolder / rel).read_text(encoding="utf-8")
+    sent: list = []
+
+    async def call(method, *args):
+        sent.append((method, args))
+        return {"id": "north-1", "url": "https://seed.test/public/north-1.md"}
+
+    monkeypatch.setattr(app, "call", call)
+    assert talk.draft_photos(text_) == ["photos/2026-11-05/142200.jpg"]
+    item = {"who": "claude", "draft": rel, "draft_text": text_}
+    run(talk.send_draft(app, item))
+    (method, (md, shots)) = sent[0]
+    assert method == "publish" and md == text_ and list(shots) == ["2026-11-05_142200.jpg"]
+    with Image.open(io.BytesIO(shots["2026-11-05_142200.jpg"])) as img:
+        assert img.format == "JPEG" and not img.getexif()
+    # client は base64 にして photos で送る
+    seen = {}
+
+    def handler(req):
+        seen["body"] = json.loads(req.read())
+        return httpx.Response(200, json={"id": "north-1"})
+
+    Client("http://seed.test", "t" * 32, transport=httpx.MockTransport(handler)).publish(md, shots)
+    assert b64mod.b64decode(seen["body"]["photos"]["2026-11-05_142200.jpg"]) == shots["2026-11-05_142200.jpg"]
+    # 写真が手元に無ければ送らない
+    (seedfolder / "photos" / "2026-11-05" / "142200.jpg").unlink()
+    item = {"who": "claude", "draft": rel, "draft_text": text_}
+    run(talk.send_draft(app, item))
+    assert len(sent) == 1 and not item.get("sent")
+    assert any("2026-11-05_142200.jpg" in (i.get("text") or "") for i in app.state["talk"])

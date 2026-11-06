@@ -861,3 +861,124 @@ def test_pages_and_index_have_no_fine_coords(settings, tmp_path):
     c = client_for(settings)
     assert c.get("/p/fine-1").status_code == 404 and c.get("/p/fine-2").status_code == 404
     assert c.get("/p/coarse-1").status_code == 200
+
+
+# ---------------------------------------------------------------- 公開の写真
+
+
+def gps_jpeg(tmp_path: Path, size=(2000, 1000), name="g.jpg") -> bytes:
+    """GPS 入りの EXIF を持つ JPEG（座標は作り物）。"""
+    from test_photos import make_jpeg
+
+    return make_jpeg(tmp_path / name, lat=1.2345, lon=2.3456, size=size).read_bytes()
+
+
+def photo_md(names=("2026-11-05_142107.jpg",), id_="2026-11-05-yoshino-ai-1") -> str:
+    p = Public(id=id_, place="徳島県 吉野川市", since="2026-11-05", name="にじ", word="畑。", language="ja")
+    p.days["2026-11-05"] = [*(Line("photo", n) for n in names), Line("did", "見ただけ")]
+    return p.render()
+
+
+def b64(data: bytes) -> str:
+    import base64
+
+    return base64.b64encode(data).decode()
+
+
+def test_publish_with_photo_strips_exif_and_shows_it(settings, tmp_path):
+    from PIL import Image
+
+    c = client_for(settings)
+    rid, name = "2026-11-05-yoshino-ai-1", "2026-11-05_142107.jpg"
+    raw = gps_jpeg(tmp_path)
+    assert Image.open(tmp_path / "g.jpg").getexif().get_ifd(0x8825)  # 送る物には GPS がある
+    r = c.post("/api/publish", json={"token": TOKEN, "markdown": photo_md(), "photos": {name: b64(raw)}})
+    assert r.status_code == 200, r.text
+    kept = settings.public_dir / "photos" / rid / name
+    with Image.open(kept) as img:
+        assert img.format == "JPEG" and max(img.size) == R.PUBLIC_PHOTO_SIDE and img.mode == "RGB"
+        assert not img.getexif() and "exif" not in img.info  # 位置も何も残らない
+    assert c.get(f"/photos/{rid}/{name}").headers["content-type"] == "image/jpeg"
+    assert c.get(f"/photos/{rid}/..%2F.owners.json").status_code == 404
+    assert c.get(f"/photos/{rid}/none.jpg").status_code == 404
+    page = c.get(f"/p/{rid}").text
+    assert f'<img class="shot" src="/photos/{rid}/{name}"' in page and 'loading="lazy"' in page
+    assert "<code>photo</code>" not in page
+    idx = c.get("/index.json").json()
+    assert idx["records"][0]["photo"] == f"/photos/{rid}/{name}"
+    assert f'src="/photos/{rid}/{name}"' in c.get("/").text
+    site = settings.site_dir
+    assert (site / "photos" / rid / name).read_bytes() == kept.read_bytes()
+    # 文だけ送り直しても、前に置いた写真で通る
+    r = c.post("/api/publish", json={"token": TOKEN, "markdown": photo_md()})
+    assert r.status_code == 200, r.text
+    # 指されなくなった写真は消える（置き場からも site/ からも）
+    other = "2026-11-05_142200.jpg"
+    r = c.post(
+        "/api/publish",
+        json={"token": TOKEN, "markdown": photo_md((other,)), "photos": {other: b64(gps_jpeg(tmp_path))}},
+    )
+    assert r.status_code == 200, r.text
+    assert not kept.exists() and (kept.parent / other).is_file()
+    assert not (site / "photos" / rid / name).exists() and (site / "photos" / rid / other).is_file()
+    # 取り下げでフォルダーごと消える
+    assert c.request("DELETE", f"/api/publish/{rid}", json={"token": TOKEN}).status_code == 200
+    assert not kept.parent.exists() and not (site / "photos" / rid).exists()
+
+
+def test_admin_withdraw_removes_photos(settings, tmp_path):
+    from seed.server import publish as PB
+
+    rid, name = "2026-11-05-yoshino-ai-1", "2026-11-05_142107.jpg"
+    PB.publish(settings, TOKEN, photo_md(), {name: b64(gps_jpeg(tmp_path))})
+    assert (settings.public_dir / "photos" / rid / name).is_file()
+    PB.withdraw_as_admin(settings, rid)
+    assert not (settings.public_dir / "photos" / rid).exists()
+
+
+def test_publish_photo_rejects(settings, tmp_path):
+    from PIL import Image
+
+    c = client_for(settings)
+    name = "2026-11-05_142107.jpg"
+    png = tmp_path / "p.png"
+    Image.new("RGB", (10, 10)).save(png, "PNG")
+
+    def post(md, photos):
+        return c.post("/api/publish", json={"token": TOKEN, "markdown": md, "photos": photos})
+
+    ok = b64(gps_jpeg(tmp_path))
+    assert post(photo_md(), {name: b64(png.read_bytes())}).status_code == 400  # JPEG でない
+    assert post(photo_md(), {name: b64(b"\xff\xd8\xff" + b"x" * 100)}).status_code == 400  # 開けない
+    big = b"\xff\xd8\xff" + b"\0" * (R.PUBLIC_PHOTO_BYTES + 1)
+    assert post(photo_md(), {name: b64(big)}).status_code == 413  # 大き過ぎる
+    assert post(photo_md(), {"2026-11-05_999999.jpg": ok, name: ok}).status_code == 400  # 行が指していない
+    assert post(photo_md(), {}).status_code == 400  # 指しているのに無い
+    assert post(photo_md(), {"../x.jpg": ok}).status_code == 400  # 名の形
+    assert post(photo_md(), "x").status_code == 422
+    assert not (settings.public_dir / "photos").exists()
+    assert not (settings.public_dir / "2026-11-05-yoshino-ai-1.md").exists()
+    # 一日 4 枚は形で断る
+    names = [f"2026-11-05_14210{i}.jpg" for i in range(4)]
+    r = post(photo_md(names), {n: ok for n in names})
+    assert r.status_code == 400 and "一日" in r.text
+
+
+def test_publish_without_photos_is_unchanged(settings):
+    c = client_for(settings)
+    r = c.post("/api/publish", json={"token": TOKEN, "markdown": public_md()})
+    assert r.status_code == 200
+    assert "photo" not in c.get("/index.json").json()["records"][0]
+    assert "<img" not in c.get("/p/2026-11-05-yoshino-ai-1").text
+
+
+def test_publish_body_too_large(settings):
+    from seed.server.main import PUBLISH_BODY_MAX
+
+    c = client_for(settings)
+    r = c.post(
+        "/api/publish",
+        content=b'{"token":"' + b"t" * PUBLISH_BODY_MAX + b'"}',
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code == 413

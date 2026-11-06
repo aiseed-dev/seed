@@ -33,7 +33,9 @@ h2{font-size:1.1rem;margin:2rem 0 .5rem;border-bottom:1px solid var(--line)}
 .lead{font-size:1.15rem}
 .muted,small{color:var(--muted)}
 ul.records{list-style:none;padding:0}
-ul.records li{border-top:1px solid var(--line);padding:.75rem 0}
+ul.records li{border-top:1px solid var(--line);padding:.75rem 0;display:flow-root}
+img.shot{display:block;width:100%;height:auto;margin:.5rem 0;border-radius:.3rem}
+img.thumb{float:right;width:6rem;height:6rem;object-fit:cover;margin:0 0 .5rem .75rem;border-radius:.3rem}
 ul.lines{padding-left:1.2rem}
 .tag{display:inline-block;border:1px solid var(--line);border-radius:1rem;padding:0 .6rem;margin:0 .25rem .25rem 0;font-size:.85rem}
 code{font-size:.9em;color:var(--muted)}
@@ -81,8 +83,14 @@ def entry_html(idx: dict) -> str:
     total = idx.get("total", {})
     items = []
     for r in idx.get("records", []):
+        cover = r.get("photo")
+        thumb = (
+            f'<a href="/p/{_e(r["id"])}"><img class="thumb" src="{_e(cover)}" alt="" loading="lazy"></a>'
+            if isinstance(cover, str) and cover.startswith("/photos/")
+            else ""
+        )
         items.append(
-            f"""<li><a href="/p/{_e(r["id"])}"><strong>{_e(r.get("name", ""))}</strong></a>
+            f"""<li>{thumb}<a href="/p/{_e(r["id"])}"><strong>{_e(r.get("name", ""))}</strong></a>
 <span class="muted">{_e(r.get("place", ""))} · {_e(r.get("since", ""))}</span><br>
 {_e(r.get("word", ""))}<br>
 {_tags(r.get("what") or [])}{_tags(r.get("next") or [])}
@@ -97,7 +105,7 @@ def entry_html(idx: dict) -> str:
 <p class="lead">{_e(LEAD)}</p>
 <p>Claude は「こうしなさい」とは言いません。写真に何が見えたか、次に何を見ると良さそうかを話してくれます。決めるのは畑です。</p>
 <p>畑は一枚ずつ違います。本に書いてある事より、みんなの畑の記録の方が役に立ちます。だから、見せてもよい所を持ち寄って、近い畑の人と繋がれるようにしました。</p>
-<p>記録は、写真も場所も、あなたの物です。ここに並ぶのは、<strong>本人が「出す」と言った行だけ</strong>です。写真は載せません。</p>
+<p>写真と記録は、あなたの手元に残ります。ここに出るのは、<strong>あなたが見せてもよいと決めた写真と言葉だけ</strong>です。写真からは、撮った場所の情報を外してあります。</p>
 <p><strong>一緒に使ってくれる人を探しています（11-08 まで）。</strong>
 <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で、気軽に声をかけてください。招待コードをお渡しします。分からない事も、そこで聞いてください。</p>
 <h2>PC で使う</h2>
@@ -120,6 +128,17 @@ def _line_html(line: R.Line) -> str:
     return f"<li>{s}</li>"
 
 
+def _day_html(pub: R.Public, day: str) -> str:
+    """一日。写真（photo の行）を頭に大きく、文の行はその下に（分け方は Public.day_parts。アプリの札と同じ）。"""
+    shots, lines = pub.day_parts(day)
+    imgs = "".join(
+        f'<img class="shot" src="{_e(R.photo_url(pub.id, n))}" alt="{_e(day)}" loading="lazy">' for n in shots
+    )
+    rows = "".join(_line_html(x) for x in lines) or ("" if shots else "<li>(none)</li>")
+    listing = f'<ul class="lines">{rows}</ul>' if rows else ""
+    return f"<h2>{_e(day)}</h2>{imgs}{listing}"
+
+
 def showable(pub: R.Public) -> bool:
     """頁にしてよいか。検査が通り、細かい座標（小数 3 桁以上）が無い物だけ（設計書 §5.2）。
 
@@ -138,17 +157,14 @@ def record_html(pub: R.Public, connections: int) -> str:
         rows.append(("連絡", pub.contact))
     rows += [("言語", pub.language), ("観察", str(pub.observations)), ("繋がり", str(connections))]
     facts = "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in rows)
-    days = "".join(
-        f'<h2>{_e(day)}</h2><ul class="lines">{"".join(_line_html(x) for x in pub.days[day]) or "<li>(none)</li>"}</ul>'
-        for day in sorted(pub.days, reverse=True)
-    )
+    days = "".join(_day_html(pub, day) for day in sorted(pub.days))  # 成長の記録。古い日から
     body = f"""<p><small><a href="/">← 入口</a></small></p>
 <h1>{_e(pub.name)}</h1>
 <p class="lead">{_e(pub.word)}</p>
 <p>{_tags(pub.what)}{_tags(pub.next)}</p>
 <dl>{facts}</dl>
 <p class="muted"><small>数字 [0.00〜1.00] の付いた行は、AI の読みです（当たっているとは限りません）。→ の後は、本人が合う・違うを付けた物です。
-出典の付いた行は資料です。ここにあるのは、本人が「出す」と言った行だけです。</small></p>
+出典の付いた行は資料です。ここにあるのは、この畑の人が見せてもよいと決めた写真と言葉だけです。</small></p>
 {days}
 <h2>一言を送る</h2>
 <p>seed のアプリで「ほかの人の畑を見たい」と話すと、この畑へ一言を送れます。あなたの呼び名と一緒に、持ち主に届きます。
@@ -162,9 +178,10 @@ def not_found_html() -> str:
 
 
 def write_site(settings: Settings) -> Path:
-    """静的サイトを SEED_PUBLIC_DIR/site/ に書き出す。index.html、p/<id>.html、index.json、public/<id>.md。
+    """静的サイトを SEED_PUBLIC_DIR/site/ に書き出す。index.html、p/<id>.html、index.json、public/<id>.md、
+    photos/<id>/<名>（photo の行が指す写真）。
 
-    消えた記録のページも消す。.owners.json と connections/ は写さない。
+    消えた記録のページと写真も消す。.owners.json と connections/ は写さない。
     """
     site = settings.site_dir
     (site / "p").mkdir(parents=True, exist_ok=True)
@@ -184,6 +201,7 @@ def write_site(settings: Settings) -> Path:
         n = index.count_connections(settings.connections_dir, pub.id)
         (site / "p" / f"{pub.id}.html").write_text(record_html(pub, n), encoding="utf-8")
         shutil.copyfile(path, site / "public" / path.name)
+        _copy_photos(settings.public_dir / "photos" / pub.id, site / "photos" / pub.id, pub.photo_names())
         keep.add(pub.id)
     for old in (site / "p").glob("*.html"):
         if old.stem not in keep:
@@ -191,4 +209,26 @@ def write_site(settings: Settings) -> Path:
     for old in (site / "public").glob("*.md"):
         if old.stem not in keep:
             old.unlink()
+    if (site / "photos").is_dir():
+        for old in (site / "photos").iterdir():
+            if old.name not in keep:
+                shutil.rmtree(old, ignore_errors=True)
     return site
+
+
+def _copy_photos(src: Path, dst: Path, names: list[str]) -> None:
+    """記録の写真を site/ に写す（変わった物だけ）。指されていない物は消す。"""
+    want = [n for n in names if R.safe_photo_name(n) and (src / n).is_file()]
+    if want:
+        dst.mkdir(parents=True, exist_ok=True)
+    for n in want:
+        s, d = src / n, dst / n
+        if d.is_file() and d.stat().st_size == s.stat().st_size and d.stat().st_mtime >= s.stat().st_mtime:
+            continue
+        tmp = dst / f".{n}.tmp"
+        shutil.copyfile(s, tmp)
+        tmp.replace(d)
+    if dst.is_dir():
+        for old in dst.iterdir():
+            if old.name not in want:
+                old.unlink(missing_ok=True)

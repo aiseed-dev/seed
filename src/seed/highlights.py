@@ -82,6 +82,21 @@ def plain(text: str) -> str:
     return (m.group(1) if m else rest).strip()
 
 
+def _picked(obs: Observation, names: list[str]) -> tuple[str | None, str | None]:
+    """選ばれた今日の一枚の名と一言。本人の行（新しい物）→ 読みの最初の行。どちらにも無ければ (None, None)。"""
+    for line in reversed(obs.record):
+        rest = _after_label(line.text, "today")
+        head = _named_head(rest, names) if rest is not None else None
+        if head:
+            return head[0], None
+    if obs.reading:
+        rest = _after_label(obs.reading[0].text, "today")
+        head = _named_head(rest, names) if rest is not None else None
+        if head:
+            return head[0], head[1] or None
+    return None, None
+
+
 def today(obs: Observation) -> tuple[str | None, str]:
     """今日の一枚（相対の道）と、その写真についての一言。
 
@@ -91,19 +106,7 @@ def today(obs: Observation) -> tuple[str | None, str]:
     by_name = {stem(r): r for r in obs.photos}
     names = list(by_name)
     reading = obs.reading
-    pick: str | None = None
-    words: str | None = None
-    for line in reversed(obs.record):
-        rest = _after_label(line.text, "today")
-        head = _named_head(rest, names) if rest is not None else None
-        if head:
-            pick = head[0]
-            break
-    if reading and pick is None:
-        rest = _after_label(reading[0].text, "today")
-        head = _named_head(rest, names) if rest is not None else None
-        if head:
-            pick, words = head[0], head[1] or None
+    pick, words = _picked(obs, names)
     if pick is None:
         counts = {n: sum(1 for l in reading if n in names_in(l.text, [n])) for n in names}
         best = max(counts.values(), default=0)

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """索引。public/*.md の前書きを集めて index.json にする（docs/記録の形.md §8）。
 
-contact は入れない（公開ファイルを開いた人だけが見る）。connections は
+contact は入れない（公開ファイルを開いた人だけが見る）。photo は記録ごとの一枚の道（/photos/<id>/<名>。Public.cover）。connections は
 connections/<id>/*.md の行の数。検査（Public.check）が通らないファイルは飛ばして warn する。
 """
 
@@ -47,6 +47,10 @@ def build_index(public_dir: Path, connections_dir: Path) -> dict:
             warnings.warn(f"{path.name} の id が名前と違う: {pub.id}", stacklevel=2)
             continue
         entry = pub.front(for_index=True)
+        cover = pub.cover()  # 一番新しい日の一枚（前書きの古い photo の欄は使わない）
+        entry.pop("photo", None)
+        if cover:
+            entry["photo"] = R.photo_url(pub.id, cover)
         entry["connections"] = count_connections(connections_dir, pub.id)
         records.append(entry)
     records.sort(key=lambda r: (r["since"], r["id"]), reverse=True)

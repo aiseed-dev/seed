@@ -168,8 +168,8 @@ def test_publish(seedfolder, photo, monkeypatch, capsys):
     assert "公開しました" in capsys.readouterr().out
     pub = Public.read(seedfolder / "public" / "yoshino-1.md")
     lines = pub.days["2026-11-05"]
-    # 判定の付いた読み（overall）と data と record。判定の無い soil_surface は入らない
-    assert [l.key for l in lines] == ["overall", "geology", "did"]
+    # その日の一枚（選んだ物が無ければ最初の写真）、判定の付いた読み（overall）と data と record。判定の無い soil_surface は入らない
+    assert [l.key for l in lines] == ["photo", "overall", "geology", "did"]
     assert pub.coord == [34.05, 134.25]
     assert pub.what == ["自給農", "放棄地"] and pub.next == ["売る"]
     assert "photos/" not in sent["json"]
@@ -644,3 +644,42 @@ def test_chapter_lines_skips_code_and_comments():
     ]
     assert cli.chapter_lines(text, "overall") == [(15, "- 撮った場所の偏りを `overall` に書きます")]
     assert cli.chapter_lines(text, "sow") == []
+
+
+def test_publish_sends_chosen_photo(seedfolder, photo, monkeypatch, capsys):
+    """seed publish --photo: photo の行が入り、縮めた写真が一緒に送られる。手元に無ければ送らない。"""
+    import base64
+
+    f = str(seedfolder)
+    mock_server(monkeypatch, lambda req: httpx.Response(200, json=READING))
+    cli.main(["observe", "--folder", f, str(photo), "--say", "did: 見ただけ"])
+    sent: list[dict] = []
+
+    def handler(req):
+        sent.append(json.loads(req.read().decode()))
+        return httpx.Response(200, json={"id": "p-1", "url": "https://seed.test/public/p-1.md"})
+
+    mock_server(monkeypatch, handler)
+    args = [
+        "publish",
+        "--folder",
+        f,
+        "2026-11-05-142107",
+        "--id",
+        "p-1",
+        "--place",
+        "徳島県",
+        "--word",
+        "畑",
+        "--name",
+        "見本",
+    ]
+    assert cli.main([*args, "--photo", "142107"]) == 0
+    name = "2026-11-05_142107.jpg"
+    assert sent[0]["markdown"].count(f"- photo: {name}") == 1 and list(sent[0]["photos"]) == [name]
+    assert base64.b64decode(sent[0]["photos"][name]).startswith(b"\xff\xd8")
+    capsys.readouterr()
+    assert cli.main([*args, "--photo", "999999"]) == 1 and "999999" in capsys.readouterr().err
+    (seedfolder / "photos" / "2026-11-05" / "142107.jpg").unlink()
+    assert cli.main(["publish", "--folder", f, "--file", str(seedfolder / "public" / "p-1.md")]) == 1
+    assert name in capsys.readouterr().err and len(sent) == 1

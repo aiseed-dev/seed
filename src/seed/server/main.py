@@ -18,7 +18,7 @@ import anthropic
 from fastapi import FastAPI, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
@@ -89,6 +89,13 @@ class PublishBody(BaseModel):
     token: str
     markdown: str
     invite: str | None = None
+    photos: dict[str, str] | None = None  # 公開の名 → base64 の JPEG（無い古い形もそのまま通る）
+
+
+# 公開の要求の全体: 公開ファイル（JSON で文字が膨らむ分の余り）と、写真（base64 で 4/3 倍）
+PUBLISH_BODY_MAX = (
+    P.MARKDOWN_MAX * 6 + R.PUBLIC_PHOTOS_MAX * (R.PUBLIC_PHOTO_BYTES * 4 // 3 + 256) + 64 * 1024
+)
 
 
 class WithdrawBody(BaseModel):
@@ -461,16 +468,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"data": [{"key": x.key, "text": x.text} for x in lines]}
 
     @app.post("/api/publish")
-    async def api_publish(body: PublishBody, request: Request):
+    async def api_publish(request: Request):
         if (closed := _paused(settings)) is not None:
             return closed
-        who = _invite(settings, body.invite, "publish")
+        if int(request.headers.get("content-length") or 0) > PUBLISH_BODY_MAX:
+            return _error(413, "too_large", detail=["公開の要求が大きすぎる"])
+        raw = bytearray()
+        try:
+            async for chunk in _counted(request.stream(), PUBLISH_BODY_MAX):
+                raw += chunk
+        except TooLarge:
+            return _error(413, "too_large", detail=["公開の要求が大きすぎる"])
+        try:
+            body = PublishBody.model_validate_json(bytes(raw))
+        except ValidationError as e:
+            return JSONResponse({"detail": e.errors(include_url=False, include_input=False)}, status_code=422)
+        who = _invite(settings, body.invite, "publish", note=False)
         if not isinstance(who, str):
             return who
+        actor = who or "?"
         try:
-            pub = await run_in_threadpool(P.publish, settings, body.token, body.markdown)
+            pub = await run_in_threadpool(P.publish, settings, body.token, body.markdown, body.photos)
         except P.PublishError as e:
+            settings.journal.record(actor, "publish", f"断った: {e.status}")
             return _error(e.status, "publish_rejected", detail=e.reasons)
+        shots = len(pub.photo_names())
+        settings.journal.record(actor, "publish", f"通した（写真 {shots} 枚）" if shots else "通した")
         await run_in_threadpool(P.note_publisher, settings, pub.id, who)  # 管理の画面の「公開した人」
         # 外向きの url。SEED_PUBLIC_URL があればそれを基底にする（127.0.0.1 で叩かれても外の url を返す。11-05）
         base = (settings.public_url or str(request.base_url)).rstrip("/")
@@ -712,6 +735,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not name.endswith(".md") or not R.ID_RE.match(record_id) or not path.is_file():
             return _error(404, "not_found")
         return FileResponse(path, media_type="text/markdown; charset=utf-8")
+
+    @app.get("/photos/{record_id}/{name}")
+    async def public_photo(record_id: str, name: str):
+        """公開された写真（開発中の確認用。本番は Caddy が site/photos/ を配る）。"""
+        if not R.ID_RE.match(record_id) or not R.safe_photo_name(name):
+            return _error(404, "not_found")
+        path = P.photos_dir(settings, record_id) / name
+        if not path.is_file():
+            return _error(404, "not_found")
+        return FileResponse(path, media_type="image/jpeg")
 
     @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def entry():

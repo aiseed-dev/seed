@@ -30,14 +30,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import flet as ft
+import yaml
 
 from seed import album, direct, land, local, photos
 from seed import highlights as H
 from seed.app import capture, cards, photo, theme
 from seed.app.strings import error_text
-from seed.cli import package_skill, read_local, read_on_server, read_with_key
+from seed.cli import package_skill, public_photos, read_local, read_on_server, read_with_key
 from seed.client import ClientError
-from seed.records import Folder, Line, Observation
+from seed.records import Folder, Line, Observation, Public, photo_rel
 
 if TYPE_CHECKING:
     from seed.app.main import App
@@ -363,8 +364,20 @@ def add_draft(app: App, rel: str) -> None:
     add(app, who="claude", draft=rel, draft_text=text)
 
 
+def draft_photos(text: str) -> list[str]:
+    """下書きの photo の行が指す写真（手元の相対の道）。読めない下書きなら空。"""
+    try:
+        pub = Public.parse(text)
+    except (ValueError, TypeError, KeyError, yaml.YAMLError):
+        return []
+    return [r for r in (photo_rel(n) for n in pub.photo_names()) if r]
+
+
 async def send_draft(app: App, item: dict) -> None:
-    """「出す」を押した。見せた全文と今のファイルが同じ時だけ、その中身をそのまま送る。"""
+    """「出す」を押した。見せた全文と今のファイルが同じ時だけ、その中身と、photo の行が指す写真を縮めて送る。
+
+    行が指す写真が手元に無ければ送らず、その事を返す。
+    """
     path = app.folder.root / item["draft"]
     try:
         text = path.read_text(encoding="utf-8")
@@ -378,7 +391,18 @@ async def send_draft(app: App, item: dict) -> None:
         app.refresh()
         return
     try:
-        got = await app.call("publish", text)
+        pub = Public.parse(text)
+        shots, missing = await asyncio.to_thread(public_photos, app.folder, pub)
+    except (ValueError, TypeError, KeyError, OSError, yaml.YAMLError) as ex:
+        say(app, error_text(ex, app.lang))
+        app.refresh()
+        return
+    if missing:
+        say(app, app.t("draft_photo_missing", names=", ".join(missing)))
+        app.refresh()
+        return
+    try:
+        got = await app.call("publish", text, *([shots] if shots else []))
     except ClientError as ex:
         say(app, error_text(ex, app.lang, server=app.settings.server))
         app.refresh()
@@ -649,8 +673,12 @@ def draft_controls(app: App, item: dict) -> list[ft.Control]:
         if not app.state.get("pending") and not item.get("sent"):
             await send_draft(app, item)
 
+    out: list[ft.Control] = [theme.muted(app.t("talk_draft", path=item["draft"]))]
+    rels = draft_photos(item.get("draft_text") or "")
+    if rels:  # 出て行く写真を、全文の上に
+        out.append(photos_strip(app, rels, photo_index(app.folder), photo.SMALL))
     return [
-        theme.muted(app.t("talk_draft", path=item["draft"])),
+        *out,
         ft.Container(
             theme.mono(item.get("draft_text") or ""),
             border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),

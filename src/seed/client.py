@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 from dataclasses import dataclass, field
 from typing import Self
@@ -199,13 +200,12 @@ class Client:
         data = self._json(self._call("POST", "/api/identify", files=files, data=form))
         return I.parse(data.get("plantnet") or {})
 
-    def publish(self, markdown: str) -> dict:
-        """公開ファイルを送る。{"id", "url"}。"""
-        return self._json(
-            self._call(
-                "POST", "/api/publish", json={"token": self.token, "markdown": markdown, **self._inv()}
-            )
-        )
+    def publish(self, markdown: str, photos: dict[str, bytes] | None = None) -> dict:
+        """公開ファイルを送る。photos は photo の行が指す写真（公開の名 → 縮めた JPEG）。{"id", "url"}。"""
+        body = {"token": self.token, "markdown": markdown, **self._inv()}
+        if photos:
+            body["photos"] = {n: base64.b64encode(b).decode("ascii") for n, b in photos.items()}
+        return self._json(self._call("POST", "/api/publish", json=body))
 
     def unpublish(self, public_id: str) -> None:
         self._call("DELETE", f"/api/publish/{public_id}", json={"token": self.token, **self._inv()})

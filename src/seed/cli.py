@@ -18,14 +18,16 @@ from importlib import resources
 from pathlib import Path
 
 from . import fields as fields_mod
+from . import highlights, lang
 from . import keep as keep_mod
-from . import lang
 from . import settings as settings_mod
 from .app.strings import error_text, s
 from .records import (
     ASKS,
+    PHOTO_KEY,
     PLAN_KEYS,
     PLAN_RECORD_KEYS,
+    PUBLIC_PHOTOS_MAX,
     READING_KEYS,
     RECORD_KEYS,
     Folder,
@@ -36,6 +38,8 @@ from .records import (
     Public,
     coarse_coord,
     parse_asks,
+    photo_rel,
+    public_photo_name,
     sort_reading,
 )
 from .settings import Settings
@@ -138,8 +142,15 @@ def make_public(
     contact: str | None = None,
     name: str | None = None,
     since: str | None = None,
+    photos: list[str] | None = None,
+    folder: Folder | None = None,
 ) -> Public:
-    """観察と選んだ行から公開ファイルを作る。写真は入れない。"""
+    """観察と選んだ行から公開ファイルを作る。
+
+    写真は日の頭に `photo` の行で。公開は成長の記録なので、photos（相対の道。resolve_photos で引いた物）が None なら、
+    同じ場所を日を追って撮った写真を日ごとに一枚（album.growth。folder が要る）。二日以上に渡る場所が無ければ、
+    入る日ごとにその日の今日の一枚（無ければ最初の写真）。新しい日から PUBLIC_PHOTOS_MAX 枚まで。
+    """
     pub = Public(
         id=public_id.strip(),
         place=place.strip(),
@@ -159,7 +170,58 @@ def make_public(
         lines = default_lines(obs) if selected is None else selected[i]
         if lines:
             pub.add(obs, lines)
+    by_day: dict[str, list[str]] = {}
+    if photos is None:
+        from . import album  # 写真の位置を読む（Pillow）。写真を選び直す道では要らない
+
+        grown = album.growth(folder, observations) if folder is not None else {}
+        for obs in sorted(observations, key=lambda o: (o.date, o.time), reverse=True):
+            rel = grown.get(obs.date) if grown else highlights.today(obs)[0]
+            name = public_photo_name(rel) if rel else None
+            if name and obs.date in pub.days and obs.date not in by_day and len(by_day) < PUBLIC_PHOTOS_MAX:
+                by_day[obs.date] = [name]
+    else:
+        day_of = {r: o.date for o in observations for r in o.photos}
+        for rel in photos:
+            name = public_photo_name(rel)
+            if name and rel in day_of and name not in by_day.get(day_of[rel], []):
+                by_day.setdefault(day_of[rel], []).append(name)
+    for day, names in by_day.items():
+        pub.days[day] = [Line(PHOTO_KEY, n) for n in names] + pub.days.get(day, [])
     return pub
+
+
+def resolve_photos(observations: list[Observation], refs: list[str]) -> list[str]:
+    """写真の指し方（相対の道 photos/…、公開の名、ファイルの名の幹）を、観察の写真の相対の道に。無い物は ValueError。"""
+    known: dict[str, str] = {}
+    for o in observations:
+        for r in o.photos:
+            for k in (r, public_photo_name(r), Path(r).stem):
+                if k:
+                    known.setdefault(k, r)
+    out = []
+    for ref in refs:
+        rel = known.get(str(ref).strip())
+        if rel is None:
+            raise ValueError(str(ref)[:80])
+        out.append(rel)
+    return list(dict.fromkeys(out))
+
+
+def public_photos(folder: Folder, pub: Public) -> tuple[dict[str, bytes], list[str]]:
+    """公開ファイルの photo の行が指す写真を、送る形（長い辺 1280、JPEG、EXIF 無し）に。(名 → 中身, 手元に無い名)。"""
+    from . import photos as photos_mod
+
+    out: dict[str, bytes] = {}
+    missing: list[str] = []
+    for name in pub.photo_names():
+        rel = photo_rel(name)
+        path = folder.root / rel if rel else None
+        if path is None or not path.is_file():
+            missing.append(name)
+            continue
+        out[name] = photos_mod.for_public(path)
+    return out, missing
 
 
 def keep_model_lines(obs: Observation, before: list[Line]) -> None:
@@ -644,14 +706,26 @@ def publish_file(st: Settings, path: Path) -> int:
         for b in bad:
             _err(f"- {b}")
         return 1
+    shots = _photos_to_send(st, pub)
+    if shots is None:
+        return 1
     try:
         with client.Client(st.server, st.token, lg, invite=st.invite) as c:
-            got = c.publish(text)
+            got = c.publish(text, shots)
     except client.ClientError as e:
         _err(error_text(e, lg, server=st.server))
         return 2
     _out(s("published", lg, url=got.get("url") or got.get("id")))
     return 0
+
+
+def _photos_to_send(st: Settings, pub: Public) -> dict[str, bytes] | None:
+    """photo の行が指す写真を送る形に。手元に無い写真があれば、その名を出して None（送らない）。"""
+    shots, missing = public_photos(st.records, pub)
+    if missing:
+        _err(s("draft_photo_missing", st.language, names=", ".join(missing)))
+        return None
+    return shots
 
 
 def cmd_publish(st: Settings, args) -> int:
@@ -668,6 +742,11 @@ def cmd_publish(st: Settings, args) -> int:
     except FileNotFoundError as e:
         _err(s("observation_not_found", lg, name=e.args[0]))
         return 1
+    try:
+        chosen = resolve_photos(observations, args.photo) if args.photo else None
+    except ValueError as e:
+        _err(s("photo_not_in_observations", lg, name=e.args[0]))
+        return 1
     pub = make_public(
         st,
         observations,
@@ -679,6 +758,8 @@ def cmd_publish(st: Settings, args) -> int:
         with_coord=args.coord,
         contact=args.contact,
         name=args.name,
+        photos=chosen,
+        folder=st.records,
     )
     if any(o.kind == "candidate" for o in observations):
         _err(s("owner_warning", lg))
@@ -696,9 +777,13 @@ def cmd_publish(st: Settings, args) -> int:
     if args.local:
         _out(s("published_local", lg, path=path))
         return 0
+    shots = _photos_to_send(st, pub)
+    if shots is None:
+        _out(s("published_local", lg, path=path))
+        return 1
     try:
         with client.Client(st.server, st.token, lg, invite=st.invite) as c:
-            got = c.publish(pub.render())
+            got = c.publish(pub.render(), shots)
     except client.ClientError as e:
         _err(error_text(e, lg, server=st.server))
         _out(s("published_local", lg, path=path))
@@ -1521,6 +1606,11 @@ def parser() -> argparse.ArgumentParser:
     u.add_argument("--next", help="その次。, か 、 で区切る")
     u.add_argument("--name", help="呼び名（既定は seed.toml の name）")
     u.add_argument("--contact")
+    u.add_argument(
+        "--photo",
+        action="append",
+        help="出す写真（写真の名か photos/… の道。何度でも。一日 3 枚、全部で 12 枚まで）。無ければ日ごとに今日の一枚",
+    )
     u.add_argument("--local", action="store_true", help="サーバーへ送らず public/ に書くだけ")
 
     ph = sub.add_parser("photos", parents=[common], help="写真を撮った場所ごとに、時の順に並べて出す")

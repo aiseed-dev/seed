@@ -551,3 +551,36 @@ def test_folder_marks_empty(tmp_path):
     f.init()
     Observation.parse(EXAMPLE.replace("  → farmer: right", "")).write(f.observations / "2026-11-05-142107.md")
     assert f.marks() == []  # 判定の無い行だけ
+
+
+# ---------------------------------------------------------------- 公開の写真
+
+
+def test_public_photo_names_round_trip():
+    from seed import records as R
+
+    for rel in ("photos/2026-11-05/142107.jpg", "photos/2026-11-05/142107-12.jpg"):
+        name = R.public_photo_name(rel)
+        assert name and R.safe_photo_name(name) and R.photo_rel(name) == rel
+    assert R.public_photo_name("photos/2026-11-05/142107.jpg") == "2026-11-05_142107.jpg"
+    for bad in ("../x.jpg", "a/b.jpg", "x.png", "a..b.jpg", ".x.jpg", "", None):
+        assert not R.safe_photo_name(bad)
+    assert R.public_photo_name("elsewhere/2026-11-05/1.jpg") is None
+    assert R.photo_rel("plain.jpg") is None
+
+
+def test_public_photo_lines_parse_split_and_check():
+    p = Public(id="a-1", place="徳島県", since="2026-11-05", name="にじ", word="畑", language="ja")
+    p.days["2026-11-04"] = [Line("photo", "2026-11-04_101500.jpg"), Line("did", "見た")]
+    p.days["2026-11-05"] = [Line("photo", "2026-11-05_142107.jpg"), Line("overall", "草", 0.8, "right")]
+    q = Public.parse(p.render())
+    assert q.check() == [] and q.photo_names() == ["2026-11-04_101500.jpg", "2026-11-05_142107.jpg"]
+    shots, lines = q.day_parts("2026-11-05")
+    assert shots == ["2026-11-05_142107.jpg"] and [l.key for l in lines] == ["overall"]
+    assert q.cover() == "2026-11-05_142107.jpg"
+    q.days["2026-11-05"].append(Line("photo", "../etc.jpg"))
+    assert any("photo の行" in b for b in q.check())
+    q.days["2026-11-05"] = [Line("photo", f"2026-11-05_14210{i}.jpg") for i in range(4)]
+    assert any("一日 3 枚" in b for b in q.check())
+    q.days = {f"2026-10-{d:02d}": [Line("photo", f"2026-10-{d:02d}_1.jpg")] for d in range(1, 14)}
+    assert any("12 枚" in b for b in q.check())

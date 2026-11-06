@@ -17,7 +17,7 @@ from pathlib import Path
 from PIL import ExifTags, Image, ImageOps, UnidentifiedImageError
 
 from . import keep as keep_mod
-from .records import Folder, Observation
+from .records import PUBLIC_PHOTO_BYTES, PUBLIC_PHOTO_SIDE, Folder, Observation
 
 MAX_SIDE = 1568  # Claude の画像の長辺の目安
 QUALITY = 85
@@ -201,6 +201,16 @@ def shrink(path: Path | str, max_side: int = MAX_SIDE, quality: int = QUALITY) -
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=quality, optimize=True)
         return buf.getvalue()
+
+
+def for_public(path: Path | str) -> bytes:
+    """公開に出す形（長い辺 1280、JPEG、EXIF 無し）。一枚の上限（600 KB）を超えれば質を下げて縮め直す。"""
+    data = b""
+    for quality in (QUALITY, 70, 55):
+        data = shrink(path, max_side=PUBLIC_PHOTO_SIDE, quality=quality)
+        if len(data) <= PUBLIC_PHOTO_BYTES:
+            break
+    return data
 
 
 def strip_exif(src: Path | str, dst: Path | str) -> None:

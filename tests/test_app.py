@@ -667,3 +667,41 @@ def test_phone_build_imports_without_server_parts():
     )
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == "ok"
+
+
+# ---------------------------------------------------------------- 公開の写真（ページと同じ分け方: Public.day_parts）
+
+
+def _images(control) -> list[str]:
+    return [str(c.src) for c in walk(control) if isinstance(c, ft.Image) and isinstance(c.src, str)]
+
+
+def test_others_and_record_cards_show_published_photos(app):
+    app.settings.override_url = "https://seed.test/"
+    app.index = {
+        "records": [
+            {"id": "x-1", "name": "見本", "word": "一言", "photo": "/photos/x-1/2026-11-05_142107.jpg"},
+            {"id": "x-2", "name": "見本2", "word": "一言", "photo": "https://elsewhere.test/a.jpg"},
+        ]
+    }
+    pub = Public(id="x-1", place="徳島県", since="2026-11-05", name="見本", word="一言", language="ja")
+    pub.days["2026-11-05"] = [Line("photo", "2026-11-05_142107.jpg"), Line("did", "見ただけ")]
+    app.state["public_cache"] = {"x-1": ("ok", pub.render())}
+    others = cards.card(app, "others")
+    assert _images(others) == ["https://seed.test/photos/x-1/2026-11-05_142107.jpg"]  # よその道は出さない
+    rec = cards.card(app, "record:x-1")
+    assert _images(rec) == ["https://seed.test/photos/x-1/2026-11-05_142107.jpg"]
+    words = " ".join(texts(rec))
+    assert "見ただけ" in words and "2026-11-05_142107.jpg" not in words  # 写真の行は文で出さない
+
+
+def test_draft_card_shows_outgoing_photos_above_text(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING)
+    pub = Public(id="d-1", place="徳島県", since="2026-11-05", name="見本", word="一言", language="ja")
+    pub.days["2026-11-05"] = [Line("photo", "2026-11-05_142200.jpg"), Line("did", "見ただけ")]
+    text_ = pub.render()
+    assert talk.draft_photos(text_) == [B] and talk.draft_photos("壊れた下書き") == []
+    got = talk.draft_controls(app, {"draft": "public/d-1.md", "draft_text": text_})
+    kinds = [type(c).__name__ for c in got]
+    assert len(got) == 4 and kinds[1] != "FilledButton"  # 説明、写真、全文、出す
+    assert not [c for c in walk(ft.Column(got)) if isinstance(c, FORMS)]
