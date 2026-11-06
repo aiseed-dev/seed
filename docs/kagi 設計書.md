@@ -225,6 +225,14 @@ auth = "app"                  # public | app | gate | lan
 
 **確かめていない物。** `preseed.cfg` と `firstboot.sh` を、本物のインストーラーと入れたての機械で通していない（仮想の機械で一度通すのが次。`手順.md` の頭にもそう書く）。Ubuntu（autoinstall）と RHEL 系（dnf、kickstart）は無い。root の写しの節（`sshd -T`、`passwd -S`、sudoers）は見本でだけ試した。
 
+### 3.5 `kagi check tokens` — 相手に出した token の台帳（11-06 夜。K-05、K-14）
+
+アプリの門（seed のサーバーなど）に入る token を、誰に、どのアプリの、どの範囲で、いつまで出したか。台帳は `~/.config/aiseed/tokens.json`（`--file` で別の場所。サーバーでは `/etc/seed/tokens.json`）で、書くのはアプリ（`seed token add`。seed の設計書 §5.9）。在るのはハッシュだけで、kagi はハッシュも出さない。token そのものの欄（`token`、`code`、`value`）があれば読まずに拒む（終了コード 2）。
+
+出すのは、期限切れのまま取り消していない物（直す。終了コード 1）、期限の近い物（`--days`、既定 30）、生きている物、取り消した物。期限の無い物は期限切れと同じ扱い。机の画面では「鍵」の画面の下に同じ表。kagi は seed のコードを使わない（JSON を読むだけ）。機械に入る鍵（`[[key]]`）と、アプリに入る token（この台帳）が、同じ画面に並ぶ。
+
+サーバーの記録（誰が何をしたか）は kagi の記録と同じ形なので、`kagi log verify --dir <記録の場所>` でそのまま確かめられる。
+
 ## 4. 署名の鍵
 
 順に探す。(1) `$CREDENTIALS_DIRECTORY/kagi-log-key`（systemd の credential）。(2) `$KAGI_LOG_KEY_FILE` が指すファイル。どちらも無ければ `log add` と `log verify` は終了コード 2 で、鍵の置き方（手引き §3）を一行出す。鍵の中身は読んで HMAC に使うだけで、出力・ログ・例外のメッセージに出さない。ファイルの許可が `600` でなければ警告する。
@@ -252,3 +260,4 @@ auth = "app"                  # public | app | gate | lan
 - 2026-11-06 午後: §3.2 `check smb`（作者「これらもできるだけ実装しろ」）。
 - 2026-11-06 午後: §3.3 `kagi app`（Flet の PC 版の画面）。
 - 2026-11-06 夜: §3.4 機械（入れる、見る、直す手）と、認証と鍵の表。§6 の境界に例外を一つ（`machine collect`）。
+- 2026-11-06 夜: §3.5 `kagi check tokens`（相手に出した token の台帳）。

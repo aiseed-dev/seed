@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from kagi import __version__, audit, install, inventory, machine, ports, report, scan, smb
+from kagi import __version__, audit, install, inventory, machine, ports, report, scan, smb, tokens
 
 DEFAULT_DIR = "./kagi-data"
 
@@ -139,6 +139,17 @@ def cmd_check_smb(args) -> int:
     findings = smb.check(conf)
     print(smb.table(findings, args.conf))
     return 1 if smb.fixes(findings) else 0
+
+
+def cmd_check_tokens(args) -> int:
+    path = Path(args.file or tokens.DEFAULT).expanduser()
+    try:
+        rs = tokens.rows(tokens.load(path), args.days)
+    except inventory.Refused as e:
+        _err(str(e))
+        return 2
+    print(tokens.table(rs, path, args.days))
+    return 1 if tokens.fixes(rs) else 0
 
 
 def cmd_scan(args) -> int:
@@ -395,6 +406,11 @@ def parser() -> argparse.ArgumentParser:
     s = c.add_parser("smb", help="smb.conf の口と認証の形（値は出さない）")
     s.add_argument("--conf", required=True, help="smb.conf のファイル（include は辿らない）")
     s.set_defaults(func=cmd_check_smb, sub_dir=None)
+
+    s = c.add_parser("tokens", help="相手に出した token の台帳（誰に、範囲、期限。ハッシュは出さない）")
+    s.add_argument("--file", default=None, metavar="PATH", help=f"台帳（既定 {tokens.DEFAULT}）")
+    s.add_argument("--days", type=int, default=30)
+    s.set_defaults(func=cmd_check_tokens, sub_dir=None)
 
     s = sub.add_parser("scan", help="秘密らしい文字列の在り処（path:line と種類だけ）")
     s.add_argument("paths", nargs="+")

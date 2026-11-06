@@ -12,7 +12,7 @@ import datetime as dt
 import os
 from pathlib import Path
 
-from kagi import audit, inventory, machine, ports, report, scan
+from kagi import audit, inventory, machine, ports, report, scan, tokens
 
 SEED_COLOR = "#5B7A3A"  # seed の theme と同じ種の色
 FONT = "Roboto"  # Flet 1.1 の既定の字体は日本語の字形を持たない（seed の theme.py と同じ理由）
@@ -261,6 +261,26 @@ def keys_view(d: Path) -> dict:
         inv = None
     v["rows"] = machine.key_rows(table, inv)
     v["problems"] = machine.key_fingerprints(table)[1]
+    return v
+
+
+def tokens_view(path: Path | None = None, days: int = 30, today: dt.date | None = None) -> dict:
+    """相手に出した token の台帳の中身（誰に、アプリ、範囲、今、期限）。ハッシュは出さない。"""
+    path = Path(path or tokens.DEFAULT).expanduser()
+    v = {
+        "path": str(path),
+        "columns": ["誰に", "アプリ", "範囲", "今", "期限"],
+        "rows": [],
+        "fixes": 0,
+        "error": None,
+    }
+    try:
+        rs = tokens.rows(tokens.load(path), days, today)
+    except inventory.Refused as e:
+        v["error"] = str(e)
+        return v
+    v["rows"] = [[r["name"], r["app"], r["scope"], tokens.LABEL[r["state"]], r["expires"]] for r in rs]
+    v["fixes"] = tokens.fixes(rs)
     return v
 
 
@@ -591,7 +611,20 @@ def make_main(d: Path):
                     ft.FilledButton("足す", icon=ft.Icons.ADD, on_click=do_add_key),
                 ],
             )
-            return [card("鍵", c), add]
+            tv = tokens_view()
+            tc: list[ft.Control] = [
+                muted(
+                    "アプリ（seed など）の門に入る token を、誰に、どの範囲で、いつまで出したか。"
+                    f"台帳に在るのはハッシュだけ（{tv['path']}）。出す・取り消すはそのアプリの命令で（seed token）。"
+                )
+            ]
+            if tv["error"]:
+                tc.append(muted(tv["error"]))
+            if tv["rows"]:
+                tc.append(table(tv["columns"], tv["rows"]))
+            if tv["fixes"]:
+                tc.append(err(f"期限切れのまま取り消していない物が {tv['fixes']} 件"))
+            return [card("鍵（機械に入る）", c), add, card("出した token（アプリの門に入る）", tc)]
 
         async def do_add_key(e) -> None:
             try:

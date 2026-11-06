@@ -52,6 +52,21 @@ lost = "本人が Web 版の入口から箱を消して作り直す"
 leaked = "その箱の公開を取り下げ、招待コードを替える（deb2-invites）"
 
 [[secret]]
+id = "deb2-log-key"
+kind = "key"
+where = "deb2:/etc/seed/log-key（root:root 600。systemd が seed.service にだけ渡す）"
+holder = "yniji"
+role = "seed のサーバーの記録（誰が何をしたか）の署名。他には使わない（K-01）"
+# made = 2026-11-XX
+# expires = 2027-11-XX
+rotate_days = 365
+lost = "新しい鍵を置いて systemctl restart seed。前の記録は前の鍵でしか確かめられないので、記録のファイルを分けて残す"
+leaked = "記録を別の場所に写して確かめる → 新しい鍵 → 記録のファイルを新しくする → 書く（K-15）"
+
+# 相手に出した token（seed token add）は、台帳 /etc/seed/tokens.json が在庫表（誰に、範囲、期限、取り消し。ハッシュだけ）。
+# 期限は kagi check tokens --file で見る。
+
+[[secret]]
 id = "dev-debpc"
 kind = "key"
 where = "debpc:~/.ssh/id_ed25519（dev）"

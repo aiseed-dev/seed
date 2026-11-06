@@ -103,12 +103,34 @@ def _html(text: str, status: int = 200) -> HTMLResponse:
     return HTMLResponse(text, status_code=status, headers={"Content-Security-Policy": CSP})
 
 
-def _invite(settings: Settings, code: str | None) -> str | JSONResponse:
-    """招待コードの呼び名。無ければ 403 の答え（設計書 §7.5）。"""
-    name = settings.invite_name(code)
-    if name is None:
-        return _error(403, "invite_required", detail=["招待コードが要る（Discord で渡す）"])
-    return name
+DENIED = {
+    "missing": "招待コードが要る（Discord で渡す）",
+    "unknown": "招待コードが要る（Discord で渡す）",
+    "expired": "この招待コードは期限が切れた。渡した人に新しい物を頼む",
+    "revoked": "この招待コードは取り消された",
+    "scope": "この招待コードでは、ここは使えない",
+}
+
+
+def _invite(
+    settings: Settings,
+    code: str | None,
+    action: str = "",
+    need: tuple[str, ...] = ("member",),
+    detail: str = "",
+) -> str | JSONResponse:
+    """門。招待コードか token の呼び名。入れなければ 403 の答え（設計書 §7.5、§5.9）。
+
+    need は入ってよい範囲（どれか一つを持っていれば通る）。通した事も断った事も記録に一行（token は書かない）。
+    """
+    who, why = settings.who(code)
+    if who is not None and not (who.scopes & set(need)):
+        who, why = None, "scope"
+    if who is None:
+        settings.journal.record("?", action, f"断った: {why}" + (f" {detail}" if detail else ""))
+        return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
+    settings.journal.record(who.name or f"（{who.via}）", action, detail or "通した")
+    return who.name
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -135,6 +157,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "lookup": L.available(),
             "model": settings.model,
             "remaining": limits.remaining(),
+            "audit": settings.journal.state,  # on | off | error（誰が何をしたかの記録。設計書 §5.9）
         }
 
     async def _multipart(request: Request):
@@ -178,7 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(400, "bad_token", detail=e.reasons)
         inv = form.get("invite")
-        who = _invite(settings, inv if isinstance(inv, str) else None)
+        who = _invite(settings, inv if isinstance(inv, str) else None, "read")
         if not isinstance(who, str):
             return who
         uploads = [f for f in form.getlist("photos") if isinstance(f, UploadFile)]
@@ -269,7 +292,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(400, "bad_token", detail=e.reasons)
         inv = form.get("invite")
-        who = _invite(settings, inv if isinstance(inv, str) else None)
+        who = _invite(settings, inv if isinstance(inv, str) else None, "identify")
         if not isinstance(who, str):
             return who
         uploads = [f for f in form.getlist("photos") if isinstance(f, UploadFile)]
@@ -301,7 +324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_lookup(
         request: Request, lat: float, lon: float, invite: str | None = None, language: str | None = None
     ):
-        who = _invite(settings, invite)
+        who = _invite(settings, invite, "lookup")
         if not isinstance(who, str):
             return who
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
@@ -318,7 +341,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/publish")
     async def api_publish(body: PublishBody, request: Request):
-        who = _invite(settings, body.invite)
+        who = _invite(settings, body.invite, "publish")
         if not isinstance(who, str):
             return who
         try:
@@ -331,7 +354,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.delete("/api/publish/{record_id}")
     async def api_withdraw(record_id: str, body: WithdrawBody):
-        who = _invite(settings, body.invite)
+        who = _invite(settings, body.invite, "withdraw", detail=record_id[:80])
         if not isinstance(who, str):
             return who
         try:
@@ -344,6 +367,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Web 版の人の箱。招待コードと token はヘッダで（GET に本文が無く、URL に秘密を載せないため）。"""
         return ME.box_for(settings, request.headers.get("x-seed-invite"), request.headers.get("x-seed-token"))
 
+    def _note(request: Request, action: str, detail: str) -> None:
+        """Web 版の箱の口の記録。呼び名は招待コードから（分からなければ ?）。"""
+        who, _ = settings.who(request.headers.get("x-seed-invite"))
+        settings.journal.record(who.name if who else "?", action, detail)
+
     @app.get("/api/export")
     async def api_export(request: Request):
         """自分の箱を zip で持ち帰る（設計書 §5.3）。"""
@@ -351,7 +379,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             box = await run_in_threadpool(_box, request)
             data = await run_in_threadpool(ME.export_zip, box)
         except P.PublishError as e:
+            _note(request, "export", f"断った: {e.status}")
             return _error(e.status, "export_rejected", detail=e.reasons)
+        _note(request, "export", "持ち帰った")
         return Response(
             data,
             media_type="application/zip",
@@ -369,13 +399,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             token = request.headers.get("x-seed-token") or ""
             withdrawn = await run_in_threadpool(ME.delete_box, settings, box, token)
         except P.PublishError as e:
+            _note(request, "delete_me", f"断った: {e.status}")
             return _error(e.status, "delete_rejected", detail=e.reasons)
+        _note(request, "delete_me", f"箱を消した（取り下げ {len(withdrawn)} 件）")
         log.info("web: 箱を消した（取り下げ %d 件）", len(withdrawn))
         return {"deleted": True, "withdrawn": withdrawn}
 
     @app.post("/api/connect")
     async def api_connect(body: ConnectBody, request: Request):
-        who = _invite(settings, body.invite)
+        # 一言は買い手も送れる（買い手の token でできるのはここだけ。設計書 §5.9）
+        who = _invite(settings, body.invite, "connect", need=("member", "buyer"), detail=str(body.to)[:80])
         if not isinstance(who, str):
             return who
         ip = _client_ip(request)

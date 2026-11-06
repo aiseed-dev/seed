@@ -311,6 +311,15 @@ def invites() -> dict[str, str]:
 def web_user_for(code: str | None) -> WebUser | None:
     code = (code or "").strip()
     name = invites().get(code) if code else None
+    if not name and code:
+        # 相手ごとの token の台帳（SEED_TOKENS）。Web 版に入れるのは member だけ（買い手の token では入れない）
+        from seed.server import gate
+
+        path = os.environ.get(gate.ENV_TOKENS, "").strip()
+        if path:
+            entry, _ = gate.TokenBook(Path(path).expanduser()).find(code)
+            if entry is not None and "member" in entry["scope"]:
+                name = str(entry["name"])
     return WebUser(code, name) if name else None
 
 

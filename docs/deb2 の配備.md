@@ -106,6 +106,27 @@ ls -l /etc/seed/
 
 両方 `-rw-r----- root dev` であること。
 
+相手ごとの token の台帳と、記録の署名の鍵（11-06 夜。設計書 §5.9。招待コードの一覧だけで始めるなら、この段は後でよい。その時は `seed.service` の `LoadCredential` の行を # にする）:
+
+```bash
+sudo install -o root -g dev -m 640 /dev/null /etc/seed/tokens.json && echo '{"tokens": []}' | sudo tee /etc/seed/tokens.json >/dev/null
+sudo install -d -o dev -g dev -m 700 /var/lib/seed/audit
+sudo bash -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
+ls -l /etc/seed/
+```
+
+`log-key` は `-rw------- root root`。値は画面に出ない。買い手に token を出す時（出た一行を、その人にだけ渡す。台帳に残るのはハッシュだけ）:
+
+```bash
+sudo /opt/seed/.venv/bin/seed token add "買い手の呼び名" --scope buyer --days 30 --file /etc/seed/tokens.json
+```
+
+取り消しは `seed token revoke "呼び名" --file /etc/seed/tokens.json`（次の要求から効かない）。一覧は `seed token list --file /etc/seed/tokens.json`。記録の確かめ:
+
+```bash
+sudo KAGI_LOG_KEY_FILE=/etc/seed/log-key /opt/seed/.venv/bin/kagi log verify --dir /var/lib/seed/audit
+```
+
 ### 0-4. [dev] 一覧が読めるか（コードは先頭 4 字だけ出る）
 
 ```bash

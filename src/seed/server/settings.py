@@ -15,6 +15,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import gate
+
 REPO_SKILL_DIR = Path(__file__).resolve().parents[3] / "skill"
 
 log = logging.getLogger("seed.server")
@@ -47,10 +49,18 @@ class Settings:
     public_url: str = ""
     # SEED_USERS_DIR。Web 版の人ごとの箱の親（設計書 §5.3）。無ければ持ち帰りと消去の口は 404
     users_dir: Path | None = None
+    # SEED_TOKENS。相手ごとの token の台帳（ハッシュ、範囲、期限、取り消し。設計書 §5.9）。無ければ招待コードの一覧だけ
+    tokens_path: Path | None = None
+    # SEED_AUDIT。誰が何をしたかの記録（kagi の形）。署名の鍵（KAGI_LOG_KEY_FILE か credential）が無ければ書かない
+    audit_path: Path | None = None
     _book: InviteBook = field(init=False, repr=False, compare=False)
+    _tokens: gate.TokenBook = field(init=False, repr=False, compare=False)
+    journal: gate.Journal = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_book", InviteBook(self.invites_path, self.invites))
+        object.__setattr__(self, "_tokens", gate.TokenBook(self.tokens_path))
+        object.__setattr__(self, "journal", gate.Journal(self.audit_path))
 
     @property
     def connections_dir(self) -> Path:
@@ -79,6 +89,8 @@ class Settings:
             open=os.environ.get("SEED_OPEN", "").strip() in ("1", "true", "yes"),
             public_url=os.environ.get("SEED_PUBLIC_URL", "").strip(),
             users_dir=Path(u).expanduser() if (u := os.environ.get("SEED_USERS_DIR", "").strip()) else None,
+            tokens_path=Path(t).expanduser() if (t := os.environ.get(gate.ENV_TOKENS, "").strip()) else None,
+            audit_path=Path(a).expanduser() if (a := os.environ.get(gate.ENV_AUDIT, "").strip()) else None,
         )
 
     @property
@@ -86,18 +98,33 @@ class Settings:
         """静的サイト（index.html、p/<id>.html、index.json、public/<id>.md）。Caddy はここだけを配る。"""
         return self.public_dir / "site"
 
-    def known_invite(self, code: str | None) -> bool:
-        """一覧にある招待コードか（open でも一覧で決める。Web 版の箱を開くのに使う）。"""
+    def who(self, code: str | None) -> tuple[gate.Who | None, str]:
+        """（誰か、""）か（None、理由）。招待コードの一覧 → token の台帳 → open の順に見る。
+
+        理由は missing | unknown | expired | revoked。招待コードの一覧の人は member（今まで通り）。
+        """
         code = (code or "").strip()
-        return bool(code) and code in self._book.codes()
+        why = "missing"
+        if code:
+            codes = self._book.codes()
+            if code in codes:
+                return gate.Who(codes[code], frozenset({"member"}), "invite"), ""
+            entry, why = self._tokens.find(code)
+            if entry is not None:
+                return gate.Who(str(entry["name"]), frozenset(entry["scope"]), "token"), ""
+        if self.open:
+            return gate.Who("", frozenset({"member"}), "open"), ""
+        return None, why
+
+    def known_invite(self, code: str | None) -> bool:
+        """招待した人（member）の招待コードか token か（open でも一覧と台帳で決める。Web 版の箱を開くのに使う）。"""
+        w, _ = self.who(code)
+        return w is not None and w.via != "open" and "member" in w.scopes
 
     def invite_name(self, code: str | None) -> str | None:
-        """招待コードの呼び名。無ければ None。open なら無しでも "" を返す（通す）。"""
-        code = (code or "").strip()
-        codes = self._book.codes()
-        if code and code in codes:
-            return codes[code]
-        return "" if self.open else None
+        """招待コードか token の呼び名。無ければ None。open なら無しでも "" を返す（通す）。"""
+        w, _ = self.who(code)
+        return w.name if w is not None else None
 
 
 def user_slug(code: str) -> str:

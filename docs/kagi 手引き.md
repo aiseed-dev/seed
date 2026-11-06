@@ -132,6 +132,8 @@ kagi key list
 - **外す（人が辞めた、機械を無くした）。** その人の鍵の id を全部の機械の `keys` から外し、`users` と `admins` からも外す → `kagi machine check`（全部の機械）で、どの機械に残っているかが「表に無い鍵」「表に無いアカウント」として出る → `fix` の手で一台ずつ。
 - どれも、終わったら `kagi log add --action key.add`（`key.rotate`、`key.remove`）を一行。
 
+アプリの門に入る token（seed のサーバーが相手ごとに出す物）は別の台帳で、`kagi check tokens`（サーバーの台帳なら `--file /etc/seed/tokens.json`）。誰に、範囲、期限が出る。期限切れのまま取り消していない物は「直す」。出す・取り消すは `seed token`（利用マニュアル §11c）。机の画面では「鍵」の下に並ぶ。
+
 ## 5. 一枚の報告
 
 ```bash

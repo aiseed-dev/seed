@@ -363,6 +363,43 @@ def _list_invites(path: str | None) -> int:
     return 0
 
 
+def cmd_token(st: Settings, args) -> int:
+    """相手ごとの token の台帳（サーバーの門。設計書 §5.9）: 出す、見る、取り消す。
+
+    台帳に残るのはハッシュだけ。token は add の時に一度だけ出るので、その場で相手に渡す。
+    台帳の場所は --file、無ければ SEED_TOKENS、無ければ ~/.config/aiseed/tokens.json。
+    """
+    from .server import gate
+
+    path = gate.tokens_path(getattr(args, "file", None))
+    try:
+        if args.what == "add":
+            code = gate.add(path, args.name, [args.scope], args.days, args.note or "")
+            _err(
+                f"{path}: {args.name} に出した（範囲 {args.scope}、{args.days} 日）。台帳に残るのはハッシュだけ。"
+            )
+            _err("下の一行が token。出るのはこの一度だけ。その人にだけ渡す:")
+            _out(code)
+        elif args.what == "revoke":
+            n = gate.revoke(path, args.name)
+            _out(f"{path}: {args.name} の token を取り消した（{n} 件）。サーバーでは次の要求から効かない。")
+        else:
+            rows = gate.rows(path)
+            words = {"live": "生きている", "expired": "期限切れ", "revoked": "取り消した"}
+            _out(f"{path}: {len(rows)} 件（生きている {sum(1 for r in rows if r['state'] == 'live')}）")
+            for r in rows:
+                tail = f"、取り消し {r['revoked']}" if r["revoked"] else ""
+                note = f"　{r['note']}" if r["note"] else ""
+                _out(
+                    f"  {r['name']}　{','.join(r['scope'])}　{words[r['state']]}"
+                    f"（{r['created']} 〜 {r['expires']}{tail}）{note}"
+                )
+    except gate.GateError as e:
+        _err(f"seed token: {e}")
+        return 1
+    return 0
+
+
 def cmd_init(st: Settings, args) -> int:
     got = prepare(st.records)
     _set_invite(st, getattr(args, "invite", None))
@@ -1297,6 +1334,31 @@ def parser() -> argparse.ArgumentParser:
     )
     iv.add_argument("--invites", metavar="PATH", help="--list で読む invites.toml（無ければ SEED_INVITES）")
 
+    tk = sub.add_parser(
+        "token", parents=[common], help="相手ごとの token（サーバーの門）を出す・見る・取り消す"
+    )
+    tks = tk.add_subparsers(dest="what", required=True)
+    for name, hlp in (
+        ("add", "一件出す（token は一度だけ出る）"),
+        ("list", "台帳を見る（ハッシュは出さない）"),
+        ("revoke", "取り消す"),
+    ):
+        t = tks.add_parser(name, parents=[common], help=hlp)
+        t.add_argument(
+            "--file", metavar="PATH", help="台帳（無ければ SEED_TOKENS、~/.config/aiseed/tokens.json）"
+        )
+        if name != "list":
+            t.add_argument("name", help="呼び名（誰に渡すか）")
+        if name == "add":
+            t.add_argument(
+                "--scope",
+                choices=("member", "buyer"),
+                default="member",
+                help="member: 招待した人。buyer: 買い手（一言を送るだけ）",
+            )
+            t.add_argument("--days", type=int, default=90, help="期限（日。既定 90）")
+            t.add_argument("--note", help="覚え書き（誰に、何のために）")
+
     k = sub.add_parser("keep", parents=[common], help="どれだけ残すかを見る・変える")
     k.add_argument("level", nargs="?", choices=keep_mod.LEVELS)
     k.add_argument("--bulk", help="重い物（写真の元）を置く別の盤の道。'' で外す")
@@ -1529,6 +1591,7 @@ COMMANDS = {
     "skill-path": cmd_skill_path,
     "keep": cmd_keep,
     "invite": cmd_invite,
+    "token": cmd_token,
     "prune": cmd_prune,
     "origin": cmd_origin,
     "grow": cmd_grow,
