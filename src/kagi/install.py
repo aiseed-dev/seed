@@ -181,6 +181,7 @@ d-i finish-install/reboot_in_progress note
 def firstboot(p: dict) -> str:
     u = p["admin"]
     ssh_rule = f"ufw allow from {p['lan']} to any port 22 proto tcp" if p["lan"] else "ufw limit 22/tcp"
+    lan_out = f"ufw allow out to {p['lan']}\n" if p["lan"] else ""
     return f"""\
 #!/bin/sh
 # kagi machine install --host {p["host"]}（docs/kagi 設計書.md §3.4）。入れた後に一度: sudo sh firstboot.sh
@@ -206,19 +207,27 @@ else
   echo "   鍵が入っていないので sshd は変えていない" >&2
 fi
 
-echo "== 2 防火壁（入る向きは閉じ、ssh だけ通す）"
-apt-get install -y ufw unattended-upgrades >/dev/null
+echo "== 2 防火壁（入りも出も既定は拒否。連載 第 5 章の形）"
+apt-get install -y ufw unattended-upgrades fail2ban >/dev/null
 ufw default deny incoming
-ufw default allow outgoing
+ufw default deny outgoing
 {ssh_rule}
-ufw --force enable
+ufw allow out 53
+ufw allow out 123/udp
+ufw allow out 80,443/tcp
+{lan_out}ufw --force enable
 
 echo "== 3 自動の更新"
 printf '%s\\n' 'APT::Periodic::Update-Package-Lists "1";' 'APT::Periodic::Unattended-Upgrade "1";' \\
   > /etc/apt/apt.conf.d/20auto-upgrades
 
-echo "== 4 時計"
+echo "== 4 時計と番犬"
 timedatectl set-ntp true || true
+if [ ! -e /etc/fail2ban/jail.local ]; then
+  printf '%s\\n' '[DEFAULT]' 'bantime = 10m' 'findtime = 10m' 'maxretry = 5' '' '[sshd]' 'enabled = true' \\
+    > /etc/fail2ban/jail.local
+fi
+systemctl restart fail2ban || true
 
 echo "== 5 見る（この三つを手順の通りに確かめる）"
 ufw status verbose

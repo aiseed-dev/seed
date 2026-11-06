@@ -129,6 +129,17 @@ fi
 sec firewall
 for s in ufw nftables firewalld; do echo "$s=$(systemctl is-active "$s" 2>/dev/null)"; done
 [ -r /etc/ufw/ufw.conf ] && grep -E '^ENABLED=' /etc/ufw/ufw.conf
+[ -r /etc/default/ufw ] && grep -E '^DEFAULT_(INPUT|OUTPUT)_POLICY=' /etc/default/ufw
+echo "fail2ban=$(systemctl is-active fail2ban 2>/dev/null)"
+
+sec timers
+systemctl list-timers --no-legend --plain 2>/dev/null | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /\.timer$/) print $i }'
+
+sec errors
+echo "err7d=$(journalctl -p err --since -7d -q --no-pager 2>/dev/null | wc -l)"
+if [ "$(id -u)" = 0 ]; then
+  echo "sshfail7d=$(journalctl -u ssh --since -7d -q --no-pager 2>/dev/null | grep -ciE 'failed|invalid user')"
+fi
 
 sec listen
 ss -ltnp 2>/dev/null
@@ -305,7 +316,7 @@ def parse_table(text: str, where: str = FILENAME) -> Table:
         for path in _names(m, "data", host):
             if not PATH.match(path) or ".." in path:
                 raise Refused(f"機械の表の {host} の data は / から始まる道で書く（英数字と . _ / @ + -）")
-        for k in ("services", "user_services"):
+        for k in ("services", "user_services", "timers"):
             for u in _names(m, k, host):
                 if not UNIT.match(u):
                     raise Refused(f"機械の表の {host} の {k} に、サービスの名として読めない物がある")
@@ -960,7 +971,29 @@ def check(
     _check_people(m, facts, out)
 
     fw = facts.pairs("firewall")
-    if (fw.get("ufw") == "active" and fw.get("ENABLED") == "yes") or fw.get("firewalld") == "active":
+    if fw.get("ufw") == "active" and fw.get("ENABLED") == "yes":
+        if fw.get("DEFAULT_INPUT_POLICY", "").upper() == "ACCEPT":
+            out.append(
+                Finding(
+                    True, "防火壁", "入る向きを既定で通している（ufw）", ["sudo ufw default deny incoming"]
+                )
+            )
+        if fw.get("DEFAULT_OUTPUT_POLICY", "").upper() == "ACCEPT":
+            out.append(
+                Finding(
+                    True,
+                    "防火壁",
+                    "出る向きを既定で通している（連載 第 5 章の形は、入りも出も既定は拒否）",
+                    [
+                        "# 先に要る出口を通してから閉じる（順を逆にすると apt と名前解決が止まる）",
+                        "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
+                        "# 家の網の機械（NAS、データベースの機械）へ出るなら: sudo ufw allow out to <LAN>",
+                        "sudo ufw default deny outgoing",
+                        "sudo apt update   # 確かめ。止まった通信は: sudo journalctl -k --grep UFW",
+                    ],
+                )
+            )
+    elif fw.get("firewalld") == "active":
         pass
     elif fw.get("nftables") == "active":
         out.append(Finding(False, "防火壁", "nftables が動いている（規則の中身は見ていない）"))
@@ -972,10 +1005,17 @@ def check(
                 "動いていない（ufw も firewalld も nftables も）",
                 [
                     "sudo apt install -y ufw",
-                    "sudo ufw default deny incoming && sudo ufw default allow outgoing",
+                    "sudo ufw default deny incoming && sudo ufw default deny outgoing",
                     "sudo ufw limit 22/tcp   # ssh を先に通す。LAN だけにするなら: sudo ufw allow from <LAN> to any port 22 proto tcp",
+                    "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
                     "sudo ufw enable",
                 ],
+            )
+        )
+    if fw.get("fail2ban") and fw["fail2ban"] != "active":
+        out.append(
+            Finding(
+                False, "防火壁", "fail2ban が動いていない（連載 第 5 章。補助の番犬で、主役は鍵でだけ入る形）"
             )
         )
 
@@ -1066,6 +1106,40 @@ def check(
         cols = line.split()
         if len(cols) == 2 and cols[1].rstrip("%").isdigit() and int(cols[1].rstrip("%")) >= DISK_FULL:
             out.append(Finding(True, "盤", f"{cols[0]} が {cols[1]}"))
+    active = {ln.strip().removesuffix(".timer") for ln in facts.lines("timers")}
+    want_t = m.get("timers", [])
+    for u in want_t:
+        if u.removesuffix(".timer") not in active:
+            name = u.removesuffix(".timer")
+            out.append(
+                Finding(
+                    True,
+                    "控え",
+                    f"timer が動いていない: {name}",
+                    [
+                        f"systemctl list-timers --all | grep {name}   # 在るかを見る",
+                        f"sudo systemctl enable --now {name}.timer",
+                    ],
+                )
+            )
+    if want_t and all(u.removesuffix(".timer") in active for u in want_t):
+        out.append(Finding(False, "控え", f"表の timer が動いている（{', '.join(want_t)}）"))
+    elif not want_t and facts.lines("timers"):
+        if "backup" in active:
+            out.append(
+                Finding(False, "控え", "backup.timer が動いている（表の timers に書くと、止まった時に出る）")
+            )
+        else:
+            out.append(
+                Finding(
+                    False, "控え", "控えの timer を表に書いていない（連載 第 10 章の backup.timer。K-08）"
+                )
+            )
+    er = facts.pairs("errors")
+    if er.get("err7d", "").isdigit():
+        tail = f"、ssh の失敗 {er['sshfail7d']}" if er.get("sshfail7d", "").isdigit() else ""
+        who = "" if facts.root else "（root でない写しで読めた分）"
+        out.append(Finding(False, "記録", f"この 7 日のエラーの行 {er['err7d']}{tail}{who}"))
     for line in facts.lines("data"):
         cols = line.split()
         if cols[0] == "missing" and len(cols) == 2:
@@ -1112,6 +1186,20 @@ def _size(kb: int) -> str:
         if kb >= n:
             return f"{kb / n:.1f} {unit}"
     return f"{kb} kB"
+
+
+def changes(before: list[Finding], after: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """前の写しから（増えた直す物、消えた直す物）。連載 第 11 章の「先週の出力と比べる」。"""
+    b = {(f.what, f.result) for f in before if f.fix}
+    a = {(f.what, f.result) for f in after if f.fix}
+    return [f for f in after if f.fix and (f.what, f.result) not in b], [
+        f for f in before if f.fix and (f.what, f.result) not in a
+    ]
+
+
+def previous_facts(d: Path, host: str) -> Path | None:
+    files = sorted((Path(d) / FACTS_DIR).glob(f"{host}-*.txt"))
+    return files[-2] if len(files) >= 2 else None
 
 
 def fixes(findings: list[Finding]) -> int:

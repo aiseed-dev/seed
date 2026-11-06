@@ -221,7 +221,16 @@ def write_report(
 def machine_view(d: Path, host: str, now: dt.datetime | None = None) -> dict:
     """一台の機械の画面の中身: 頭の一行、直す物（手付き）、見るだけ。Flet を使わない。"""
     d = Path(d)
-    v = {"host": host, "role": "", "facts": None, "head": "", "fixes": [], "notes": [], "error": None}
+    v = {
+        "host": host,
+        "role": "",
+        "facts": None,
+        "head": "",
+        "fixes": [],
+        "notes": [],
+        "error": None,
+        "changes": [],
+    }
     try:
         row = next((r for r in report.machine_rows(d, now) if r["host"] == host), None)
     except inventory.Refused as e:
@@ -239,6 +248,7 @@ def machine_view(d: Path, host: str, now: dt.datetime | None = None) -> dict:
     v["head"] = machine.head(host, facts, row["findings"])
     v["fixes"] = [{"what": f.what, "result": f.result, "how": list(f.how)} for f in row["findings"] if f.fix]
     v["notes"] = [[f.what, f.result] for f in row["findings"] if not f.fix]
+    v["changes"] = [ln.strip().removeprefix("- ") for ln in report.change_lines(row)]
     return v
 
 
@@ -509,6 +519,7 @@ def make_main(d: Path):
                     ctl.append(ft.Row([ft.ProgressRing(width=16, height=16), muted(st["busy"])]))
                 if v["error"]:
                     ctl.append(err(v["error"]))
+                ctl += [muted(c) for c in v["changes"]]
                 out.append(card(f"{st['host']}", ctl))
                 if v["fixes"]:
                     fx: list[ft.Control] = [

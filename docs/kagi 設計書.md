@@ -225,6 +225,26 @@ auth = "app"                  # public | app | gate | lan
 
 **確かめていない物。** `preseed.cfg` と `firstboot.sh` を、本物のインストーラーと入れたての機械で通していない（仮想の機械で一度通すのが次。`手順.md` の頭にもそう書く）。Ubuntu（autoinstall）と RHEL 系（dnf、kickstart）は無い。root の写しの節（`sshd -T`、`passwd -S`、sudoers）は見本でだけ試した。
 
+### 3.4b 連載「Claude と一緒に育てる Debian サーバー」との対応（11-06 夜。作者「ここと関係してきます」 https://aiseed.dev/debian-server/ ）
+
+連載は、人が Claude と一緒に一台のサーバーを作って育てる手順。kagi は、その「良い形」に機械が今も合っているかを、何台でも同じ見方で確かめる道具。良い形の出どころは連載に置き、kagi の側で別の基準を作らない。Fable が第 4・5・10・11 章を読んで揃えた（本人の連載なので、違っていたら連載の側が正しい）。
+
+| 連載の章 | 連載の形 | kagi が見る物・書く物 |
+|---|---|---|
+| 3 最小インストール | netinst、tasksel は SSH サーバーと標準ユーティリティだけ | `machine install` の `preseed.cfg`（`standard, ssh-server`。パスワードと盤は人が画面で） |
+| 4 SSH という玄関 | ed25519 の鍵、合言葉を付ける、`PasswordAuthentication no`、`PermitRootLogin no`、`sshd -t` と `reload`、別の窓で確かめてから閉じる、退路（画面） | 認証（ssh）の行、入っている鍵と鍵の表、機械の鍵の指紋。直す手は同じ順（先に別の窓で確かめる、`sshd -t`、`reload`） |
+| 5 守りの基本 | ufw は入りも出も既定は拒否、ssh を通してから有効に、出口は 53・123/udp・80,443/tcp、unattended-upgrades、fail2ban（`jail.local` に 10m・10m・5 回、`[sshd]`）、不要なサービスを止める、`ss -tlnp` | 防火壁（入る向き・出る向きの既定、fail2ban）、更新（自動の更新、再起動）、口の表との突き合わせ。`firstboot.sh` は同じ規則を同じ順で書く |
+| 6 サービスという単位 | systemd の unit と timer | `services`、`user_services`、`timers`、落ちている unit |
+| 9 外の世界に公開する | リバースプロキシ、公開しないも選択肢 | 入口の表（`[[door]]`）と Caddy の設定の形 |
+| 10 データを守る | restic、`backup.service` と `backup.timer`、合言葉は `/etc/restic/backup.env`（600）、復元の演習 | `timers = ["backup"]` が止まれば直す物。`data` の置き場が無ければ直す物。合言葉は在庫表に一件（値は書かない） |
+| 11 サーバーを育てる | 週 15 分の定例（`df`、`free`、エラー、失敗したサービス、ログイン試行、fail2ban、データベース）、先週の出力と比べる、月の保守 | `kagi weekly`（全部の機械の写しを取り直し、一枚の報告を `weekly-<日>.md` に書く）。写しに盤、メモリ、この 7 日のエラーの行数、落ちている unit。前の写しから増えた・消えた直す物を出す |
+
+**連載と違えてある所（一つ）。** ssh の設定を書くファイルの名。連載は `/etc/ssh/sshd_config.d/99-hardening.conf`、kagi は `10-kagi.conf`。sshd は同じ項目が二度出ると**最初の値**を使い、Debian は `sshd_config.d/*.conf` を名の順で先に読む。最小インストールには他のファイルが無いので `99-` でも効くが、VPS の雛形に `50-cloud-init.conf`（`PasswordAuthentication yes`）のような物が在ると、`99-` の値は効かない。kagi の突き合わせは「最初に出た値」で読むので、その時は「パスワードで入れる」が消えずに残る。連載の側に一行足すかは作者が決める。
+
+**連載に在って kagi にまだ無い物。** needrestart、PostgreSQL の中（第 7 章）、restic の中身と復元の演習の記録、月の保守の日付の記録、`journalctl` のエラーの中身（数だけ見ている）。
+
+**作者の三台で週の定例を走らせた結果（11-06 夜）。** halo 10、deb2 12、机の PC 3。三台とも、出る向きを既定で通していた（連載の形と違う所）。
+
 ### 3.5 `kagi check tokens` — 相手に出した token の台帳（11-06 夜。K-05、K-14）
 
 アプリの門（seed のサーバーなど）に入る token を、誰に、どのアプリの、どの範囲で、いつまで出したか。台帳は `~/.config/aiseed/tokens.json`（`--file` で別の場所。サーバーでは `/etc/seed/tokens.json`）で、書くのはアプリ（`seed token add`。seed の設計書 §5.9）。在るのはハッシュだけで、kagi はハッシュも出さない。token そのものの欄（`token`、`code`、`value`）があれば読まずに拒む（終了コード 2）。
@@ -261,3 +281,4 @@ auth = "app"                  # public | app | gate | lan
 - 2026-11-06 午後: §3.3 `kagi app`（Flet の PC 版の画面）。
 - 2026-11-06 夜: §3.4 機械（入れる、見る、直す手）と、認証と鍵の表。§6 の境界に例外を一つ（`machine collect`）。
 - 2026-11-06 夜: §3.5 `kagi check tokens`（相手に出した token の台帳）。
+- 2026-11-06 夜: §3.4b 連載との対応。防火壁の出る向き、fail2ban、控えの timer、この 7 日のエラー、前の写しとの比べ、`kagi weekly`。`firstboot.sh` を連載の規則に。

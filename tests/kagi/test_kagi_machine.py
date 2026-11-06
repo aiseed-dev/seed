@@ -680,3 +680,104 @@ def test_encrypt_expected(tbl):
     assert any(w == "盤" and "encrypt = true" in r for w, r in whats(f))
     f = run_check(tbl, facts_text(crypt="crypt=1"))
     assert ("盤", "暗号化されている（表の通り）") in whats(f, fix=False) and not whats(f)
+
+
+# ---- 連載「Claude と一緒に育てる Debian サーバー」の形（第 5・10・11 章）
+
+
+def test_series_shape_firewall_backup_errors(tbl):
+    fw = 'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="DROP"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nfail2ban=inactive'
+    f = run_check(tbl, facts_text(firewall=fw, timers="apt-daily.timer\nlogrotate.timer", errors="err7d=12"))
+    assert any(w == "防火壁" and "出る向きを既定で通している" in r for w, r in whats(f))
+    script = machine.fix_script("box", machine.parse_facts(facts_text()), f)
+    assert script.index("ufw allow out 53") < script.index("ufw default deny outgoing")
+    seen = whats(f, fix=False)
+    assert any(w == "防火壁" and "fail2ban が動いていない" in r for w, r in seen)
+    assert any(w == "控え" and "表に書いていない" in r for w, r in seen)
+    assert ("記録", "この 7 日のエラーの行 12（root でない写しで読めた分）") in seen
+    # 入りも出も既定は拒否で、fail2ban が動いていれば、防火壁の行は無い
+    good = fw.replace("ACCEPT", "DROP").replace("fail2ban=inactive", "fail2ban=active")
+    f = run_check(tbl, facts_text(firewall=good))
+    assert not [1 for x in f if x.what == "防火壁"]
+    # 表に書いた timer が止まれば直す物
+    tbl.machines[0]["timers"] = ["backup"]
+    f = run_check(tbl, facts_text(timers="apt-daily.timer"))
+    assert ("控え", "timer が動いていない: backup") in whats(f)
+    f = run_check(tbl, facts_text(timers="backup.timer\napt-daily.timer"))
+    assert ("控え", "表の timer が動いている（backup）") in whats(f, fix=False)
+
+
+def test_firstboot_follows_the_series(tbl):
+    tbl.machines[0]["lan"] = "192.0.2.0/24"
+    first = install.build(tbl, "box")["firstboot.sh"]
+    for line in (
+        "ufw default deny incoming",
+        "ufw default deny outgoing",
+        "ufw allow out 53",
+        "ufw allow out 123/udp",
+        "ufw allow out 80,443/tcp",
+        "ufw allow out to 192.0.2.0/24",
+        "'bantime = 10m' 'findtime = 10m' 'maxretry = 5'",
+    ):
+        assert line in first, line
+    # 入れる物を取ってから出口を閉じ、ssh を通してから有効にする
+    assert (
+        first.index("apt-get install")
+        < first.index("ufw default deny outgoing")
+        < first.index("ufw --force enable")
+    )
+    assert first.index("to any port 22") < first.index("ufw --force enable")
+    assert subprocess.run(["sh", "-n"], check=False, input=first, text=True).returncode == 0
+
+
+def test_changes_since_previous_facts_and_weekly(tmp_path, capsys, monkeypatch):
+    monkeypatch.delenv("KAGI_LOG_KEY_FILE", raising=False)
+    monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)
+    d = _dir(tmp_path)
+    stamp = f"{dt.datetime.now().astimezone():%Y-%m-%dT%H:%M:%S%z}\nuid=1000"
+    machine.save_facts(
+        d, "box", facts_text(collected=stamp, reboot="required"), dt.datetime(2026, 11, 1, 9, 0)
+    )
+    machine.save_facts(
+        d, "box", facts_text(collected=stamp, failed="foo.service"), dt.datetime(2026, 11, 6, 9, 0)
+    )
+    row = report.machine_rows(d)[0]
+    assert row["prev"] == "box-20261101-090000.txt"
+    assert [(f.what, f.result) for f in row["new"]] == [("サービス", "落ちている: foo.service")]
+    assert [(f.what, f.result) for f in row["gone"]] == [("更新", "再起動が要る")]
+    assert cli.main(["machine", "check", "--dir", str(d), "--host", "box"]) == 1
+    out = capsys.readouterr().out
+    assert "増えた 1、消えた 1" in out and "消えた: 更新: 再起動が要る" in out
+    assert any("増えた 1、消えた 1" in c for c in app.machine_view(d, "box")["changes"])
+
+    # 週の定例: 写しを取り直し、一枚を書く
+    def fake(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, facts_text(collected=stamp), "")
+
+    monkeypatch.setattr(machine.subprocess, "run", fake)
+    ledger = tmp_path / "tokens.json"
+    ledger.write_text(
+        '{"tokens": [{"name": "買い手", "app": "seed", "scope": ["buyer"], "sha256": "0", "expires": "2000-01-01"}]}'
+    )
+    assert cli.main(["weekly", "--dir", str(d), "--tokens", str(ledger)]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "## 機械" in out
+        and "- box: 直す物は無い" in out
+        and "消えた: サービス: 落ちている: foo.service" in out
+    )
+    assert "## 出した token" in out and "期限切れのまま 1" in out
+    weekly = list(d.glob("weekly-*.md"))
+    assert (
+        len(weekly) == 1 and weekly[0].read_text() == out.rstrip("\n") + "\n" or weekly[0].read_text() in out
+    )
+
+    # 入れない機械があっても報告は出る
+    def down(cmd, **kw):
+        return subprocess.CompletedProcess(
+            cmd, 255, "", "ssh: connect to host box port 22: No route to host\n"
+        )
+
+    monkeypatch.setattr(machine.subprocess, "run", down)
+    assert cli.main(["weekly", "--dir", str(d), "--tokens", str(ledger)]) == 0
+    assert "写しが取れなかった機械" in capsys.readouterr().out

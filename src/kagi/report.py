@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from kagi import audit, inventory, machine, ports, scan, smb
+from kagi import audit, inventory, machine, ports, scan, smb, tokens
 
 
 def build(
@@ -17,6 +17,7 @@ def build(
     excludes: list[str] | None = None,
     today: dt.date | None = None,
     smb_conf: Path | None = None,
+    tokens_file: Path | None = None,
 ) -> str:
     today = today or dt.date.today()
     out = [f"# kagi の報告（{today.isoformat()}）", "", f"作業の場所: `{d}`", ""]
@@ -62,6 +63,10 @@ def build(
 
     out += ["## 機械", ""]
     out += machine_lines(d)
+    out.append("")
+
+    out += ["## 出した token", ""]
+    out += token_lines(tokens_file, days, today)
     out.append("")
 
     out += ["## 走査", ""]
@@ -117,6 +122,9 @@ def machine_rows(d: Path, now: dt.datetime | None = None) -> list[dict]:
             "fixes": None,
             "what": [],
             "findings": [],
+            "prev": None,  # 前の写しの名
+            "new": [],  # 前の写しから増えた直す物
+            "gone": [],  # 消えた直す物
         }
         path = machine.latest_facts(d, host)
         if path is not None:
@@ -129,6 +137,15 @@ def machine_rows(d: Path, now: dt.datetime | None = None) -> list[dict]:
                 row["fixes"] = machine.fixes(findings)
                 row["what"] = list(dict.fromkeys(f.what for f in findings if f.fix))
                 row["findings"] = findings
+                prev = machine.previous_facts(d, host)
+                if prev is not None:
+                    try:
+                        before = machine.check(table, host, machine.load_facts(prev), ptable, ids, now)
+                    except inventory.Refused:
+                        before = None
+                    if before is not None:
+                        row["prev"] = prev.name
+                        row["new"], row["gone"] = machine.changes(before, findings)
         rows.append(row)
     return rows
 
@@ -148,4 +165,39 @@ def machine_lines(d: Path) -> list[str]:
             out.append(f"- {r['host']}: 直す物 {r['fixes']}（{'、'.join(r['what'])}）。写し {r['facts']}")
         else:
             out.append(f"- {r['host']}: 直す物は無い。写し {r['facts']}")
+        out += change_lines(r, "  ")
+    return out
+
+
+def change_lines(r: dict, indent: str = "") -> list[str]:
+    """前の写しからの変わり目（連載 第 11 章の「先週の出力と比べる」）。"""
+    if r.get("prev") is None:
+        return []
+    if not r["new"] and not r["gone"]:
+        return [f"{indent}- 前の写し（{r['prev']}）から、直す物は変わっていない"]
+    out = [f"{indent}- 前の写し（{r['prev']}）から: 増えた {len(r['new'])}、消えた {len(r['gone'])}"]
+    out += [f"{indent}  - 増えた: {f.what}: {f.result}" for f in r["new"]]
+    out += [f"{indent}  - 消えた: {f.what}: {f.result}" for f in r["gone"]]
+    return out
+
+
+def token_lines(path: Path | None = None, days: int = 30, today: dt.date | None = None) -> list[str]:
+    path = Path(path or tokens.DEFAULT).expanduser()
+    try:
+        rs = tokens.rows(tokens.load(path), days, today)
+    except inventory.Refused as e:
+        return [f"- 見ていない: {e}"]
+    live = sum(1 for r in rs if r["state"] in ("live", "soon"))
+    soon = sum(1 for r in rs if r["state"] == "soon")
+    out = [
+        (
+            f"- 出した token {len(rs)} 件、生きている {live}、{days} 日以内に切れる {soon}、"
+            f"期限切れのまま {tokens.fixes(rs)}（{path}）"
+        )
+    ]
+    out += [
+        f"  - {tokens.LABEL[r['state']]}: {r['name']}（{r['app']} {r['scope']}、{r['expires']}）"
+        for r in rs
+        if r["state"] in ("expired", "soon")
+    ]
     return out

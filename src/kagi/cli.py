@@ -59,6 +59,7 @@ MACHINES_TEMPLATE = """\
 # services = ["seed", "caddy"]  # 動いているべきサービス（systemd）。止まっていたら直す手が出る
 # user_services = ["glimmer"]   # 写しを取る人の systemd（systemctl --user）で動いているべき物
 # data = ["/srv/photos"]        # 大きさを見るデータの置き場（写真の元など、文字でない重い物）
+# timers = ["backup"]           # 動いているべき timer（控えなど）。止まると「直す」に出る
 # local = true                  # この PC 自身（写しを ssh でなくここで取る）
 # lan = "192.168.1.0/24"        # 入れる時: ssh を通す網。無ければどこからでも（回数を絞る）
 # profile = "server"            # 入れる時: server | desktop
@@ -317,6 +318,14 @@ def cmd_machine_check(args) -> int:
             code = max(code, 1)
             continue
         print(machine.table(host, facts, findings))
+        if not getattr(args, "facts", None):
+            try:
+                row = next(r for r in report.machine_rows(_dir(args)) if r["host"] == host)
+                lines = report.change_lines(row)
+            except (inventory.Refused, StopIteration):
+                lines = []
+            if lines:
+                print("\n" + "\n".join(lines))
         if machine.fixes(findings):
             code = max(code, 1)
     return code
@@ -366,6 +375,39 @@ def cmd_key_fingerprint(args) -> int:
     for _line, info in infos:
         bits = f" {info.bits} bit" if info.bits else ""
         print(f"{info.fingerprint}  {info.type}{bits}")
+    return 0
+
+
+def cmd_weekly(args) -> int:
+    """週の定例（連載 第 11 章）: 全部の機械の写しを取り直し、一枚の報告を weekly-<日>.md に書く。"""
+    import datetime as dt
+
+    d = _dir(args)
+    try:
+        table = _table(args)
+    except inventory.Refused as e:
+        _err(str(e))
+        return 2
+    failed = []
+    if not args.no_collect:
+        for m in table.machines:
+            host, local = m["host"], m.get("local") is True
+            try:
+                text = machine.collect(None if local else str(m.get("ssh", host)), paths=m.get("data"))
+                machine.save_facts(d, host, text)
+                _err(f"写しを取った: {host}")
+                if not local:
+                    _log(args, "machine.collect", host)
+            except inventory.Refused as e:
+                failed.append(f"- {host}: 写しが取れなかった（{e}）")
+                _err(f"{host}: {e}")
+    text = report.build(d, args.days, tokens_file=Path(args.tokens) if args.tokens else None)
+    if failed:
+        text += "\n## 写しが取れなかった機械\n\n" + "\n".join(failed) + "\n"
+    out = d / f"weekly-{dt.date.today().isoformat()}.md"
+    out.write_text(text, "utf-8")
+    print(text)
+    _err(f"書いた: {out}")
     return 0
 
 
@@ -469,6 +511,16 @@ def parser() -> argparse.ArgumentParser:
     s = ky.add_parser("fingerprint", help="公開鍵のファイル（.pub）の指紋")
     s.add_argument("file")
     s.set_defaults(func=cmd_key_fingerprint, sub_dir=None)
+
+    s = sub.add_parser(
+        "weekly", parents=[common], help="週の定例: 全部の機械の写しを取り直し、一枚の報告を書く"
+    )
+    s.add_argument("--no-collect", action="store_true", help="写しを取り直さない（今ある写しで）")
+    s.add_argument("--days", type=int, default=30)
+    s.add_argument(
+        "--tokens", default=None, metavar="FILE", help=f"出した token の台帳（既定 {tokens.DEFAULT}）"
+    )
+    s.set_defaults(func=cmd_weekly)
 
     s = sub.add_parser("app", parents=[common], help="係の机の画面（Flet の PC 版。網には出さない）")
     s.set_defaults(func=cmd_app)
