@@ -513,7 +513,7 @@ def settings_card(app: App) -> list[ft.Control]:
             )
         )
     # フォルダーを開くのは PC のアプリだけ（スマートフォンと Web 版は箱が一つ）
-    pc = not getattr(app.page, "web", False) and getattr(app.page, "platform", None) not in capture.MOBILE
+    pc = capture.is_pc(app)
 
     async def pick(e) -> None:
         await app.pick_folder()

@@ -45,6 +45,12 @@ def available(page: ft.Page) -> bool:
     return bool(getattr(page, "web", False)) or getattr(page, "platform", None) in MOBILE
 
 
+def is_pc(app) -> bool:
+    """PC のアプリか（Web 版でも、スマートフォンでもない）。カメラが無く、写真は選んで足す。"""
+    page = app.page
+    return not getattr(page, "web", False) and getattr(page, "platform", None) not in MOBILE
+
+
 def position_fields(pos) -> dict | None:
     """位置の部品の答え → stamp に渡す物。緯度と経度が無ければ None。"""
     lat, lon = getattr(pos, "latitude", None), getattr(pos, "longitude", None)

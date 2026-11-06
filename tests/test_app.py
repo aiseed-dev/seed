@@ -183,12 +183,22 @@ def test_no_form_controls_on_talk_and_photos(app, seedfolder, tmp_path):
 # ---------------------------------------------------------------- やり取りを記録から組む
 
 
+@pytest.mark.parametrize("platform,suffix", [(ft.PagePlatform.LINUX, "_pc"), (ft.PagePlatform.ANDROID, "")])
+def test_first_photo_text_by_platform(app, platform, suffix):
+    """PC にはカメラが無い: 案内も例の札も「選ぶ」言い方。スマートフォンは「撮る」。"""
+    app.page.web, app.page.platform = False, platform
+    words = texts(talk.view(app))
+    assert app.t("talk_first_photo" + suffix) in words
+    assert (app.t("talk_first_photo") in words) == (suffix == "")
+    assert talk.example_label(app, "first") == app.t("ex_first" + suffix)
+
+
 def test_conversation_without_observations(app):
     assert talk.turns(app.folder) == []
     words = texts(talk.view(app))
-    assert app.t("talk_hello") in words and app.t("talk_first_photo") in words
-    assert talk.examples(app) == ["first"]  # 観察が無い時は「まず一枚、撮ってみます」だけ
-    assert "まず一枚、撮ってみます" in words
+    assert app.t("talk_hello") in words and talk.first_photo_text(app) in words
+    assert talk.examples(app) == ["first"]  # 観察が無い時は「まず一枚」だけ
+    assert talk.example_label(app, "first") in words
 
 
 def test_turn_from_old_reading(app, seedfolder, tmp_path):
@@ -299,7 +309,7 @@ def test_send_words_without_local_claude_only_notes(app, seedfolder, tmp_path, m
     """言葉だけ、Claude を呼ぶ所がどれも無い（鍵も招待コードも無い）→ 本人の言葉として足すだけ。AI は呼ばない。"""
     monkeypatch.setattr(talk, "read_on_server", lambda *a: pytest.fail("言葉だけでサーバーを呼ばない"))
     run(talk.send(app, "あれはススキ"))
-    assert app.state["talk"][-1]["text"] == app.t("talk_first_photo")  # 観察がまだ無い
+    assert app.state["talk"][-1]["text"] == talk.first_photo_text(app)  # 観察がまだ無い
     path = observe(seedfolder, tmp_path, NEW_READING)
     run(talk.send(app, "雨の後だけ溜まる"))
     obs = Observation.read(path)

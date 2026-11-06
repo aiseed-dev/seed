@@ -293,7 +293,7 @@ def note_words(app: App, text: str) -> bool:
     """一番新しい観察に本人の言葉として足す（問いが残っていれば、その答えとして）。観察が無ければ False。"""
     name = last_name(app)
     if name is None:
-        say(app, app.t("talk_first_photo"))
+        say(app, first_photo_text(app))
         return False
     path = app.folder.observations / f"{name}.md"
     obs = Observation.read(path)
@@ -724,7 +724,7 @@ def conversation(app: App) -> list[ft.Control]:
     out: list[ft.Control] = []
     all_turns = turns(app.folder)
     if not all_turns:
-        out.append(claude_side([words_text(t("talk_hello")), words_text(t("talk_first_photo"))]))
+        out.append(claude_side([words_text(t("talk_hello")), words_text(first_photo_text(app))]))
     if app.folder.place_data() or land.frames(
         app.folder
     ):  # 一番上に、この土地の成り立ち（昔 → 今 → 自分の観察）
@@ -816,6 +816,15 @@ def examples(app: App, everything: bool = False) -> list[str]:
     return [*keys[:EXAMPLES_SHOWN], "more"]
 
 
+def first_photo_text(app: App) -> str:
+    """最初の一枚の案内。PC にはカメラが無いので、スマートフォンの写真を移して選ぶ言い方にする。"""
+    return app.t("talk_first_photo_pc" if capture.is_pc(app) else "talk_first_photo")
+
+
+def example_label(app: App, key: str) -> str:
+    return app.t("ex_first_pc" if key == "first" and capture.is_pc(app) else f"ex_{key}")
+
+
 def example_of(app: App, text: str) -> str | None:
     """打った言葉が例の言葉そのままなら、その鍵。"""
     from seed.app.strings import STRINGS
@@ -869,7 +878,7 @@ async def name_latest(app: App) -> None:
     obs = Observation.read(app.folder.observations / f"{name}.md") if name else None
     rel = H.today(obs)[0] if obs else None
     if obs is None or rel is None:
-        say(app, app.t("talk_first_photo"))
+        say(app, first_photo_text(app))
         return
     via = "local" if identify.available() else "server"
     if via == "server" and not app.settings.invite:
@@ -906,7 +915,7 @@ def example_chips(app: App, keys: list[str], one_line: bool = False) -> ft.Contr
     chips = []
     for k in keys:
         icon = EXAMPLE_ICONS.get(k)
-        chips.append(ft.OutlinedButton(app.t(f"ex_{k}"), icon=icon, on_click=press(k)))
+        chips.append(ft.OutlinedButton(example_label(app, k), icon=icon, on_click=press(k)))
     if one_line:
         return ft.ListView(chips, horizontal=True, spacing=6, height=40)
     return ft.Row(chips, wrap=True, spacing=6, run_spacing=6)
