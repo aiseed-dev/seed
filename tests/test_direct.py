@@ -82,6 +82,7 @@ def test_tools_have_no_publish_or_command():
         assert not any(bad in n for n in names if n != "draft_public") and "publish" not in names
     assert all(t["input_schema"]["additionalProperties"] is False for t in P.TOOLS)
     assert "公開を送る事" in P.TALK_RULES and "![一言](photos/…)" in P.TALK_RULES
+    assert "呼び名" in P.TALK_RULES and "name が無い" in P.TALK_RULES
 
 
 # ---------------------------------------------------------------- 繰り返し

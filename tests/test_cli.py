@@ -352,6 +352,10 @@ def test_strings_have_same_words():
         error_text(e, "ja", server="http://a")
         == "サーバーに届きません（http://a）。少しして試すか、「自分の Claude で読む」で。"
     )
+    e = seed_client.ClientError("server_rejected", "x", detail=["自分には送れない"])
+    assert "（自分には送れない）" in error_text(e, "ja") and "[" not in error_text(e, "ja")
+    e = seed_client.ClientError("server_rejected", "x", detail=["a", "b"])
+    assert error_text(e, "en").endswith("(a, b)") and error_text(e, "ja").endswith("（a、b）")
 
 
 def test_observe_candidate_and_owner_warning(seedfolder, photo, capsys):

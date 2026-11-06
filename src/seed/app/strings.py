@@ -1100,4 +1100,6 @@ def error_text(e: Exception, language: str, **kw) -> str:
     path = getattr(e, "path", None)
     if path is not None:
         text = f"{path.name}: {text}"
+    if isinstance(detail, (list, tuple)):
+        detail = ("、" if language == "ja" else ", ").join(str(x) for x in detail)
     return f"{text}（{detail}）" if detail and language == "ja" else f"{text} ({detail})" if detail else text
