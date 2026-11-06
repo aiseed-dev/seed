@@ -56,12 +56,14 @@ python3 -c "import ensurepip" 2>/dev/null && echo "venv: ある" || sudo apt ins
 
 ```bash
 sudo install -d -o dev -g dev -m 755 /opt/seed /var/lib/seed /var/lib/seed/public
-sudo install -d -o dev -g dev -m 700 /var/lib/seed/users /var/lib/seed/uploads
+sudo install -d -o dev -g dev -m 700 /var/lib/seed/users /var/lib/seed/uploads /var/lib/seed/audit
 sudo install -d -o root -g dev -m 750 /etc/seed
+sudo sh -c 'echo "{\"tokens\": []}" > /etc/seed/tokens.json && chown root:dev /etc/seed/tokens.json && chmod 640 /etc/seed/tokens.json'
+sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
 ls -ld /opt/seed /var/lib/seed /var/lib/seed/* /etc/seed
 ```
 
-`public` は Caddy（ユーザー caddy）が読むので 755。`users`（Web 版の人ごとの記録）と `uploads`（写真の一時置き場）は Caddy も他の人も読まないので 700。
+`tokens.json` は相手ごとの token の台帳（空）、`log-key` は記録の署名の鍵（`seed.service` が読む。無いとサービスが起きない）。`public` は Caddy（ユーザー caddy）が読むので 755。`users`（Web 版の人ごとの記録）と `uploads`（写真の一時置き場）は Caddy も他の人も読まないので 700。
 
 ### 0-2. [dev] clone、.venv、テスト
 
@@ -70,7 +72,7 @@ cd /opt/seed && git clone https://github.com/aiseed-dev/seed.git . && git log --
 ```
 
 ```bash
-cd /opt/seed && python3 -m venv .venv && .venv/bin/pip install -q -e ".[server,app,lookup]" && .venv/bin/pip install -q pytest && .venv/bin/python -m pytest -q
+cd /opt/seed && python3 -m venv .venv && .venv/bin/pip install -q -e ".[server,app,lookup,capture]" && .venv/bin/pip install -q pytest && .venv/bin/python -m pytest -q
 ```
 
 `git log --oneline -1` が debpc の main の先頭と同じかを見る（0-0 の push が済んでいるか）。
@@ -106,16 +108,7 @@ ls -l /etc/seed/
 
 両方 `-rw-r----- root dev` であること。
 
-相手ごとの token の台帳と、記録の署名の鍵（11-06 夜。設計書 §5.9。招待コードの一覧だけで始めるなら、この段は後でよい。その時は `seed.service` の `LoadCredential` の行を # にする）:
-
-```bash
-sudo install -o root -g dev -m 640 /dev/null /etc/seed/tokens.json && echo '{"tokens": []}' | sudo tee /etc/seed/tokens.json >/dev/null
-sudo install -d -o dev -g dev -m 700 /var/lib/seed/audit
-sudo bash -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
-ls -l /etc/seed/
-```
-
-`log-key` は `-rw------- root root`。値は画面に出ない。買い手に token を出す時（出た一行を、その人にだけ渡す。台帳に残るのはハッシュだけ）:
+買い手に token を出す時（出た一行を、その人にだけ渡す。台帳に残るのはハッシュだけ）:
 
 ```bash
 sudo /opt/seed/.venv/bin/seed token add "買い手の呼び名" --scope buyer --days 30 --file /etc/seed/tokens.json
@@ -236,7 +229,7 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 3 -H 'Connection: Upgrade' -
 
 ## 3. 作る人（dev）の作業（更新のたび）
 
-- 更新: `cd /opt/seed && git pull --ff-only && .venv/bin/pip install -q -e ".[server,app,lookup]"` → root が `sudo systemctl restart seed seed-app`。`deploy/` の unit を変えたときは 0-5 の `install` と `daemon-reload` も。Caddyfile を変えたときは `/etc/caddy/Caddyfile` の seed のブロックを手で置き換えて 0-7 の `validate` と `reload`。
+- 更新: `cd /opt/seed && git pull --ff-only && .venv/bin/pip install -q -e ".[server,app,lookup,capture]"` → root が `sudo systemctl restart seed seed-app`。`deploy/` の unit を変えたときは 0-5 の `install` と `daemon-reload` も。Caddyfile を変えたときは `/etc/caddy/Caddyfile` の seed のブロックを手で置き換えて 0-7 の `validate` と `reload`。
 - 招待コードの失効: `/etc/seed/invites.toml` から行を消すだけ（次の要求から効く。再起動は要らない）。Web 版のログインも同じファイルを読む。
 
 ## 4. 注意
