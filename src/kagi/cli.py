@@ -58,10 +58,17 @@ MACHINES_TEMPLATE = """\
 # hostkey = "SHA256:…"          # 機械の鍵（ed25519）の指紋。機械の画面で見て書く
 # services = ["seed", "caddy"]  # 動いているべきサービス（systemd）。止まっていたら直す手が出る
 # user_services = ["glimmer"]   # 写しを取る人の systemd（systemctl --user）で動いているべき物
+# data = ["/srv/photos"]        # 大きさを見るデータの置き場（写真の元など、文字でない重い物）
 # local = true                  # この PC 自身（写しを ssh でなくここで取る）
 # lan = "192.168.1.0/24"        # 入れる時: ssh を通す網。無ければどこからでも（回数を絞る）
 # profile = "server"            # 入れる時: server | desktop
 # encrypt = true                # 入れる時: 盤を暗号化する機械（選ぶのは人）
+#
+# [[door]]                      # 入口の表: 外から来る入口ごとに、誰が、何で守られて入るか
+# host = "deb2"
+# site = "app.example.org"      # Caddy の設定の入口の名
+# who = "招待した人"             # 誰が入れるか（人の言葉）
+# auth = "app"                  # public（誰でも）| app（裏のアプリが確かめる）| gate（Caddy が確かめる）| lan（網で絞る）
 #
 # [[key]]
 # id = "yniji-debpc"            # 在庫表（inventory.toml）にも同じ id で一件書く
@@ -266,7 +273,7 @@ def cmd_machine_collect(args) -> int:
     try:
         m = _table(args).machine(args.host)
         local = args.local or m.get("local") is True
-        text = machine.collect(None if local else str(m.get("ssh", m["host"])))
+        text = machine.collect(None if local else str(m.get("ssh", m["host"])), paths=m.get("data"))
         path = machine.save_facts(_dir(args), args.host, text)
     except inventory.Refused as e:
         _err(str(e))

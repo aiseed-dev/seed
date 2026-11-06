@@ -1,0 +1,35 @@
+# deb2 の機械の表の見本（kagi 設計書 §3.4）。作者の作業の場所の machines.toml に写して直す。値は書かない。
+# users と admins と ssh の名は見本。本物は作者が書く。
+
+[[machine]]
+host = "deb2"
+ssh = "deb2"                    # ~/.ssh/config の名
+role = "seed の入口のサーバー（Cloudflare の後ろ）"
+os = "debian-13"
+users = ["dev"]                 # 入れてよい人
+admins = ["owner"]              # sudo を持ってよい人（dev は持たない）
+keys = ["dev-debpc"]            # 入れてよい鍵
+services = ["caddy", "seed", "seed-app"]   # 動いているべき物。止まると「直す」に出る
+# hostkey = "SHA256:…"          # 機械の画面で見て書く
+
+# 入口の表: 外から来る入口ごとに、誰が、何で守られて入るか。who と auth は見本。本物は作者が書く。
+# auth: public（誰でも）| app（裏のアプリが確かめる）| gate（Caddy が確かめる）| lan（網で絞る）
+[[door]]
+host = "deb2"
+site = "seed.aiseed.dev"
+who = "入口と公開された記録は誰でも。/api/* は招待した人"
+auth = "app"
+
+[[door]]
+host = "deb2"
+site = "seed-app.aiseed.dev"
+who = "招待した人（招待コード）"
+auth = "app"
+
+# seed の外の入口（office、aiai、git、auth、analytics）も、同じ形で一件ずつ書く。
+# 書いていない入口は「表に無い入口」と出る。
+
+[[key]]
+id = "dev-debpc"
+holder = "dev"
+pub = "~/.ssh/id_ed25519.pub"

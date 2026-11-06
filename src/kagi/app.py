@@ -119,7 +119,7 @@ def collect_machine(d: Path, host: str, local: bool = False, env: dict | None = 
     m = machine.load(Path(d) / machine.FILENAME).machine(host)
     local = local or m.get("local") is True
     alias = None if local else str(m.get("ssh", host))
-    text = machine.collect(alias, runner)
+    text = machine.collect(alias, runner, paths=m.get("data"))
     path = machine.save_facts(d, host, text)
     if not local:
         try:

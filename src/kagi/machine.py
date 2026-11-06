@@ -33,6 +33,10 @@ OLD_LISTS_DAYS = 7
 DISK_FULL = 85  # %
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")  # 機械の名、ssh の名（先頭に - を許さない）
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+# 入口の守り方。public: 誰でも（認証無しが正しい）。app: 裏のアプリが確かめる（招待コード、ログイン）。
+# gate: 前の Caddy が確かめる（basic_auth、forward_auth、Bearer の照合、mTLS）。lan: 網で絞る（remote_ip）。
+DOOR_AUTH = ("public", "app", "gate", "lan")
+PATH = re.compile(r"^/[A-Za-z0-9._/@+-]{1,200}$")  # データの置き場。ssh の向こうの sh に渡すので字を絞る
 UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:-]{0,127}$")
 FP = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 KEY_TYPES = (
@@ -147,6 +151,31 @@ df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs 2>/dev/null | awk 
 sec crypt
 echo "crypt=$(lsblk -rno TYPE 2>/dev/null | grep -c crypt)"
 
+sec data
+for p in "$@"; do
+  if [ -e "$p" ]; then
+    echo "path $p $(du -skx "$p" 2>/dev/null | awk '{print $1}') $(df -P "$p" 2>/dev/null | awk 'NR==2 {print $5, $4}')"
+  else
+    echo "missing $p"
+  fi
+done
+
+sec caddy
+if [ -r /etc/caddy/Caddyfile ]; then
+  awk '
+    /^[[:space:]]*(#|$)/ { next }
+    /^[^[:space:]}]/ { sub(/[[:space:]]*\{[[:space:]]*$/, ""); print "site " $0; next }
+    $1 == "reverse_proxy" { for (i = 2; i <= NF; i++) if ($i ~ /^[A-Za-z0-9.:_\[\]-]+$/) print "  reverse_proxy " $i; next }
+    $1 == "import" || $1 == "admin" || $1 == "root" { print "  " $1 " " $NF; next }
+    $1 == "respond" { for (i = 2; i <= NF; i++) if ($i ~ /^[0-9][0-9][0-9]$/) print "  respond " $i; next }
+    $1 ~ /^@/ { print "  matcher " $2; next }
+    $1 == "not" && $2 ~ /^(remote_ip|header|expression)$/ { print "  " $2; next }
+    $1 ~ /^(basic_auth|basicauth|forward_auth|client_auth|remote_ip|file_server|header|expression)$/ { print "  " $1 }
+  ' /etc/caddy/Caddyfile
+elif [ -e /etc/caddy/Caddyfile ]; then
+  echo "unreadable"
+fi
+
 sec load
 echo "since=$(uptime -s 2>/dev/null)"
 echo "loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
@@ -219,6 +248,7 @@ def read_pub(path: Path) -> list[tuple[str, KeyInfo]]:
 class Table:
     machines: list[dict] = field(default_factory=list)
     keys: list[dict] = field(default_factory=list)
+    doors: list[dict] = field(default_factory=list)  # 入口の表: どの入口に、誰が、何で守られて入るか
 
     def machine(self, host: str) -> dict:
         for m in self.machines:
@@ -249,8 +279,8 @@ def parse_table(text: str, where: str = FILENAME) -> Table:
     except tomllib.TOMLDecodeError as e:
         m = re.search(r"line \d+, column \d+", str(e))
         raise Refused(f"機械の表が TOML として読めない: {where} ({m.group(0) if m else 'TOML'})") from None
-    machines, keys = data.get("machine", []), data.get("key", [])
-    for rows, name in ((machines, "machine"), (keys, "key")):
+    machines, keys, doors = data.get("machine", []), data.get("key", []), data.get("door", [])
+    for rows, name in ((machines, "machine"), (keys, "key"), (doors, "door")):
         if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
             raise Refused(f"機械の表の {name} は [[{name}]] の並びで書く")
         for r in rows:
@@ -272,6 +302,9 @@ def parse_table(text: str, where: str = FILENAME) -> Table:
                 if not USER.match(u):
                     raise Refused(f"機械の表の {host} の {k} に、アカウントの名として読めない物がある")
         _names(m, "keys", host)
+        for path in _names(m, "data", host):
+            if not PATH.match(path) or ".." in path:
+                raise Refused(f"機械の表の {host} の data は / から始まる道で書く（英数字と . _ / @ + -）")
         for k in ("services", "user_services"):
             for u in _names(m, k, host):
                 if not UNIT.match(u):
@@ -290,7 +323,12 @@ def parse_table(text: str, where: str = FILENAME) -> Table:
             raise Refused(f"機械の表の鍵 {kid} の fingerprint は指紋（SHA256:…）で書く")
         if "fingerprint" not in k and "pub" not in k:
             raise Refused(f"機械の表の鍵 {kid} に fingerprint も pub（公開鍵のファイル）も無い")
-    return Table(machines, keys)
+    for i, d in enumerate(doors, 1):
+        if not isinstance(d.get("host"), str) or not isinstance(d.get("site"), str) or not d.get("site"):
+            raise Refused(f"入口の表の {i} 件目に host か site が無い")
+        if d.get("auth") not in DOOR_AUTH:
+            raise Refused(f"入口の表の {d['site']} の auth は {' | '.join(DOOR_AUTH)} のどれか")
+    return Table(machines, keys, doors)
 
 
 def load(path: Path) -> Table:
@@ -381,7 +419,7 @@ def latest_facts(d: Path, host: str) -> Path | None:
     return files[-1] if files else None
 
 
-def ssh_command(alias: str) -> list[str]:
+def ssh_command(alias: str, paths: list[str] | None = None) -> list[str]:
     """人の ssh で、鍵でだけ、確かめ済みの機械にだけ入る。尋ねられる形（パスワード、初めての機械）は全部落ちる。"""
     if not NAME.match(alias):
         raise Refused("ssh の名として読めない")
@@ -392,13 +430,27 @@ def ssh_command(alias: str) -> list[str]:
         "-o", "PasswordAuthentication=no",
         "-o", "KbdInteractiveAuthentication=no",
         "-o", "ConnectTimeout=10",
-        "--", alias, "sh", "-s",
+        "--", alias, "sh", "-s", *_args(paths),
     ]  # fmt: skip
 
 
-def collect(alias: str | None, runner=None, timeout: int = 90) -> str:
-    """写しを取る。alias が None ならこの機械で。機械には SCRIPT を標準入力で渡すだけ（置かない、変えない）。"""
-    cmd = ["sh", "-s"] if alias is None else ssh_command(alias)
+def _args(paths: list[str] | None) -> list[str]:
+    """SCRIPT に渡すデータの置き場（文は変えない。大きさを測る道だけを引数で）。"""
+    paths = list(paths or [])
+    for path in paths:
+        if not PATH.match(path) or ".." in path:
+            raise Refused("データの置き場の道として読めない")
+    return ["--", *paths] if paths else []
+
+
+def collect(alias: str | None, runner=None, timeout: int = 90, paths: list[str] | None = None) -> str:
+    """写しを取る。alias が None ならこの機械で。機械には SCRIPT を標準入力で渡すだけ（置かない、変えない）。
+
+    paths は大きさを測るデータの置き場（機械の表の data）。測るのに時間が掛かるので待つ時間を延ばす。
+    """
+    cmd = ["sh", "-s", *_args(paths)] if alias is None else ssh_command(alias, paths)
+    if paths:
+        timeout = max(timeout, 600)
     try:
         r = (runner or subprocess.run)(cmd, input=SCRIPT, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError:
@@ -668,6 +720,148 @@ def _check_people(m: dict, facts: Facts, out: list[Finding]) -> None:
         out.append(Finding(True, "管理者", f"パスワード無しの sudo が {np} 行（/etc/sudoers と sudoers.d）"))
 
 
+@dataclass
+class Site:
+    name: str
+    upstreams: list[str] = field(default_factory=list)
+    static: bool = False
+    gate: list[str] = field(default_factory=list)  # Caddy の側で確かめている形
+    lan: bool = False
+
+    def what(self) -> str:
+        to = "、".join(self.upstreams) or ("置いてあるファイル" if self.static else "通す先が見えない")
+        guard = "、".join(dict.fromkeys(self.gate)) or (
+            "網で絞る行がある" if self.lan else "Caddy の側の認証は無い"
+        )
+        return f"→ {to}。{guard}"
+
+
+def parse_caddy(lines: list[str]) -> tuple[list[Site], bool]:
+    """写しの caddy の節 → 入口の一覧。（snippet）と全体の設定（名の無い { }）は入口でない。"""
+    sites: list[Site] = []
+    group: list[Site] = []  # 「a, b {」は同じ中身の入口
+    matcher_auth = responded = unreadable = False
+
+    def close() -> None:
+        if matcher_auth and responded:
+            for st in group:
+                st.gate.append("Authorization の照合")
+
+    for line in lines:
+        s = line.strip()
+        if s == "unreadable":
+            unreadable = True
+        elif line.startswith("site "):
+            close()
+            name = line[5:].strip()
+            matcher_auth = responded = False
+            group = []
+            if name and not name.startswith("(") and name != "{":
+                group = [Site(n.strip()) for n in name.split(",") if n.strip()]
+                sites += group
+        else:
+            d, _, arg = s.partition(" ")
+            for st in group:
+                if d == "reverse_proxy" and arg:
+                    st.upstreams.append(arg)
+                elif d == "file_server":
+                    st.static = True
+                elif d in ("basic_auth", "basicauth", "forward_auth", "client_auth"):
+                    st.gate.append(d)
+                elif d == "remote_ip" or (d == "matcher" and arg == "remote_ip"):
+                    st.lan = True
+            if d == "matcher" and arg in ("header", "expression"):
+                matcher_auth = True
+            elif d == "respond" and arg in ("401", "403"):
+                responded = True
+    close()
+    return sites, unreadable
+
+
+def _check_doors(table: Table, host: str, facts: Facts, out: list[Finding]) -> None:
+    sites, unreadable = parse_caddy(facts.lines("caddy"))
+    doors = [d for d in table.doors if d["host"] == host]
+    if unreadable:
+        out.append(Finding(False, "入口", "Caddy の設定が読めなかった（root の写しで見る）"))
+    if not sites:
+        for d in doors:
+            out.append(Finding(False, "入口", f"表にあって、Caddy の設定に見当たらない: {d['site']}"))
+        return
+    if not doors:
+        names = "、".join(st.name for st in sites)
+        out.append(Finding(False, "入口", f"入口の表にこの機械が無い（入口 {len(sites)}: {names}）"))
+        return
+    by = {d["site"]: d for d in doors}
+    for st in sites:
+        d = by.get(st.name)
+        if d is None:
+            out.append(
+                Finding(
+                    True,
+                    "入口",
+                    f"表に無い入口: {st.name}（{st.what()}）",
+                    [
+                        (
+                            "# machines.toml に [[door]] を一件: host、site、who（誰が入れるか）、"
+                            "auth（public | app | gate | lan）。要らない入口なら Caddyfile から外す"
+                        )
+                    ],
+                )
+            )
+            continue
+        who = f"入れるのは: {d.get('who', '書いていない')}"
+        if d["auth"] == "gate" and not st.gate:
+            out.append(
+                Finding(
+                    True,
+                    "入口",
+                    f"門が無い: {st.name}（表は gate。Caddy の設定に認証の行が無く、誰でも通る。{who}）",
+                    [
+                        "# Caddyfile のこの入口に、確かめる行を足す（basic_auth、forward_auth、Bearer の照合。deploy/halo/Caddyfile が見本）"
+                    ],
+                )
+            )
+        elif d["auth"] == "lan" and not st.lan:
+            out.append(
+                Finding(
+                    True,
+                    "入口",
+                    f"網で絞っていない: {st.name}（表は lan。Caddy の設定に remote_ip が無い。{who}）",
+                    ["# Caddyfile のこの入口に @inside remote_ip <LAN> を書き、それ以外は respond 403"],
+                )
+            )
+        elif d["auth"] == "public" and (st.gate or st.lan):
+            out.append(
+                Finding(
+                    False, "入口", f"{st.name}: 表は誰でも（public）だが、設定は絞っている（{st.what()}）"
+                )
+            )
+        elif d["auth"] == "app":
+            out.append(
+                Finding(
+                    False,
+                    "入口",
+                    f"{st.name}: 裏のアプリが確かめる（{st.what()}。アプリの中は見ていない。{who}）",
+                )
+            )
+        else:
+            label = {"public": "誰でも", "gate": "Caddy が確かめる", "lan": "網で絞る"}[d["auth"]]
+            out.append(Finding(False, "入口", f"{st.name}: {label}（{st.what()}。{who}）"))
+    seen = {st.name for st in sites}
+    for d in doors:
+        if d["site"] not in seen:
+            out.append(
+                Finding(
+                    True,
+                    "入口",
+                    f"表にあって、Caddy の設定に無い: {d['site']}",
+                    [
+                        "# まだ置いていない入口なら、置く（配備の手順）。もう要らない入口なら machines.toml から消す"
+                    ],
+                )
+            )
+
+
 def check(
     table: Table,
     host: str,
@@ -831,6 +1025,8 @@ def check(
             )
         )
 
+    _check_doors(table, host, facts, out)
+
     t = facts.pairs("time")
     if t and t.get("NTPSynchronized") != "yes":
         out.append(
@@ -870,12 +1066,38 @@ def check(
         cols = line.split()
         if len(cols) == 2 and cols[1].rstrip("%").isdigit() and int(cols[1].rstrip("%")) >= DISK_FULL:
             out.append(Finding(True, "盤", f"{cols[0]} が {cols[1]}"))
+    for line in facts.lines("data"):
+        cols = line.split()
+        if cols[0] == "missing" and len(cols) == 2:
+            out.append(
+                Finding(
+                    True,
+                    "データ",
+                    f"置き場が無い: {cols[1]}",
+                    ["# 盤が繋がっているか、道が合っているかを見る（mount、ls）"],
+                )
+            )
+        elif cols[0] == "path" and len(cols) >= 3 and cols[2].isdigit():
+            size = _size(int(cols[2]))
+            rest = (
+                f"（その盤は {cols[3]} 使用、残り {_size(int(cols[4]))}）"
+                if len(cols) == 5 and cols[4].isdigit()
+                else ""
+            )
+            out.append(Finding(False, "データ", f"{cols[1]}: {size}{rest}"))
     disks = [ln.split() for ln in facts.lines("disk")]
     if disks:
         out.append(Finding(False, "盤", "、".join(f"{c[0]} {c[1]}" for c in disks if len(c) == 2)))
     if facts.pairs("crypt").get("crypt") == "0":
         out.append(Finding(False, "盤", "暗号化されていない（持ち出す機械なら入れ直す時に。K-08）"))
     return out
+
+
+def _size(kb: int) -> str:
+    for unit, n in (("TB", 1 << 30), ("GB", 1 << 20), ("MB", 1 << 10)):
+        if kb >= n:
+            return f"{kb / n:.1f} {unit}"
+    return f"{kb} kB"
 
 
 def fixes(findings: list[Finding]) -> int:
@@ -934,8 +1156,8 @@ def _toml(v) -> str:
 
 def append_row(path: Path, kind: str, row: dict) -> None:
     """機械の表に [[machine]] か [[key]] を一件足す。足した形を読めるか確かめてから書く。空の欄は書かない。"""
-    if kind not in ("machine", "key"):
-        raise Refused("足せるのは machine か key")
+    if kind not in ("machine", "key", "door"):
+        raise Refused("足せるのは machine か key か door")
     path = Path(path)
     body = "".join(f"{k} = {_toml(v)}\n" for k, v in row.items() if v not in ("", [], None, False))
     try:

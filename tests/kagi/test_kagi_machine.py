@@ -540,3 +540,135 @@ def test_machine_view_and_local_collect(tmp_path, monkeypatch):
     assert ["OS", "Debian GNU/Linux 13 (trixie)、kernel 6.12.0"] in v["notes"]
     with pytest.raises(Refused, match="公開鍵が要る"):
         app.install_files(d, "box")
+
+
+# ---- 入口の表（誰が、何で守られて入るか） ----
+
+CADDY = """site
+site (cf)
+  header
+site open.example.org
+  import cf
+  reverse_proxy 127.0.0.1:8550
+site files.example.org, www.example.org
+  root /srv/www
+  file_server
+site app.example.org
+  reverse_proxy 127.0.0.1:8560
+site admin.example.org
+  basic_auth
+  reverse_proxy 127.0.0.1:9000
+site :11444
+  matcher expression
+  reverse_proxy 127.0.0.1:11434
+  respond 401
+site lan.example.org
+  matcher {
+  remote_ip
+  respond 403
+  reverse_proxy 127.0.0.1:8090"""
+
+
+def _doors(tbl, *rows):
+    tbl.doors[:] = [{"host": "box", "site": s, "auth": a, "who": w} for s, a, w in rows]
+    return tbl
+
+
+def test_parse_caddy_sites():
+    sites, unreadable = machine.parse_caddy(CADDY.splitlines())
+    by = {s.name: s for s in sites}
+    assert not unreadable and "(cf)" not in by and "" not in by
+    assert set(by) == {
+        "open.example.org",
+        "files.example.org",
+        "www.example.org",
+        "app.example.org",
+        "admin.example.org",
+        ":11444",
+        "lan.example.org",
+    }
+    assert by["open.example.org"].upstreams == ["127.0.0.1:8550"] and not by["open.example.org"].gate
+    assert by["files.example.org"].static and by["www.example.org"].static
+    assert by["admin.example.org"].gate == ["basic_auth"]
+    assert by[":11444"].gate == ["Authorization の照合"]
+    assert by["lan.example.org"].lan and not by["lan.example.org"].gate
+
+
+def test_door_findings(tbl):
+    text = facts_text(caddy=CADDY)
+    # 入口の表にこの機械が無ければ、見るだけで入口を並べる
+    f = run_check(tbl, text)
+    assert any(w == "入口" and "入口の表にこの機械が無い（入口 7" in r for w, r in whats(f, fix=False))
+    _doors(
+        tbl,
+        ("open.example.org", "public", "誰でも"),
+        ("app.example.org", "gate", "招待した人"),
+        ("admin.example.org", "gate", "係"),
+        (":11444", "gate", "家の機械"),
+        ("lan.example.org", "lan", "家の中"),
+        ("files.example.org", "lan", "家の中"),
+        ("later.example.org", "app", "これから置く"),
+    )
+    f = run_check(tbl, text)
+    fixes = [r for w, r in whats(f) if w == "入口"]
+    assert any(r.startswith("表に無い入口: www.example.org") for r in fixes)
+    assert any(r.startswith("門が無い: app.example.org") and "招待した人" in r for r in fixes)
+    assert any(r.startswith("網で絞っていない: files.example.org") for r in fixes)
+    assert "表にあって、Caddy の設定に無い: later.example.org" in fixes
+    assert len(fixes) == 4
+    notes = [r for w, r in whats(f, fix=False) if w == "入口"]
+    assert any(r.startswith("admin.example.org: Caddy が確かめる") and "basic_auth" in r for r in notes)
+    assert any(r.startswith(":11444: Caddy が確かめる") for r in notes)
+    assert any(r.startswith("open.example.org: 誰でも") for r in notes)
+    # app は「アプリの中は見ていない」と必ず言う
+    _doors(tbl, ("app.example.org", "app", "招待した人"))
+    f = run_check(tbl, facts_text(caddy="site app.example.org\n  reverse_proxy 127.0.0.1:8560"))
+    assert any("アプリの中は見ていない" in r for w, r in whats(f, fix=False) if w == "入口")
+    with pytest.raises(Refused, match="auth"):
+        machine.parse_table('[[door]]\nhost = "a"\nsite = "x"\nauth = "none"\n')
+
+
+def test_script_never_prints_caddy_values(tmp_path):
+    # 写しの文の caddy の所だけを、見本の Caddyfile に当てる。秘密らしい文字列が出ない事
+    conf = tmp_path / "Caddyfile"
+    fake = "not-a-real-hash-Zq81Zq81Zq81Zq81"
+    conf.write_text(
+        "{\n\tadmin off\n}\n"
+        "admin.example.org {\n"
+        f"\tbasic_auth {{\n\t\tkakari {fake}\n\t}}\n"
+        f'\t@ok header Authorization "Bearer {fake}"\n'
+        "\treverse_proxy 127.0.0.1:9000 {\n"
+        f"\t\theader_up X-Token {fake}\n\t}}\n"
+        '\trespond "nope" 401\n}\n'
+    )
+    start = machine.SCRIPT.index("  awk '", machine.SCRIPT.index("sec caddy"))
+    end = machine.SCRIPT.index("' /etc/caddy/Caddyfile", start)
+    prog = machine.SCRIPT[start + len("  awk '") : end]
+    r = subprocess.run(["awk", prog, str(conf)], check=True, capture_output=True, text=True)
+    assert fake not in r.stdout and "kakari" not in r.stdout and "nope" not in r.stdout
+    sites, _ = machine.parse_caddy(r.stdout.splitlines())
+    assert [s.name for s in sites] == ["admin.example.org"]
+    assert sites[0].gate == ["basic_auth", "Authorization の照合"] and sites[0].upstreams == [
+        "127.0.0.1:9000"
+    ]
+
+
+def test_data_paths(tbl, tmp_path):
+    f = run_check(tbl, facts_text(data="path /srv/photos 251658240 14% 1503238553\nmissing /mnt/backup"))
+    assert ("データ", "置き場が無い: /mnt/backup") in whats(f)
+    assert ("データ", "/srv/photos: 240.0 GB（その盤は 14% 使用、残り 1.4 TB）") in whats(f, fix=False)
+    # 道は引数で渡す（文は変えない）。字を絞る
+    assert machine.ssh_command("box", ["/srv/photos"])[-6:] == ["--", "box", "sh", "-s", "--", "/srv/photos"]
+    assert machine.ssh_command("box")[-1] == "-s"
+    for bad in ("relative", "/a; rm -rf /", "/a/../b", "/a b", "/$(x)"):
+        with pytest.raises(Refused):
+            machine.ssh_command("box", [bad])
+        with pytest.raises(Refused):
+            machine.parse_table(f'[[machine]]\nhost = "a"\ndata = ["{bad}"]\n')
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "x").write_bytes(b"0" * 4096)
+    facts = machine.parse_facts(
+        machine.collect(None, paths=[str(tmp_path / "big"), "/nonexistent-kagi-test"])
+    )
+    lines = facts.lines("data")
+    assert lines[0].startswith(f"path {tmp_path / 'big'} ") and lines[1] == "missing /nonexistent-kagi-test"
