@@ -12,17 +12,16 @@ deb2 は Cloudflare の後ろ（Caddy の `(cf)` スニペット、origin 証明
 
 鍵（Claude、Pl@ntNet、記録の署名）は鍵ごとに root だけが読めるファイル（600 root）に置き、systemd の `LoadCredential=` がサービスにだけ渡す。サーバーは `$CREDENTIALS_DIRECTORY` に鍵が在ればそれを、無ければ環境変数を読む（手元で動かす時とテスト）。`/etc/seed/env` には秘密でない設定（URL、置き場、上限、モデル）だけ。Web に出すのは入口、公開された記録、使い方の説明だけ（作者 11-06「Web 版は、マニュアル的なものだけにする」）。
 
-## 0. 11-06 の朝の手順（上から順に。コピーして打てる形）
+## 0. 手順（上から順に。コピーして打てる形。11-06 深夜に、鍵の置き方と利用者を直した）
 
 ### 0-★. サーバーを立ち上げる順（11-06。**提出と動画には要らない**。動画は手元の Flet の PC 版で撮り、GitHub の main と同じ版を見せる）（作者「帰ってきたら、web を立ち上げましょう」「作り直せよ。AI の書いた膨大な履歴は誰も見ない」）
 
 公開する repo は、今の版だけの一つのコミットにする（過去の版を持たない。過去の版に残っていた畑の座標は、これで公開の側に出ない）。作者の手元の履歴（決めた日と理由）はこの repo に残り、動画の git log の場面はここから撮る。
 
-1. **[debpc、作者] push**: 手元の main は 11-06 に今の版だけの一つのコミットにまとめた（古い履歴は枝 `backup-11-06`。要らなければ `git branch -D backup-11-06`）。それを GitHub の main に置く。
+1. **[debpc、作者] push**: 手元の main を GitHub の main に置く。一つのコミットにまとめて置き直す作業（`--force`）は 11-06 に済んでいるので、普通の push でよい（手元は GitHub の先に進んでいるだけ。11-06 深夜に確かめた）。
    ```bash
-   cd /home/dev/dev/seed && git push --force origin main
+   cd /home/dev/dev/seed && git push
    ```
-   これで GitHub の過去の版は無くなる（GitHub が古いコミットを暫く保持しうるので、公開後に Support へ sensitive data removal を頼む）。
 2. **[deb2] 0-1〜0-7** を上から。前の形（`dev` で動かし、鍵を `/etc/seed/env` に書いた）で置いてあれば、先に **0-9**。
 3. **[Claude] 0-8** の外からの確かめ。
 4. halo の二つの口の門（`deploy/halo/手順.md`）は後でよい。
@@ -30,7 +29,7 @@ deb2 は Cloudflare の後ろ（Caddy の `(cf)` スニペット、origin 証明
 
 以後は普通に commit と push。コミットは要る時だけ、一行で。
 
-### 0-0. 前の晩までに済ませておく物（debpc で）
+### 0-0. 済んだ物（11-06。履歴の中の座標の置き換え。記録として残す。今は打たない）
 
 - 11-05 夜の時点で、debpc の main は最後に fetch した GitHub の main より **25 コミット先**（`git log origin/main..main`）。ほかに作業中の変更（`server/settings.py`、`cli.py` の `seed invite --list`）がある。**commit して作者が push してから** deb2 で clone する。push が無いと deb2 には古い物が入る（招待コードの読み直しと `--list` が無い）。
 
@@ -169,7 +168,7 @@ sudo -u seed /opt/seed/.venv/bin/seed invite --list --invites /etc/seed/invites.
 
 `N 件` と呼び名が出る。見本の `にじ`（`exam…`）が残っていたら 0-3 に戻る。
 
-動かす人の token を一つ出す（管理の画面に入る鍵。出た一行を、自分のアプリの招待コードの欄に入れる。出るのはこの一度だけ）:
+動かす人の token を一つ出す（管理に入る鍵。出た一行を、机の PC の管理のアプリ `kagi app` の「人の出入り」の「繋ぐ先」に入れる。出るのはこの一度だけ。どこにも書き写さない）:
 
 ```bash
 sudo -u seed /opt/seed/.venv/bin/seed token add "自分の呼び名" --scope admin --days 365 --file /var/lib/seed/gate/tokens.json
