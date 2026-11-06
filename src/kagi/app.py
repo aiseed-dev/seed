@@ -157,7 +157,7 @@ def _audit_card(d: Path, env: dict | None) -> dict:
     try:
         key = audit.find_key(env)
     except audit.NoKey as e:
-        card["summary"] = "検証していない（署名の鍵が無い。手引き §3）"
+        card["summary"] = "検証していない（署名の鍵が無い。docs/kagi 手引き.md §3）"
         card["error"] = str(e)
         return card
     card["key"] = True
@@ -774,7 +774,7 @@ def make_main(d: Path):
                 key = audit.find_key()
                 seq = audit.add(d / "audit.log", key, *vals)
             except audit.NoKey:
-                toast("署名の鍵が無い（手引き §3）")
+                toast("署名の鍵が無い（docs/kagi 手引き.md §3）")
                 return
             except (ValueError, OSError) as ex:
                 toast(str(ex) if isinstance(ex, ValueError) else f"記録に書けない ({type(ex).__name__})")

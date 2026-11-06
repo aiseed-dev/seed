@@ -147,6 +147,7 @@ def test_good_machine_has_nothing_to_fix(tbl):
     seen = whats(findings, fix=False)
     assert ("認証（ssh）", "鍵でだけ入る形。設定のファイルから（Match の中は見ていない）") in seen
     assert any(w == "写し" and "root でない" in r for w, r in seen)
+    assert any(w == "写し" and "他の人の口のプロセスの名" in r for w, r in seen)
 
 
 def test_auth_findings(tbl):
@@ -781,3 +782,27 @@ def test_changes_since_previous_facts_and_weekly(tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(machine.subprocess, "run", down)
     assert cli.main(["weekly", "--dir", str(d), "--tokens", str(ledger)]) == 0
     assert "写しが取れなかった機械" in capsys.readouterr().out
+
+
+def test_dir_default_uses_here_when_tables_are_here(tmp_path, monkeypatch):
+    """--dir が無く ./kagi-data も無い時、今の場所に表があれば今の場所を使う。"""
+    import argparse
+
+    ns = argparse.Namespace(sub_dir=None, top_dir=None)
+    monkeypatch.chdir(tmp_path)
+    assert cli._dir(ns) == cli.Path(cli.DEFAULT_DIR)  # 表が無ければ既定のまま
+    (tmp_path / "machines.toml").write_text("", "utf-8")
+    assert cli._dir(ns) == cli.Path(".")
+    (tmp_path / "kagi-data").mkdir()
+    assert cli._dir(ns) == cli.Path(cli.DEFAULT_DIR)  # ./kagi-data が在ればそちら
+    ns.top_dir = str(tmp_path / "other")
+    assert cli._dir(ns) == tmp_path / "other"  # --dir が先
+
+
+def test_dir_default_inventory_only(tmp_path, monkeypatch):
+    import argparse
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "inventory.toml").write_text("", "utf-8")
+    assert cli._dir(argparse.Namespace(sub_dir=None, top_dir=None)) == cli.Path(".")
+    assert cli.main(["check", "inventory"]) == 0

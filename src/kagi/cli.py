@@ -80,7 +80,15 @@ MACHINES_TEMPLATE = """\
 
 
 def _dir(args) -> Path:
-    return Path(args.sub_dir or args.top_dir or DEFAULT_DIR).expanduser()
+    """作業の場所。--dir が無ければ ./kagi-data。それが無く、今の場所に表があれば今の場所。"""
+    given = args.sub_dir or args.top_dir
+    if given:
+        return Path(given).expanduser()
+    default = Path(DEFAULT_DIR)
+    here = Path(".")
+    if not default.exists() and any((here / n).exists() for n in (machine.FILENAME, "inventory.toml")):
+        return here
+    return default
 
 
 def _err(msg: str) -> None:
@@ -236,7 +244,7 @@ def _log(args, action: str, detail: str) -> None:
         seq = audit.add(_dir(args) / "audit.log", key, os.environ.get("USER", "?"), action, detail)
         _err(f"記録に足した: seq {seq}（{action} {detail}）")
     except audit.NoKey:
-        _err(f"記録には足していない（署名の鍵が無い。手引き §3）: {action} {detail}")
+        _err(f"記録には足していない（署名の鍵が無い。docs/kagi 手引き.md §3）: {action} {detail}")
     except (ValueError, OSError) as e:
         _err(f"記録に足せなかった ({type(e).__name__}): {action} {detail}")
 

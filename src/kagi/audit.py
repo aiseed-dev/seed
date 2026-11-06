@@ -18,7 +18,7 @@ from pathlib import Path
 GENESIS = "0" * 64
 KEY_NAME = "kagi-log-key"
 HOWTO = (
-    "署名の鍵が無い。人が作って置く（kagi は作らない。手引き §3）: "
+    "署名の鍵が無い。人が作って置く（kagi は作らない。docs/kagi 手引き.md §3）: "
     "head -c 32 /dev/urandom > ~/.config/kagi/log-key; chmod 600 ~/.config/kagi/log-key; "
     "export KAGI_LOG_KEY_FILE=~/.config/kagi/log-key"
 )

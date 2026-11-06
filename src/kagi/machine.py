@@ -896,7 +896,7 @@ def check(
             Finding(
                 False,
                 "写し",
-                "root でない写し。見えない物: 実際に効いている sshd の値、他の人の authorized_keys、パスワードの状態、sudoers",
+                "root でない写し。見えない物: 実際に効いている sshd の値、他の人の authorized_keys、他の人の口のプロセスの名、パスワードの状態、sudoers",
             )
         )
 

@@ -94,7 +94,7 @@ def build(
         else:
             out.append(f"- ok {n} lines")
     except audit.NoKey:
-        out.append("- 検証していない（署名の鍵が無い。手引き §3）")
+        out.append("- 検証していない（署名の鍵が無い。docs/kagi 手引き.md §3）")
     except (OSError, UnicodeDecodeError) as e:
         out.append(f"- 記録を読めない ({type(e).__name__})")
     out.append("")
