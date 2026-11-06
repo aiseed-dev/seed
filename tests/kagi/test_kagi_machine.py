@@ -672,3 +672,11 @@ def test_data_paths(tbl, tmp_path):
     )
     lines = facts.lines("data")
     assert lines[0].startswith(f"path {tmp_path / 'big'} ") and lines[1] == "missing /nonexistent-kagi-test"
+
+
+def test_encrypt_expected(tbl):
+    tbl.machines[0]["encrypt"] = True
+    f = run_check(tbl, facts_text(crypt="crypt=0"))
+    assert any(w == "盤" and "encrypt = true" in r for w, r in whats(f))
+    f = run_check(tbl, facts_text(crypt="crypt=1"))
+    assert ("盤", "暗号化されている（表の通り）") in whats(f, fix=False) and not whats(f)

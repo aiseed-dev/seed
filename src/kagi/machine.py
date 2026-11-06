@@ -1088,8 +1088,22 @@ def check(
     disks = [ln.split() for ln in facts.lines("disk")]
     if disks:
         out.append(Finding(False, "盤", "、".join(f"{c[0]} {c[1]}" for c in disks if len(c) == 2)))
-    if facts.pairs("crypt").get("crypt") == "0":
+    crypt = facts.pairs("crypt").get("crypt")
+    if crypt == "0" and m.get("encrypt") is True:
+        out.append(
+            Finding(
+                True,
+                "盤",
+                "表は暗号化する機械（encrypt = true）だが、暗号化されていない",
+                [
+                    "# 後からは難しい。入れ直す時に暗号化 LVM を選ぶ（kagi machine install の手順）。それまで守る物を置かない"
+                ],
+            )
+        )
+    elif crypt == "0":
         out.append(Finding(False, "盤", "暗号化されていない（持ち出す機械なら入れ直す時に。K-08）"))
+    elif crypt and crypt.isdigit() and m.get("encrypt") is True:
+        out.append(Finding(False, "盤", "暗号化されている（表の通り）"))
     return out
 
 
