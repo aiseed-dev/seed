@@ -1,34 +1,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 590" width="960" height="590" font-family="'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Sans', 'Yu Gothic', sans-serif">
 <title>配線図: 今の形</title>
 <rect width="960" height="590" fill="#ffffff"/>
-<text x="24" y="30" font-size="18" fill="#1f2a1c" text-anchor="start" font-weight="700">今の形（2026-11-06 に三台の中から読んだ）</text>
-<ellipse cx="480" cy="62" rx="110" ry="26" fill="#eef2f6" stroke="#8a8f86" stroke-width="2"/><text x="480" y="67" font-size="15" fill="#1f2a1c" text-anchor="middle" font-weight="700">インターネット</text>
+<text x="24" y="30" font-size="18" fill="#1f2a1c" text-anchor="start" font-weight="700">今の形（2026-11-06 に測った）</text>
+<ellipse cx="480" cy="62" rx="110" ry="26" fill="#eef2f6" stroke="#8a8f86" stroke-width="2"/>
+<text x="480" y="67" font-size="15" fill="#1f2a1c" text-anchor="middle" font-weight="700">インターネット</text>
 <line x1="480" y1="88" x2="480" y2="112" stroke="#1f2a1c" stroke-width="2.2"/>
-<rect x="360" y="112" width="240" height="62" rx="10" fill="#ffffff" stroke="#8a8f86" stroke-width="2.2"/>
-<text x="480.0" y="136" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">家のルーター</text>
-<text x="480.0" y="158" text-anchor="middle" font-size="13" fill="#5f6b5a">出口は一つ</text>
-<text x="612" y="136" font-size="12" fill="#5f6b5a" text-anchor="start" font-weight="400">外 → deb2 の 443 の通し方</text>
-<text x="612" y="153" font-size="12" fill="#5f6b5a" text-anchor="start" font-weight="400">（転送か IPv6）は未確認</text>
+<rect x="340" y="112" width="280" height="62" rx="10" fill="#ffffff" stroke="#8a8f86" stroke-width="2.2"/>
+<text x="480.0" y="136" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">家のルーター（ヤマハ）</text>
+<text x="480.0" y="158" text-anchor="middle" font-size="13" fill="#5f6b5a">出口は一つ。管理の口 80・22 が家の網に開く</text>
 <line x1="480" y1="174" x2="480" y2="214" stroke="#1f2a1c" stroke-width="2.2"/>
 <line x1="60" y1="214" x2="900" y2="214" stroke="#1f2a1c" stroke-width="3"/>
-<text x="60" y="205" font-size="14" fill="#1f2a1c" text-anchor="start" font-weight="700">網 A（家の網。四つとも同じ網に居る）</text>
+<text x="60" y="205" font-size="14" fill="#1f2a1c" text-anchor="start" font-weight="700">網 A（家の網）</text>
 <line x1="160.0" y1="214" x2="160.0" y2="262" stroke="#1f2a1c" stroke-width="2.2"/>
 <rect x="60" y="262" width="200" height="104" rx="10" fill="#ffffff" stroke="#d9772b" stroke-width="2.2"/>
 <text x="160.0" y="286" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">deb2（公開）</text>
 <text x="160.0" y="308" text-anchor="middle" font-size="13" fill="#5f6b5a">入口のサーバー</text>
-<text x="160.0" y="327" text-anchor="middle" font-size="13" fill="#5f6b5a">外へ 443（Cloudflare の後ろ）</text>
-<text x="160.0" y="346" text-anchor="middle" font-size="13" fill="#5f6b5a">線の口が一つ空いている</text>
+<text x="160.0" y="327" text-anchor="middle" font-size="13" fill="#5f6b5a">外へ 443</text>
+<text x="160.0" y="346" text-anchor="middle" font-size="13" fill="#5f6b5a">線の口が一つ空き</text>
 <line x1="400.0" y1="214" x2="400.0" y2="262" stroke="#1f2a1c" stroke-width="2.2"/>
 <rect x="290" y="262" width="220" height="104" rx="10" fill="#ffffff" stroke="#4f7a34" stroke-width="2.2"/>
 <text x="400.0" y="286" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">halo（データ）</text>
-<text x="400.0" y="308" text-anchor="middle" font-size="13" fill="#c0392b">認証の無い口が三つ外向き</text>
-<text x="400.0" y="327" text-anchor="middle" font-size="13" fill="#c0392b">IPv6 の外向きの番地</text>
+<text x="400.0" y="308" text-anchor="middle" font-size="13" fill="#5f6b5a">口 22・8080・11434・11435</text>
+<text x="400.0" y="327" text-anchor="middle" font-size="13" fill="#5f6b5a">防火壁が相手の番地で絞る</text>
 <text x="400.0" y="346" text-anchor="middle" font-size="13" fill="#5f6b5a">線の口は二つとも使用中</text>
 <line x1="635.0" y1="214" x2="635.0" y2="262" stroke="#1f2a1c" stroke-width="2.2"/>
 <rect x="540" y="262" width="190" height="104" rx="10" fill="#ffffff" stroke="#356aa0" stroke-width="2.2"/>
 <text x="635.0" y="286" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">机の PC</text>
 <text x="635.0" y="308" text-anchor="middle" font-size="13" fill="#5f6b5a">作業と管理</text>
-<text x="635.0" y="327" text-anchor="middle" font-size="13" fill="#5f6b5a">ここから各機械へ ssh</text>
+<text x="635.0" y="327" text-anchor="middle" font-size="13" fill="#5f6b5a">halo の四つの口に届く</text>
 <line x1="830.0" y1="214" x2="830.0" y2="262" stroke="#1f2a1c" stroke-width="2.2"/>
 <rect x="760" y="262" width="140" height="104" rx="10" fill="#ffffff" stroke="#8a8f86" stroke-width="2.2"/>
 <text x="830.0" y="286" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">他の機器</text>
@@ -37,15 +36,15 @@
 <line x1="400" y1="366" x2="400" y2="432" stroke="#1f2a1c" stroke-width="2.2"/>
 <line x1="635" y1="366" x2="635" y2="432" stroke="#1f2a1c" stroke-width="2.2"/>
 <line x1="400" y1="432" x2="635" y2="432" stroke="#1f2a1c" stroke-width="3"/>
-<text x="517" y="454" font-size="13" fill="#1f2a1c" text-anchor="middle" font-weight="700">網 B（halo と机の PC の間の二本目）</text>
+<text x="517" y="454" font-size="13" fill="#1f2a1c" text-anchor="middle" font-weight="700">網 B（二本目。halo はこの網では何も受けない）</text>
 <rect x="60" y="404" width="220" height="84" rx="10" fill="#ffffff" stroke="#4f7a34" stroke-width="2.2" stroke-dasharray="7 5"/>
 <text x="170.0" y="428" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">miniPC</text>
 <text x="170.0" y="450" text-anchor="middle" font-size="13" fill="#5f6b5a">まだ繋いでいない</text>
 <text x="170.0" y="469" text-anchor="middle" font-size="13" fill="#5f6b5a">初期化して盤を暗号化する</text>
-<path d="M 160 262 C 190 232, 360 232, 400 262" fill="none" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 5"/>
-<path d="M 160 262 C 250 222, 590 222, 635 262" fill="none" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 5"/>
+<path d="M 160 262 C 200 230, 360 230, 400 262" fill="none" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 5"/>
+<path d="M 160 262 C 200 190, 400 180, 430 174" fill="none" stroke="#c0392b" stroke-width="2.4" stroke-dasharray="6 5"/>
 <rect x="60" y="510" width="840" height="62" rx="10" fill="#fdf3f1" stroke="#c0392b" stroke-width="2.2"/>
 <text x="480.0" y="534" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c"></text>
-<text x="480" y="536" font-size="14" fill="#c0392b" text-anchor="middle" font-weight="700">deb2 が破られると、同じ網の halo と机の PC に直に届く（赤の点線）。</text>
-<text x="480" y="557" font-size="13" fill="#c0392b" text-anchor="middle" font-weight="400">個人情報の miniPC を同じ網に繋げば、そこにも届く。</text>
+<text x="480" y="536" font-size="14" fill="#c0392b" text-anchor="middle" font-weight="700">deb2 から届いたのは二つ（赤の点線）: halo の 11435 と、ルーターの管理の口。</text>
+<text x="480" y="557" font-size="13" fill="#5f6b5a" text-anchor="middle" font-weight="400">halo の 22・8080・11434 と、机の PC の口には、deb2 から届かなかった。</text>
 </svg>
