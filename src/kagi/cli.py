@@ -121,6 +121,12 @@ def cmd_check_inventory(args) -> int:
         return 2
     res = inventory.check(secrets, args.days)
     print(inventory.table(res, args.days))
+    if not secrets:
+        # 在庫表が空でも「抜けも期限切れも無い」になるので、鍵の表に鍵があれば一行言う（機械の表が読めた時だけ）
+        path = _dir(args) / machine.FILENAME
+        table = _optional(machine.load, path) if path.exists() else None
+        if table and table.keys:
+            print(f"\n鍵の表に鍵が {len(table.keys)} 件あるが、在庫表は空（kagi key list で見る）")
     return 1 if res.failed else 0
 
 

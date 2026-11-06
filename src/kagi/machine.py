@@ -712,6 +712,16 @@ def _check_people(m: dict, facts: Facts, out: list[Finding]) -> None:
             out.append(
                 Finding(True, "管理者", f"表に無い管理者（sudo の組）: {u}", [f"sudo gpasswd -d {u} sudo"])
             )
+        if admins:
+            # 誰が sudo を持つかを、表と合っている時も必ず一行（sudo の要る手を誰が打つかが分かるように）
+            names = "、".join(sorted(members)) or "無し"
+            if members == admins:
+                tail = "表の通り"
+            elif members - admins:
+                tail = "表に無い人が居る"
+            else:
+                tail = f"表の admins に居て持たない: {'、'.join(sorted(admins - members))}"
+            out.append(Finding(False, "管理者", f"sudo を持つ人 {len(members)}: {names}（{tail}）"))
     else:
         out.append(
             Finding(

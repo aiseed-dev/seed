@@ -806,3 +806,31 @@ def test_dir_default_inventory_only(tmp_path, monkeypatch):
     (tmp_path / "inventory.toml").write_text("", "utf-8")
     assert cli._dir(argparse.Namespace(sub_dir=None, top_dir=None)) == cli.Path(".")
     assert cli.main(["check", "inventory"]) == 0
+
+
+def test_sudo_holders_always_one_line(tbl):
+    """表と合っている時も、sudo を持つ人を「見るだけ」に一行。"""
+    seen = whats(run_check(tbl, facts_text()), fix=False)
+    assert ("管理者", "sudo を持つ人 1: dev（表の通り）") in seen
+    f = run_check(tbl, facts_text(users="dev /bin/bash\nop /bin/bash", admins="sudo dev,op"))
+    assert ("管理者", "表に無い管理者（sudo の組）: op") in whats(f)
+    assert ("管理者", "sudo を持つ人 2: dev、op（表に無い人が居る）") in whats(f, fix=False)
+    f = run_check(tbl, facts_text(admins="sudo"))
+    assert ("管理者", "sudo を持つ人 0: 無し（表の admins に居て持たない: dev）") in whats(f, fix=False)
+    tbl.machines[0]["admins"] = []
+    f = run_check(tbl, facts_text())
+    seen = whats(f, fix=False)
+    assert any(w == "管理者" and "比べていない" in r for w, r in seen)
+    assert not any("sudo を持つ人" in r for _w, r in seen)
+
+
+def test_check_inventory_empty_but_keys(tmp_path, capsys):
+    pub = tmp_path / "a.pub"
+    pub.write_text(KEY_A + "\n")
+    (tmp_path / "machines.toml").write_text(table_text(str(pub)), "utf-8")
+    (tmp_path / "inventory.toml").write_text("", "utf-8")
+    assert cli.main(["check", "inventory", "--dir", str(tmp_path)]) == 0  # 終了コードは変えない
+    assert "鍵の表に鍵が 1 件あるが、在庫表は空（kagi key list で見る）" in capsys.readouterr().out
+    (tmp_path / "machines.toml").write_text("[[machine]\n", "utf-8")  # 読めない表なら言わない
+    assert cli.main(["check", "inventory", "--dir", str(tmp_path)]) == 0
+    assert "在庫表は空" not in capsys.readouterr().out
