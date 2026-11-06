@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+<rect width="1280" height="720" fill="#111"/>
+<text x="80" y="90" font-size="40" fill="#fff" font-weight="bold">(2) 事実と AI の読みを分ける</text>
+<text x="80" y="150" font-size="30" fill="#d8d8d8" font-weight="bold">事実: 出典付きの行</text>
+<rect x="80" y="168" width="1120" height="48" rx="8" fill="#1f3b2a"/><text x="100" y="202" font-size="19" fill="#bfe8c8" font-family="monospace">- soil: 細粒質水田化褐色低地土（出典: 農研機構 土壌インベントリー、確認日 2026-11-02）</text>
+<text x="80" y="266" font-size="30" fill="#d8d8d8" font-weight="bold">事実: 本人の言葉と判定</text>
+<rect x="80" y="284" width="1120" height="48" rx="8" fill="#3a2f1f"/><text x="100" y="318" font-size="19" fill="#ffd9a0" font-family="monospace">- said: はっきり言って土は固い</text>
+<text x="80" y="382" font-size="30" fill="#d8d8d8" font-weight="bold">AI の読み: 確からしさ付きの仮説。本人が合う／違うを付ける</text>
+<rect x="80" y="400" width="1120" height="48" rx="8" fill="#1f2a3b"/><text x="100" y="434" font-size="19" fill="#a9c8ff" font-family="monospace">- plants: 白い穂のススキらしいイネ科 … [0.70]  → farmer: wrong (ススキではなくてオギ)</text>
+<text x="80" y="670" font-size="22" fill="#9a9a9a">記録 observations/2026-11-02-153402.md の三種の行（座標の行は写していない）</text>
+</svg>

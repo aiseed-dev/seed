@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Noto Sans CJK JP, Hiragino Sans, Yu Gothic, sans-serif">
+  <rect width="1280" height="720" fill="#fbfaf6"/>
+  <text x="640" y="56" text-anchor="middle" font-size="32" font-weight="700" fill="#222">同じ Claude で、自分の機械（halo）の口を読んだ</text>
+  <text x="640" y="92" text-anchor="middle" font-size="20" fill="#555">2026-11-05 夜。Debian 13。見つけた物は、直す前にまず書く</text>
+
+  <!-- header -->
+  <rect x="60" y="116" width="200" height="46" fill="#e9e4d6"/>
+  <rect x="260" y="116" width="300" height="46" fill="#e9e4d6"/>
+  <rect x="560" y="116" width="300" height="46" fill="#e9e4d6"/>
+  <rect x="860" y="116" width="360" height="46" fill="#e9e4d6"/>
+  <g font-size="23" font-weight="700" fill="#222">
+    <text x="160" y="148" text-anchor="middle">口</text>
+    <text x="410" y="148" text-anchor="middle">何が聞いているか</text>
+    <text x="710" y="148" text-anchor="middle">認証</text>
+    <text x="1040" y="148" text-anchor="middle">どうするか</text>
+  </g>
+
+  <g font-size="23" fill="#222">
+    <line x1="60" y1="162" x2="1220" y2="162" stroke="#bbb"/>
+    <text x="160" y="200" text-anchor="middle" font-weight="700">22</text>
+    <text x="280" y="200">ssh</text>
+    <text x="580" y="200">鍵。パスワードは未確認</text>
+    <text x="880" y="200">パスワード認証を切る</text>
+    <line x1="60" y1="220" x2="1220" y2="220" stroke="#ddd"/>
+
+    <text x="160" y="258" text-anchor="middle" font-weight="700">8080</text>
+    <text x="280" y="258">未確認（Glimmer の画面か）</text>
+    <text x="580" y="258">未確認</text>
+    <text x="880" y="258">何かを確かめてから決める</text>
+    <line x1="60" y1="278" x2="1220" y2="278" stroke="#ddd"/>
+
+    <text x="160" y="316" text-anchor="middle" font-weight="700">11434</text>
+    <text x="280" y="316">Glimmer（AI の口）</text>
+    <text x="580" y="316" fill="#a33">無し</text>
+    <text x="880" y="316">人が発行した token を掛ける</text>
+    <line x1="60" y1="336" x2="1220" y2="336" stroke="#ddd"/>
+
+    <text x="160" y="374" text-anchor="middle" font-weight="700">11435</text>
+    <text x="280" y="374">sd-server（絵の生成）</text>
+    <text x="580" y="374" fill="#a33">無し</text>
+    <text x="880" y="374">同じく token</text>
+    <line x1="60" y1="394" x2="1220" y2="394" stroke="#ddd"/>
+
+    <text x="160" y="432" text-anchor="middle" font-weight="700">5432・8551</text>
+    <text x="280" y="432">PostgreSQL、seed のアプリ</text>
+    <text x="580" y="432">閉じている</text>
+    <text x="880" y="432">そのまま</text>
+    <line x1="60" y1="452" x2="1220" y2="452" stroke="#bbb"/>
+  </g>
+
+  <g font-size="22" fill="#222">
+    <text x="60" y="500" font-weight="700">盤</text>
+    <text x="260" y="500">NVMe、ext4、暗号化無し。今は作者の記録と口座だけ。他人の記録が来る分だけ暗号化</text>
+    <text x="60" y="542" font-weight="700">外からの道</text>
+    <text x="260" y="542">IPv6 の外向きのアドレスが付いている。外から届くかは未確認（ufw は作者が見る）</text>
+  </g>
+
+  <rect x="60" y="586" width="1160" height="100" fill="#f1ede2"/>
+  <text x="640" y="626" text-anchor="middle" font-size="26" font-weight="700" fill="#222">攻撃に使われる同じ AI で、守りを確かめる。</text>
+  <text x="640" y="664" text-anchor="middle" font-size="23" fill="#444">認証の無い口が二つ。外れは隠さず、直す前にまず書く。</text>
+</svg>

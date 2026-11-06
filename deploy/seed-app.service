@@ -1,0 +1,27 @@
+# seed — /etc/systemd/system/seed-app.service（設計書 §6.2）。Web 版のアプリ（スマートフォンの人）
+# 置いたら: systemctl daemon-reload && systemctl enable --now seed-app
+# 8550 は office（Flet）が使っているので 8560
+[Unit]
+Description=seed web app (seed-app.aiseed.dev)
+After=network-online.target seed.service
+Wants=network-online.target
+
+[Service]
+User=dev
+Group=dev
+WorkingDirectory=/opt/seed
+EnvironmentFile=/etc/seed/env
+# SEED_USERS_DIR: 人ごとのフォルダー（招待コードごと）。SEED_UPLOAD_DIR: ブラウザから上げた写真の一時置き場
+Environment=SEED_USERS_DIR=/var/lib/seed/users
+Environment=SEED_UPLOAD_DIR=/var/lib/seed/uploads
+Environment=SEED_SERVER_URL=http://127.0.0.1:8010
+ExecStart=/opt/seed/.venv/bin/seed app --web --serve --port 8560
+Restart=on-failure
+RestartSec=5
+# 開いたままの WebSocket があると SIGTERM の後も「Waiting for background tasks」で止まらない（11-05 に手元で見た）。既定の 90 秒を待たない
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,86 @@
+# halo の門（docs/鍵の管理の仕組み.md §5 の歩 3、K-01・K-03・K-07）。
+# 置き場: halo の /etc/caddy/Caddyfile。手順は deploy/halo/手順.md。
+#
+# 外向きに聞くのは二つの口だけ。元のサービスは 127.0.0.1 に縛る（手順 b）。
+#   :11444 → 127.0.0.1:11434（Glimmer、llama-server。AI の口）
+#   :11445 → 127.0.0.1:11435（sd-server。絵の生成）
+# 通すのは `Authorization: Bearer <token>` が口ごとの token と一致した時だけ。違えば 401。
+# token の値はここに書かない。systemd が /etc/caddy/halo.env（600、root）から環境変数で渡す
+# （caddy.service.d/override.conf）。{env.*} は要求ごとに読む placeholder で、
+# 設定（JSON に直した物）には名前しか残らない。
+# 口ごとに token を分ける（K-01）。一つが漏れても、もう一つの口は止めずに済む。
+#
+# 文法は https://caddyserver.com/docs/caddyfile に合わせた。置いたら必ず
+#   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+# で確かめる（この repo を書いた機械に caddy は無く、validate はまだ走らせていない）。
+
+{
+	# 管理の口（既定 localhost:2019）を開けない。口を一つ減らす（K-07）。
+	# 代わりに設定の入れ替えは `systemctl restart caddy`（reload は使えない）。
+	admin off
+	# 名前の無い :port の site なので TLS の自動は元から働かないが、明示しておく。
+	# 家の中の素の HTTP。token は LAN の中を平文で流れる。外へ向けるなら手順の「TLS」を読む。
+	auto_https off
+}
+
+# ---------------------------------------------------------------- Glimmer（AI の口）
+:11444 {
+	log {
+		output file /var/log/caddy/halo-glimmer.json {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		# 既定でも Authorization は記録に出ない（global の log_credentials が無い限り）。
+		# 念のため filter で消す（K-03: 鍵をログに出さない）。
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+			}
+		}
+	}
+
+	# token が空なら誰も通さない（env が読めなかった日に "Bearer " で通る事を防ぐ）。
+	@glimmer_ok expression `{env.HALO_GLIMMER_TOKEN} != "" && {http.request.header.Authorization} == "Bearer " + {env.HALO_GLIMMER_TOKEN}`
+
+	handle @glimmer_ok {
+		reverse_proxy 127.0.0.1:11434 {
+			# 後ろのサービスには token を渡さない
+			header_up -Authorization
+		}
+	}
+
+	handle {
+		header WWW-Authenticate `Bearer realm="halo-glimmer"`
+		respond "401 Unauthorized" 401
+	}
+}
+
+# ---------------------------------------------------------------- sd-server（絵の生成）
+:11445 {
+	log {
+		output file /var/log/caddy/halo-sd.json {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>Authorization delete
+			}
+		}
+	}
+
+	@sd_ok expression `{env.HALO_SD_TOKEN} != "" && {http.request.header.Authorization} == "Bearer " + {env.HALO_SD_TOKEN}`
+
+	handle @sd_ok {
+		reverse_proxy 127.0.0.1:11435 {
+			header_up -Authorization
+		}
+	}
+
+	handle {
+		header WWW-Authenticate `Bearer realm="halo-sd"`
+		respond "401 Unauthorized" 401
+	}
+}

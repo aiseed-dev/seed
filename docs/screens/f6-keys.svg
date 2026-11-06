@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+<rect width="1280" height="720" fill="#111"/>
+<text x="80" y="90" font-size="40" fill="#fff" font-weight="bold">(6) 控えは切り離し、守るのは人と AI が一緒に</text>
+<text x="80" y="150" font-size="21" fill="#e0e0e0">鍵</text>
+<text x="330" y="150" font-size="21" fill="#e0e0e0">持つ人</text>
+<text x="640" y="150" font-size="21" fill="#e0e0e0">なくしたとき</text>
+<text x="950" y="150" font-size="21" fill="#e0e0e0">漏れたとき</text>
+<line x1="80" y1="162" x2="1200" y2="162" stroke="#444"/>
+<text x="80" y="196" font-size="21" fill="#e0e0e0">API キー</text>
+<text x="330" y="196" font-size="21" fill="#e0e0e0">作者（環境ファイル）</text>
+<text x="640" y="196" font-size="21" fill="#e0e0e0">console で作り直す</text>
+<text x="950" y="196" font-size="21" fill="#e0e0e0">失効して作り直す</text>
+<line x1="80" y1="208" x2="1200" y2="208" stroke="#444"/>
+<text x="80" y="242" font-size="21" fill="#e0e0e0">招待コード</text>
+<text x="330" y="242" font-size="21" fill="#e0e0e0">作る人が渡す</text>
+<text x="640" y="242" font-size="21" fill="#e0e0e0">出し直す</text>
+<text x="950" y="242" font-size="21" fill="#e0e0e0">一覧から消す</text>
+<line x1="80" y1="254" x2="1200" y2="254" stroke="#444"/>
+<text x="80" y="288" font-size="21" fill="#e0e0e0">持ち主の token</text>
+<text x="330" y="288" font-size="21" fill="#e0e0e0">本人のアプリ</text>
+<text x="640" y="288" font-size="21" fill="#e0e0e0">公開を作者が消す</text>
+<text x="950" y="288" font-size="21" fill="#e0e0e0">作り直す</text>
+<line x1="80" y1="300" x2="1200" y2="300" stroke="#444"/>
+<text x="80" y="334" font-size="21" fill="#e0e0e0">SSH の鍵</text>
+<text x="330" y="334" font-size="21" fill="#e0e0e0">作者</text>
+<text x="640" y="334" font-size="21" fill="#e0e0e0">機械の前で入れ直す</text>
+<text x="950" y="334" font-size="21" fill="#e0e0e0">公開鍵を外し作り直す</text>
+<line x1="80" y1="346" x2="1200" y2="346" stroke="#444"/>
+<text x="80" y="380" font-size="21" fill="#e0e0e0">アカウント</text>
+<text x="330" y="380" font-size="21" fill="#e0e0e0">作者</text>
+<text x="640" y="380" font-size="21" fill="#e0e0e0">各サービスの手順</text>
+<text x="950" y="380" font-size="21" fill="#e0e0e0">二段階認証で止める</text>
+<line x1="80" y1="392" x2="1200" y2="392" stroke="#444"/>
+<text x="80" y="446" font-size="24" fill="#cfcfcf">控え: 外付けの盤に写したら外す。失っても戻せる形を先に作る。</text>
+<text x="80" y="486" font-size="24" fill="#cfcfcf">決めるのは人。AI は材料と選択肢まで。</text>
+<text x="80" y="670" font-size="22" fill="#9a9a9a">鍵の表は設計書 §13 の 12。作者が 11-06 に自分で埋める。控えの運用はこれから</text>
+</svg>

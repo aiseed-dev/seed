@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+<rect width="1280" height="720" fill="#111"/>
+<text x="80" y="90" font-size="40" fill="#fff" font-weight="bold">(5) AI 同士は最小の権限で繋ぐ — 鍵は渡さない</text>
+<text x="80" y="150" font-size="21" fill="#e0e0e0">資格</text>
+<text x="300" y="150" font-size="21" fill="#e0e0e0">誰が誰に</text>
+<text x="640" y="150" font-size="21" fill="#e0e0e0">何に使う</text>
+<text x="980" y="150" font-size="21" fill="#e0e0e0">サーバーが持つ物</text>
+<line x1="80" y1="162" x2="1200" y2="162" stroke="#444"/>
+<text x="80" y="196" font-size="21" fill="#e0e0e0">持ち主の token</text>
+<text x="300" y="196" font-size="21" fill="#e0e0e0">アプリが作り、本人が示す</text>
+<text x="640" y="196" font-size="21" fill="#e0e0e0">公開の上書きと取り下げ</text>
+<text x="980" y="196" font-size="21" fill="#e0e0e0">ハッシュだけ</text>
+<line x1="80" y1="208" x2="1200" y2="208" stroke="#444"/>
+<text x="80" y="242" font-size="21" fill="#e0e0e0">招待コード</text>
+<text x="300" y="242" font-size="21" fill="#e0e0e0">作る人が一人に一つ渡す</text>
+<text x="640" y="242" font-size="21" fill="#e0e0e0">API の門（無ければ 403）</text>
+<text x="980" y="242" font-size="21" fill="#e0e0e0">呼び名との対応</text>
+<line x1="80" y1="254" x2="1200" y2="254" stroke="#444"/>
+<text x="80" y="288" font-size="21" fill="#e0e0e0">客の token</text>
+<text x="300" y="288" font-size="21" fill="#e0e0e0">農家が発行し、客に渡す</text>
+<text x="640" y="288" font-size="21" fill="#e0e0e0">家の中のサービスを範囲付きで</text>
+<text x="980" y="288" font-size="21" fill="#e0e0e0">ハッシュだけ（設計）</text>
+<line x1="80" y1="300" x2="1200" y2="300" stroke="#444"/>
+<text x="80" y="354" font-size="24" fill="#cfcfcf">API キーは環境ファイルにだけ。リポジトリにも会話にもログにも入れない。</text>
+<text x="80" y="394" font-size="24" fill="#cfcfcf">家の外へ出る接続は HTTPS。自己署名なら指紋を照合し、違えば繋がない。</text>
+<text x="80" y="670" font-size="22" fill="#9a9a9a">持ち主の token と招待コードは動いている。客の token は設計だけ（11-08 の後）</text>
+</svg>

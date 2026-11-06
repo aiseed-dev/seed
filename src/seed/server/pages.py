@@ -1,0 +1,194 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""入口と公開された記録の HTML（静的サイト。設計書 §7.5）。
+
+公開ファイルが届く・取り下げられる・一言が届くたびに write_site が SEED_PUBLIC_DIR/site/ に書き出し、
+Caddy がそのまま配る。FastAPI の / と /p/<id> も同じ HTML を返す（開発中の確認用）。
+静的なページには「一言を送る」の欄を置かない。一言はアプリから、招待コード付きで送る。
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import shutil
+from pathlib import Path
+
+from .. import index, lang
+from .. import records as R
+from .settings import Settings
+
+DISCORD = "https://discord.gg/Q8pwMH2uTA"
+SOURCE = "https://github.com/aiseed-dev/seed"
+LEAD = "畑を始めてみませんか。畑の写真を自分の Claude に渡すと、その土地の成り立ち（地質、土、歴史）を調べてくれる。畑を観察し、記録を書いて人と繋がる。自給農から、その次へ。"
+
+CSS = """
+:root{--fg:#1d2420;--muted:#5d6b62;--bg:#fbfaf6;--line:#dcd8cc;--accent:#2f6b45}
+@media (prefers-color-scheme: dark){:root{--fg:#e6e9e4;--muted:#a3ada6;--bg:#151916;--line:#333a35;--accent:#7cc495}}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;color:var(--fg);
+background:var(--bg);max-width:44rem;margin:0 auto;padding:2rem 16px 4rem;line-height:1.75;overflow-wrap:anywhere}
+a{color:var(--accent)}
+h1{font-size:1.6rem;margin:0 0 .25rem}
+h2{font-size:1.1rem;margin:2rem 0 .5rem;border-bottom:1px solid var(--line)}
+.lead{font-size:1.15rem}
+.muted,small{color:var(--muted)}
+ul.records{list-style:none;padding:0}
+ul.records li{border-top:1px solid var(--line);padding:.75rem 0}
+ul.lines{padding-left:1.2rem}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:1rem;padding:0 .6rem;margin:0 .25rem .25rem 0;font-size:.85rem}
+code{font-size:.9em;color:var(--muted)}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:.2rem 1rem}
+dt{color:var(--muted)}
+dd{margin:0}
+pre{background:var(--line);padding:.75rem;overflow-x:auto}
+form{display:grid;gap:.5rem}
+input,textarea,button{font:inherit;padding:.4rem .5rem;border:1px solid var(--line);border-radius:.3rem;
+background:var(--bg);color:var(--fg);width:100%}
+button{background:var(--accent);color:var(--bg);border:0;cursor:pointer;width:auto;justify-self:start;padding:.4rem 1.2rem}
+"""
+
+
+def _e(x) -> str:
+    return html.escape(str(x), quote=True)
+
+
+def page_html(title: str, body: str, description: str = LEAD) -> str:
+    return f"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{_e(title)}</title>
+<meta name="description" content="{_e(description)}">
+<meta property="og:title" content="{_e(title)}"><meta property="og:description" content="{_e(description)}"><meta property="og:type" content="website">
+<style>{CSS}</style></head><body>
+{body}
+<p class="muted"><small><a href="/">seed</a> · <a href="{_e(SOURCE)}">source (AGPL-3.0)</a></small></p>
+</body></html>
+"""
+
+
+def _tags(words: list[str]) -> str:
+    return "".join(f'<span class="tag">{_e(w)}</span>' for w in words)
+
+
+def load_index(settings: Settings) -> dict:
+    try:
+        return json.loads(settings.index_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return index.build_index(settings.public_dir, settings.connections_dir)
+
+
+def entry_html(idx: dict) -> str:
+    """入口（設計書 §6）。一行、何をする物か、約束、テスター募集、Discord、公開された記録の一覧。"""
+    total = idx.get("total", {})
+    items = []
+    for r in idx.get("records", []):
+        items.append(
+            f"""<li><a href="/p/{_e(r["id"])}"><strong>{_e(r.get("name", ""))}</strong></a>
+<span class="muted">{_e(r.get("place", ""))} · {_e(r.get("since", ""))}</span><br>
+{_e(r.get("word", ""))}<br>
+{_tags(r.get("what") or [])}{_tags(r.get("next") or [])}
+<small>観察 {int(r.get("observations") or 0)} · 繋がり {int(r.get("connections") or 0)}</small></li>"""
+        )
+    listing = (
+        f'<ul class="records">{"".join(items)}</ul>'
+        if items
+        else '<p class="muted">まだ公開された記録は無い。</p>'
+    )
+    body = f"""<h1>seed — Claude と一緒に種を播く</h1>
+<p class="lead">{_e(LEAD)}</p>
+<p>「こうしなさい」とは言わない。読みは、何が見えて、何に拠るか、次に何を見るとよいか、まで。決めるのは畑。
+知識は、公の資料からではなく、一人ひとりの畑の記録と検証の積み重ねから作る。だから、公開と繋がりが要る。</p>
+<p>記録（写真と座標を含む）は本人の物。ここに並ぶのは、<strong>本人が了解して公開した行だけ</strong>。写真はここに置かない。</p>
+<p><strong>使ってくれる人（テスター）を募っています（11-08 まで）。</strong>
+<a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で声をかけてください。招待コードもそこで渡します。繋がった後の話もそこで。</p>
+<h2>PC で使う</h2>
+<pre>pip install "seed-farm[app]"</pre>
+<p class="muted"><small>Windows / macOS / Linux。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> に。スマートフォンだけの人は Discord で。</small></p>
+<h2>公開された記録 {int(total.get("records", 0))} 件 · 繋がり {int(total.get("connections", 0))} 件</h2>
+{listing}
+<p class="muted"><small><a href="/index.json">index.json</a></small></p>"""
+    return page_html("seed — Claude と一緒に種を播く", body)
+
+
+def _line_html(line: R.Line) -> str:
+    s = f"<code>{_e(line.key)}</code> {_e(line.text)}"
+    if line.confidence is not None:
+        s += f' <small class="muted">[{line.confidence:.2f}]</small>'
+    if line.verdict:
+        s += f" → {_e(lang.t(line.verdict, 'ja'))}"
+        if line.reason:
+            s += f"（{_e(line.reason)}）"
+    return f"<li>{s}</li>"
+
+
+def showable(pub: R.Public) -> bool:
+    """頁にしてよいか。検査が通り、細かい座標（小数 3 桁以上）が無い物だけ（設計書 §5.2）。
+
+    サーバーを通った物は通る。public/ に直に置かれた物の守り。
+    """
+    return not pub.check() and not R.fine_coords(pub.render())
+
+
+def record_html(pub: R.Public, connections: int) -> str:
+    """公開された記録の閲覧（設計書 §7.1）。一言はアプリから。"""
+    rows = [("場所", pub.place), ("公開した日", pub.since)]
+    if pub.coord and len(pub.coord) == 2:
+        lat, lon = R.coarse_coord(pub.coord)  # 前書きは丸めてあるはず。頁でも 2 桁より細かく出さない
+        rows.append(("座標", f"{lat}, {lon}（約 1 km の粗さ。本人が選んだ）"))
+    if pub.contact:
+        rows.append(("連絡", pub.contact))
+    rows += [("言語", pub.language), ("観察", str(pub.observations)), ("繋がり", str(connections))]
+    facts = "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in rows)
+    days = "".join(
+        f'<h2>{_e(day)}</h2><ul class="lines">{"".join(_line_html(x) for x in pub.days[day]) or "<li>(none)</li>"}</ul>'
+        for day in sorted(pub.days, reverse=True)
+    )
+    body = f"""<p><small><a href="/">← 入口</a></small></p>
+<h1>{_e(pub.name)}</h1>
+<p class="lead">{_e(pub.word)}</p>
+<p>{_tags(pub.what)}{_tags(pub.next)}</p>
+<dl>{facts}</dl>
+<p class="muted"><small>確からしさ [0.00〜1.00] の付いた行は AI の読み（仮説）。→ の後は本人の判定。
+出典の付いた行は資料。本人が了解して公開した行だけが、ここにある。</small></p>
+{days}
+<h2>一言を送る</h2>
+<p>一言は seed のアプリ（PC 版か Web 版）の「探す・繋がる」から、招待コード付きで送れます。送った人の呼び名が持ち主に届きます。
+招待コードは <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で。</p>
+<p class="muted"><small><a href="/public/{_e(pub.id)}.md">公開ファイル（Markdown）</a></small></p>"""
+    return page_html(f"{pub.name} — seed", body, description=pub.word or LEAD)
+
+
+def not_found_html() -> str:
+    return page_html("seed", '<h1>見つからない</h1><p><a href="/">入口へ</a></p>')
+
+
+def write_site(settings: Settings) -> Path:
+    """静的サイトを SEED_PUBLIC_DIR/site/ に書き出す。index.html、p/<id>.html、index.json、public/<id>.md。
+
+    消えた記録のページも消す。.owners.json と connections/ は写さない。
+    """
+    site = settings.site_dir
+    (site / "p").mkdir(parents=True, exist_ok=True)
+    (site / "public").mkdir(parents=True, exist_ok=True)
+    idx = load_index(settings)
+    (site / "index.html").write_text(entry_html(idx), encoding="utf-8")
+    (site / "index.json").write_text(json.dumps(idx, ensure_ascii=False, indent=1), encoding="utf-8")
+    (site / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
+    keep: set[str] = set()
+    for path in sorted(settings.public_dir.glob("*.md")):
+        try:
+            pub = R.Public.read(path)
+        except (ValueError, TypeError, KeyError):
+            continue
+        if not showable(pub):
+            continue
+        n = index.count_connections(settings.connections_dir, pub.id)
+        (site / "p" / f"{pub.id}.html").write_text(record_html(pub, n), encoding="utf-8")
+        shutil.copyfile(path, site / "public" / path.name)
+        keep.add(pub.id)
+    for old in (site / "p").glob("*.html"):
+        if old.stem not in keep:
+            old.unlink()
+    for old in (site / "public").glob("*.md"):
+        if old.stem not in keep:
+            old.unlink()
+    return site

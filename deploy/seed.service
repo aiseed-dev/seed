@@ -1,0 +1,25 @@
+# seed — /etc/systemd/system/seed.service（設計書 §7.4）。API と静的サイトの書き出し
+# 置いたら: systemctl daemon-reload && systemctl enable --now seed
+# 8000 は aiai（moushikomi）に取ってあるので 8010
+[Unit]
+Description=seed API (seed.aiseed.dev)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=dev
+Group=dev
+WorkingDirectory=/opt/seed
+EnvironmentFile=/etc/seed/env
+# 持ち帰り（/api/export）と消去（/api/me）が Web 版の人の箱を読む・消すため。seed-app.service と同じ場所
+Environment=SEED_USERS_DIR=/var/lib/seed/users
+# --no-access-log: /api/lookup は招待コードを query で受けるので、uvicorn の一行のログ（journald）にコードが残る（11-05 に手元で見た）
+# uvicorn は 127.0.0.1（Caddy）からの X-Forwarded-For と X-Forwarded-Proto を既定で信じる（返す url が https://seed.aiseed.dev/ になる。11-05 に手元で確かめた）
+ExecStart=/opt/seed/.venv/bin/uvicorn seed.server.main:app --host 127.0.0.1 --port 8010 --no-access-log
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Noto Sans CJK JP, Hiragino Sans, Yu Gothic, sans-serif">
+  <rect width="1280" height="720" fill="#fbfaf6"/>
+  <text x="640" y="54" text-anchor="middle" font-size="32" font-weight="700" fill="#222">AI との付き合い方 — サーバーと畑を同じ列で</text>
+
+  <!-- header -->
+  <rect x="50" y="76" width="250" height="46" fill="#e9e4d6"/>
+  <rect x="300" y="76" width="465" height="46" fill="#d9e4ef"/>
+  <rect x="765" y="76" width="465" height="46" fill="#dfead8"/>
+  <text x="175" y="108" text-anchor="middle" font-size="23" font-weight="700" fill="#222">列</text>
+  <text x="532" y="108" text-anchor="middle" font-size="23" font-weight="700" fill="#1f3a5a">サーバーと鍵</text>
+  <text x="997" y="108" text-anchor="middle" font-size="23" font-weight="700" fill="#2f4f2a">畑</text>
+
+  <g font-size="22" fill="#222">
+    <line x1="50" y1="122" x2="1230" y2="122" stroke="#bbb"/>
+    <!-- row 1 -->
+    <text x="66" y="156" font-weight="700">相手</text>
+    <text x="316" y="156">人。穴を探し続ける。守りは終わらない</text>
+    <text x="781" y="156">虫、病原菌、天気。意図は無い</text>
+    <line x1="50" y1="174" x2="1230" y2="174" stroke="#ddd"/>
+    <!-- row 2 -->
+    <text x="66" y="208" font-weight="700">書かれているか</text>
+    <text x="316" y="208">全部、文字で書かれている</text>
+    <text x="781" y="208">ほぼ書かれていない</text>
+    <line x1="50" y1="226" x2="1230" y2="226" stroke="#ddd"/>
+    <!-- row 3 (two lines) -->
+    <text x="66" y="260" font-weight="700">決める前に調べるのは</text>
+    <text x="316" y="260">AI。口、鍵、構成は読めるので</text>
+    <text x="316" y="288">在庫表をその日のうちに作れる</text>
+    <text x="781" y="260">人が見るしかない。</text>
+    <text x="781" y="288">写真と一言を季節ごとに。年を重ねて</text>
+    <line x1="50" y1="306" x2="1230" y2="306" stroke="#ddd"/>
+    <!-- row 4 -->
+    <text x="66" y="340" font-weight="700">確かめるのは</text>
+    <text x="316" y="340">機械。その日のうちに</text>
+    <text x="781" y="340">季節と人。年を重ねて</text>
+    <line x1="50" y1="358" x2="1230" y2="358" stroke="#ddd"/>
+    <!-- row 5 (two lines) -->
+    <text x="66" y="392" font-weight="700">AI がやれる事</text>
+    <text x="316" y="392">調べる、書く、確かめる、直す。</text>
+    <text x="316" y="420">ほぼ全部</text>
+    <text x="781" y="392">人が書いた記録を</text>
+    <text x="781" y="420">読んで並べる事だけ</text>
+    <line x1="50" y1="438" x2="1230" y2="438" stroke="#ddd"/>
+    <!-- row 6 (two lines) -->
+    <text x="66" y="472" font-weight="700">人に残る仕事</text>
+    <text x="316" y="472">何を守るか決める。これでよいと決める。</text>
+    <text x="316" y="500">できたかを確かめる</text>
+    <text x="781" y="472">同じ三つ。それに、見る、減らす</text>
+    <line x1="50" y1="518" x2="1230" y2="518" stroke="#ddd"/>
+    <!-- row 7 -->
+    <text x="66" y="552" font-weight="700">広め方</text>
+    <text x="316" y="552">自分でやってみせて、記録を残す</text>
+    <text x="781" y="552">同じ</text>
+    <line x1="50" y1="570" x2="1230" y2="570" stroke="#bbb"/>
+  </g>
+
+  <!-- bottom line -->
+  <rect x="50" y="594" width="1180" height="96" fill="#f1ede2"/>
+  <text x="640" y="632" text-anchor="middle" font-size="26" font-weight="700" fill="#222">決める前に調べる。サーバーは AI が一日で。畑は人が見るしかない。</text>
+  <text x="640" y="670" text-anchor="middle" font-size="24" fill="#444">人の仕事は同じ三つ。違うのは AI がどれだけ手伝えるか。</text>
+</svg>

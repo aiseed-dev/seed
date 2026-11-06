@@ -1,0 +1,47 @@
+# seed — deb2 の /etc/caddy/Caddyfile に足すブロック（設計書 §7.4、§7.5）。
+# deb2 は Cloudflare の後ろ（既存の (cf) スニペット: origin 証明書、zstd/gzip、Server ヘッダ無し）。
+# DNS は Cloudflare で seed.aiseed.dev と seed-app.aiseed.dev を deb2 に向ける（proxied）。
+# 二段の副ドメイン（app.seed.aiseed.dev）は Cloudflare の無料の証明書に入らないので seed-app にする。
+# 入口と公開された記録は静的サイト（/var/lib/seed/public/site。uvicorn が書き出す）。/api/* と /health だけ uvicorn へ。
+# .owners.json と connections/ は site/ の外にあるので外から見えない。
+# 11-05 に手元（caddy 無し）で目で確かめた。caddy validate は deb2 で（deb2 の配備 §0）。
+seed.aiseed.dev {
+	import cf
+	root * /var/lib/seed/public/site
+
+	# 客の IP（回数の上限の IP）: deb2 の全体の設定か (cf) に Cloudflare の trusted_proxies があれば本当の IP が届く。無ければ Cloudflare の IP で数える（11-08 の後に直す。配備 §0-7 の grep で見る）
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8010
+	}
+	handle /health {
+		reverse_proxy 127.0.0.1:8010
+	}
+	# 静的な頁にも FastAPI と同じ CSP（main.py の CSP。script は無いが、置いておく）
+	header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+	# 公開ファイルそのまま（/api/publish が返す url は https://seed.aiseed.dev/public/<id>.md）
+	header /public/*.md Content-Type "text/markdown; charset=utf-8"
+	handle /p/* {
+		try_files {path}.html {path} =404
+		file_server
+	}
+	handle {
+		try_files {path} {path}.html =404
+		file_server
+	}
+	# 404 だけを「見つからない」に。uvicorn が落ちたときの 502 などはその番号のまま返す
+	handle_errors {
+		@notfound expression {err.status_code} == 404
+		handle @notfound {
+			respond "見つからない（seed）" 404
+		}
+		handle {
+			respond "{err.status_code}（seed）" {err.status_code}
+		}
+	}
+}
+
+# Web 版のアプリ（スマートフォンの人。設計書 §6.2）。seed-app.service（uvicorn + Flet、8560）。WebSocket（/ws）はそのまま通る
+seed-app.aiseed.dev {
+	import cf
+	reverse_proxy 127.0.0.1:8560
+}

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# PyPI の "seed" は別物。import は seed
+name = "seed-farm"
+version = "0.0.1"
+description = "畑を始めてみませんか。畑の写真を自分の Claude に渡すと、その土地の成り立ち（地質、土、歴史）を調べてくれる。畑を観察し、記録を書いて人と繋がる。自給農から、その次へ。"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.11"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{name = "Yasuhiro Niji"}]
+keywords = ["natural farming", "self-sufficiency", "abandoned farmland", "Claude", "field records"]
+dependencies = [
+  "pyyaml",   # 記録の前書き
+]
+
+[project.optional-dependencies]
+app = ["flet[all]==1.1.0", "pillow", "httpx", "pillow-heif"]                    # 本人のアプリ（Web 版も）。iPhone の HEIC を読む
+origin = ["pillow", "httpx", "imageio-ffmpeg"]                                   # seed origin（地図と空中写真の動画。mp4 は imageio-ffmpeg）
+grow = ["pillow", "httpx", "resvg-py"]                                          # seed grow --draw（図を PNG にして halo で絵に。resvg は wheel だけ）
+heic = ["pillow-heif"]                                                          # HEIC だけ要るとき
+server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pillow", "httpx"]  # seed.aiseed.dev
+# 座標からの照会（fieldnotes.lookup だけを呼ぶ）。fieldnotes-farm は同じ作者の別の包み。
+# PyPI の 0.2.0（2026-11-05 10:43 JST 公開、タグ v0.2.0 = aiseed-dev/fieldnotes の 604dcd6）に固定する
+# （作者 2026-11-05。前は期間前のコミット 2bc2c4f）。記録の一行の形は仕様（fieldnotes の docs/records.md）で
+# 揃え、コードは共有しない（設計書 §13 の 2 と 18）。
+lookup = ["fieldnotes-farm==0.2.0"]
+dev = ["pytest", "ruff", "seed-farm[app,server,grow]"]
+
+[project.scripts]
+seed = "seed.cli:main"
+kagi = "kagi.cli:main"
+
+[project.urls]
+Homepage = "https://seed.aiseed.dev"
+Source = "https://github.com/aiseed-dev/seed"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# 共通の手引き。seed init が <prefix>/share/seed-farm/skill から ~/seed/skill/ に写す（記録の形 §9）
+[tool.setuptools.data-files]
+"share/seed-farm/skill" = ["skill/*.md"]
+"share/seed-farm/skill/plants" = ["skill/plants/*.md"]
+"share/seed-farm/skill/plants/miscanthus-sacchariflorus" = ["skill/plants/miscanthus-sacchariflorus/*.md"]
+"share/seed-farm/skill/plants/miscanthus-sacchariflorus/figures" = ["skill/plants/miscanthus-sacchariflorus/figures/*"]
+"share/seed-farm/skill/plants/miscanthus-sacchariflorus/photos" = ["skill/plants/miscanthus-sacchariflorus/photos/*"]
+"share/seed-farm/skill/plants/solidago-altissima" = ["skill/plants/solidago-altissima/*.md"]
+"share/seed-farm/skill/plants/solidago-altissima/figures" = ["skill/plants/solidago-altissima/figures/*"]
+"share/seed-farm/skill/plants/solidago-altissima/photos" = ["skill/plants/solidago-altissima/photos/*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

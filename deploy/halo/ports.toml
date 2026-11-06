@@ -1,0 +1,53 @@
+# halo の口の表（K-07）。門を立てた後の形。kagi の形（src/kagi/ports.py、[[port]] の並び）。
+# 使い方（手順.md の e）: halo で `ss -ltnp > ss-halo.txt` を取り、この表と同じ場所で
+#   kagi check ports --dir deploy/halo --host halo --ss ss-halo.txt
+# kagi は --dir の中の ports.toml を読む。bind が 0.0.0.0 か :: か * なら外向き。
+# 外向きでも、外から届くかは ufw で決まる（手順 d）。この表は「どの口が開いているか」まで。
+# IP アドレスはこの表に書かない（127.0.0.1 は機械の中の意味なので書く）。
+
+[[port]]
+host = "halo"
+port = 22
+proto = "tcp"
+service = "sshd"
+bind = "0.0.0.0"
+reason = "作者の管理。鍵だけ（パスワード認証は切る。halo のデータベース §3）。ufw で LAN だけ"
+
+[[port]]
+host = "halo"
+port = 11444
+proto = "tcp"
+service = "caddy（Glimmer の門）"
+bind = "*"
+reason = "Bearer の token が一致した時だけ 127.0.0.1:11434 へ。ufw で LAN だけ"
+
+[[port]]
+host = "halo"
+port = 11445
+proto = "tcp"
+service = "caddy（sd-server の門）"
+bind = "*"
+reason = "Bearer の token が一致した時だけ 127.0.0.1:11435 へ。ufw で LAN だけ"
+
+[[port]]
+host = "halo"
+port = 11434
+proto = "tcp"
+service = "llama-server（Glimmer）"
+bind = "127.0.0.1"
+reason = "門の後ろ。外向き（0.0.0.0）で出たら手順 b がまだ"
+
+[[port]]
+host = "halo"
+port = 11435
+proto = "tcp"
+service = "sd-server"
+bind = "127.0.0.1"
+reason = "門の後ろ。外向き（0.0.0.0）で出たら手順 b がまだ"
+
+# 8080 は何か未確認（halo のデータベース §0。Glimmer の画面と推測）。わざと表に入れていない。
+# kagi が「表に無い口」と出したら、`ss -ltnp` の process の欄で何かを見て、
+#   要らない → 止める。要る → 127.0.0.1 に縛り、外から使うなら門をもう一つ（:11446 の形）足し、ここに書く。
+#
+# 他に 127.0.0.1 や ::1 だけで聞く口（メールの 25、印刷の 631 など）が出たら、何かを確かめてから
+# bind = "127.0.0.1" で足す。Caddyfile は admin off なので caddy の 2019 は出ない。

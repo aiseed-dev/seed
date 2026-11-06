@@ -1,0 +1,31 @@
+# halo の門の token の在庫（K-14、K-04、K-05）。kagi の在庫表の形（src/kagi/inventory.py）。
+# 値は書かない。value という欄があると kagi は読まずに止まる（K-13）。
+# 使い方（手順.md の f）: 作者の在庫表（kagi-data/inventory.toml）にこの二件を写し、
+# made と expires を書いてから `kagi check inventory`。made・expires を書かないうちは「抜け」と出る（それで正しい）。
+#
+# token は二か所に居る: halo（受ける側）と、呼ぶ機械（送る側）。where に両方を書く。
+# 呼ぶ機械の置き場は、使う側を直した後（手順.md の末尾）に決まる。決まるまでは「未」と書いておく。
+
+[[secret]]
+id = "halo-glimmer-token"
+kind = "token"
+where = "halo:/etc/caddy/halo.env の HALO_GLIMMER_TOKEN（形 B なら halo:/etc/credstore.encrypted/halo-glimmer-token）。呼ぶ側: fieldnotes の Glimmer の設定（未）"
+holder = "yniji"
+role = "halo の :11444（Glimmer、llama-server）に入る。他の口には効かない（K-01）"
+# made = 2026-11-XX       # 作った日
+# expires = 2027-02-XX    # 期限。AI の token は短く（K-05）
+rotate_days = 90
+lost = "halo で新しい値を作って halo.env を書き換え、systemctl restart caddy。呼ぶ側の設定を書き換える（手順.md の g）"
+leaked = "止める（halo.env を新しい値にして restart。古い値はその時に効かなくなる）→ 範囲を知る（/var/log/caddy/halo-glimmer.json の 200 の行）→ 呼ぶ側を新しい値に → 知らせる → 書く（K-15）"
+
+[[secret]]
+id = "halo-sd-token"
+kind = "token"
+where = "halo:/etc/caddy/halo.env の HALO_SD_TOKEN（形 B なら halo:/etc/credstore.encrypted/halo-sd-token）。呼ぶ側: seed の [grow] token か SEED_DRAW_TOKEN（未。seed のコードがまだ送らない）"
+holder = "yniji"
+role = "halo の :11445（sd-server、seed grow --draw の絵）に入る。他の口には効かない（K-01）"
+# made = 2026-11-XX
+# expires = 2027-02-XX
+rotate_days = 90
+lost = "halo で新しい値を作って halo.env を書き換え、systemctl restart caddy。呼ぶ側の設定を書き換える（手順.md の g）"
+leaked = "止める（halo.env を新しい値にして restart）→ 範囲を知る（/var/log/caddy/halo-sd.json の 200 の行）→ 呼ぶ側を新しい値に → 知らせる → 書く（K-15）"
