@@ -10,8 +10,10 @@ id の持ち主は public/.owners.json（id → token のハッシュ）。上�
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -146,3 +148,65 @@ def withdraw(settings: Settings, token: str, record_id: str) -> None:
         del owners[record_id]
         save_owners(settings.owners_path, owners)
         rebuild(settings)
+
+
+# ---- 管理の画面のため（設計書 §5.10）。公開した人の名前と、寄せられた一言を見る・消す
+
+PUBLISHERS = ".publishers.json"  # id → 門で通した名前（.owners.json のハッシュは持ち主の token の物で、門の名前は引けない）
+CONNECTION_NAME_RE = re.compile(r"^[0-9a-z-]+$")
+
+
+def publishers_path(settings: Settings) -> Path:
+    return settings.public_dir / PUBLISHERS
+
+
+def note_publisher(settings: Settings, record_id: str, name: str) -> None:
+    """公開した人の名前を残す（公開が通った後に呼ぶ）。名前の無い時（開発中の open）は書かない。"""
+    if not name or not R.ID_RE.match(record_id):
+        return
+    path = publishers_path(settings)
+    with write_lock:
+        names = load_owners(path)
+        names[record_id] = name
+        save_owners(path, names)
+
+
+def publisher_of(settings: Settings, record_id: str) -> str:
+    """公開した人の名前。残っていなければ ""（この仕組みより前の公開など）。"""
+    return str(load_owners(publishers_path(settings)).get(record_id, ""))
+
+
+def published_on(settings: Settings, record_id: str) -> str:
+    """公開した日（公開ファイルの更新日。上書きすれば新しい日になる）。"""
+    try:
+        mtime = public_path(settings, record_id).stat().st_mtime
+    except (OSError, PublishError):
+        return ""
+    return dt.datetime.fromtimestamp(mtime).date().isoformat()
+
+
+def connections(settings: Settings, record_id: str) -> list[dict]:
+    """その公開に寄せられた一言（新しい物が先）。name はファイルの名の幹で、消す時に使う。"""
+    if not R.ID_RE.match(record_id):
+        raise PublishError(400, ["id は [a-z0-9-]+"])
+    folder = settings.connections_dir / record_id
+    out = []
+    for f in sorted(folder.glob("*.md"), reverse=True) if folder.is_dir() else []:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            c = R.Connection.parse(line)
+            if c is not None:
+                out.append({"name": f.stem, "date": c.date, "from": c.src, "word": c.word})
+    return out
+
+
+def remove_connection(settings: Settings, record_id: str, name: str) -> str:
+    """寄せられた一言を一件消し、索引と頁を作り直す。消した物の日を返す（記録に書くため）。"""
+    if not R.ID_RE.match(record_id) or not CONNECTION_NAME_RE.match(name):
+        raise PublishError(400, ["id と name は [0-9a-z-]+"])
+    path = settings.connections_dir / record_id / f"{name}.md"
+    with write_lock:
+        if not path.is_file():
+            raise PublishError(404, ["その一言は無い"])
+        path.unlink()
+        rebuild(settings)
+    return name[:10]

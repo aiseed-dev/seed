@@ -143,6 +143,49 @@ def test_publish_and_find_build(app, seedfolder, photo):
     assert any("探す" in w or "繋が" in w for w in texts(find.view(app)))
 
 
+def test_publish_screen_is_guidance_and_list_on_every_version(app, seedfolder, monkeypatch):
+    """公開は Claude を使って行う。どの版でも画面は在り、作る部分は無く、案内と公開した記録の一覧が在る。"""
+    import flet as ft
+
+    from seed.records import Line, Public
+
+    pub = Public(
+        id="my-field", place="徳島県", since="2026-11-05", name="見本", word="見本の一言", language="ja"
+    )
+    pub.days["2026-11-05"] = [Line("overall", "草が大半", 0.8)]
+    (seedfolder / "public").mkdir(exist_ok=True)
+    pub.write(seedfolder / "public" / "my-field.md")
+    guide = app.t("publish_by_claude")
+    assert guide.startswith("公開は、Claude を使って行います。PC で") and "できません" not in guide
+    for web, platform in (
+        (False, None),
+        (True, None),
+        (False, ft.PagePlatform.IOS),
+        (False, ft.PagePlatform.ANDROID),
+    ):
+        app.page.web, app.page.platform = web, platform
+        assert "/publish" in [sc.route for sc in app.screens()]
+        app.route_change(path="/publish")
+        view = app.page.views[-1]
+        seen = texts(view)
+        assert view.route == "/publish" and guide in seen
+        assert "my-field · 2026-11-05" in seen
+
+        # 作る部分（観察を選ぶ、行のチェック、粗さ、欄、送るボタン）は無い
+        def walk(c):
+            yield c
+            for name in ("controls", "content", "title", "subtitle", "trailing"):
+                v = getattr(c, name, None)
+                for x in v if isinstance(v, list) else [v] if v is not None else []:
+                    if isinstance(x, ft.Control):
+                        yield from walk(x)
+
+        everything = list(walk(view))
+        assert any(isinstance(c, ft.TextButton) and c.content == "取り下げる" for c in everything)
+        kinds = {type(c) for c in everything}
+        assert not kinds & {ft.Checkbox, ft.TextField, ft.Dropdown, ft.Chip, ft.FilledButton}
+
+
 # ---------------------------------------------------------------- Web 版（設計書 §6.2）
 
 
@@ -304,17 +347,58 @@ def test_admin_says_what_to_do(tmp_path, monkeypatch):
     app = _admin_app(tmp_path, monkeypatch)
     warns = admin.attention(app, OVERVIEW, {"verified": False})
     assert len(warns) == 5
-    assert any("ANTHROPIC_API_KEY" in w for w in warns) and any("log-key" in w for w in warns)
-    assert any("書き換えられています" in w for w in warns) and any("出し直します" in w for w in warns)
+    said = dict(warns)
+    # 何が起きているか → サーバーで打つコマンド（文とコマンドは分かれている。コマンドは一行に一つ）
+    assert said["写真を読み取れません。Claude の鍵が入っていません。サーバーで次を打ちます。"] == [
+        "sudoedit /etc/seed/env   # ANTHROPIC_API_KEY= の後に鍵を入れる",
+        "sudo systemctl restart seed",
+    ]
+    (audit_off,) = [w for w in warns if w[0].startswith("操作の記録を書いていません。")]
+    assert "鍵がもう在る時は作り直しません" in audit_off[0]
+    assert audit_off[1] == [
+        "sudo test -e /etc/seed/log-key || sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'",
+        "sudo systemctl restart seed",
+    ]
+    (tampered,) = [w for w in warns if w[0].startswith("操作の記録が書き換えられています。")]
+    assert "『受け付けを止める』" in tampered[0]
+    assert tampered[1] == ["last -n 20", "sudo journalctl -u ssh --since -2d"]
+    assert any("出し直します" in w and not cmds for w, cmds in warns)
+    err = admin.attention(app, {**OVERVIEW, "audit": "error"})
+    assert ["df -h /var/lib/seed", "ls -ld /var/lib/seed/audit"] in [c for _, c in err]
     good = {**OVERVIEW, "read": True, "audit": "on", "tokens": {"live": 2, "expired": 0, "revoked": 0}}
     good["remaining"] = {"reads": 180}
+    good["denied_today"] = admin.DENIED_MANY - 1
+    good["keys"] = {"claude": True, "plantnet": False}
     assert admin.attention(app, good, {"verified": True}) == []
     rows = dict(admin.state_rows(app, good))
     assert (
-        rows["読み（Claude）"] == "できます"
-        and rows["記録"] == "書いています"
-        and rows["今日の残り"] == "読み 180 回"
+        rows["写真の読み取り（Claude）"] == "できます"
+        and rows["操作の記録"] == "書いています"
+        and rows["今日の残り"] == "読み取り 180 回"
+        and rows["受け付け"] == "受け付けています"
+        and rows["外の鍵"] == "Claude 在る、Pl@ntNet 無い"
+        and rows["公開"] == "記録 2 件、寄せられた一言 3 件"
+        and rows["入れる人"] == "token 2 人、招待コード 4 人、Web 版で記録を置いている人 1 人"
     )
+    # 止めている、断った要求が多い、もうすぐ切れる token
+    busy = {**good, "paused": True, "denied_today": admin.DENIED_MANY}
+    busy["tokens"] = {**good["tokens"], "expiring": 3}
+    warns = admin.attention(app, busy, {"verified": True})
+    assert [w for w, _ in warns] == [
+        "受け付けを止めています。戻すには下の『受け付けを再開する』を押します。",
+        (
+            f"今日、断った要求が {admin.DENIED_MANY} 回あります。誰かが試しているかもしれません。"
+            "下の『誰が何をしたか』で相手を見ます。続くなら『受け付けを止める』を押します。"
+        ),
+        "あと 14 日以内に切れる token が 3 件あります。要る人には、切れる前に出し直します。",
+    ]
+    assert all(cmds == [] for _, cmds in warns)
+    assert dict(admin.state_rows(app, busy))["受け付け"] == "止めています"
+    # en も同じ形
+    app.lang = "en"
+    assert dict(admin.state_rows(app, busy))["Requests"] == "Paused"
+    assert len(admin.attention(app, OVERVIEW, {"verified": False})) == 5
+    app.lang = "ja"
     tokens = [
         {
             "name": "b",
@@ -348,6 +432,19 @@ def test_admin_says_what_to_do(tmp_path, monkeypatch):
         ["2026-11-06 16:55", "知らない人", "公開した", "断った: scope"],
         ["2026-11-06 16:54", "にじ", "管理: token を出した", "買い手 buyer"],
     ]
+    more = [
+        {"ts": "2026-11-06T17:00:00+09:00", "actor": "にじ", "action": a, "detail": d}
+        for a, d in (
+            ("admin.pause", "通した"),
+            ("admin.resume", "通した"),
+            ("admin.token_revoke_all", "3 件"),
+        )
+    ]
+    assert [r[2] for r in admin.audit_rows(app, more)] == [
+        "管理: 受け付けを止めた",
+        "管理: 受け付けを再開した",
+        "管理: token を全部取り消した",
+    ]
 
 
 def test_admin_view_builds_from_loaded_state(tmp_path, monkeypatch):
@@ -373,7 +470,11 @@ def test_admin_view_builds_from_loaded_state(tmp_path, monkeypatch):
     for word in (
         "今の状態",
         "気を付ける事",
-        "人に渡す token",
+        "人に渡す、入る鍵（token）",
+        "渡す相手の名前",
+        "受け付けを止める",
+        "token を全部取り消す",
+        "sudo systemctl restart seed",
         "公開された記録",
         "誰が何をしたか",
         "買い手 A",
@@ -383,7 +484,74 @@ def test_admin_view_builds_from_loaded_state(tmp_path, monkeypatch):
         "not-a-real-token-000",
     ):
         assert word in seen, word
+    # 止めている間は、同じ所のボタンが「再開する」になる。全部取り消すは二度押し
+    app.state["admin"].update(overview={**OVERVIEW, "paused": True}, confirm=("revoke_all", ""))
+    app.route_change(path="/admin")
+    seen = " ".join(texts(app.page.views[-1]))
+    assert "受け付けを再開する" in seen and "受け付けを止める" not in seen
+    assert "本当に全部取り消す（自分の分は残す）" in seen
     # まだ読んでいなければ、尋ねている事だけを出す
     app.state["admin"] = {}
     app.route_change(path="/admin")
     assert "サーバーに尋ねています…" in texts(app.page.views[-1])
+
+
+def test_admin_record_rows(tmp_path, monkeypatch):
+    from seed.app import admin
+
+    app = _admin_app(tmp_path, monkeypatch)
+    recs = [
+        {
+            "id": "2026-11-06-x-1",
+            "name": "にじ",
+            "place": "徳島県",
+            "since": "2026-11-06",
+            "owner": "仲間",
+            "published": "2026-11-06",
+            "connections": 2,
+            "url": "https://seed.example/p/2026-11-06-x-1",
+        },
+        {
+            "id": "2026-11-05-y-1",
+            "name": "y",
+            "owner": "",
+            "published": "2026-11-05",
+            "connections": 0,
+            "url": "",
+        },
+    ]
+    rows = admin.record_rows(app, recs)
+    assert rows[0] == {
+        "id": "2026-11-06-x-1",
+        "head": "にじ · 徳島県 · 2026-11-06",
+        "meta": "公開した人 仲間　公開した日 2026-11-06　寄せられた一言 2 件",
+        "url": "https://seed.example/p/2026-11-06-x-1",
+    }
+    assert rows[1]["meta"].startswith("公開した人 分からない人")
+    conns = [
+        {"name": "2026-11-06-n-0123abcd", "date": "2026-11-06", "from": "買い手", "word": "分けてほしい"}
+    ]
+    assert admin.connection_rows(conns) == [
+        {"name": "2026-11-06-n-0123abcd", "head": "2026-11-06　買い手", "word": "分けてほしい"}
+    ]
+    # 画面: 開いた記録の下に一言と「消す」。二度押しで「本当に消す」
+    app.state["admin"] = {
+        "loaded": True,
+        "overview": OVERVIEW,
+        "tokens": [],
+        "audit": {"lines": []},
+        "records": recs,
+        "conns": {"2026-11-06-x-1": conns},
+        "confirm": ("connection", "2026-11-06-x-1/2026-11-06-n-0123abcd"),
+    }
+    app.route_change(path="/admin")
+    seen = " ".join(texts(app.page.views[-1]))
+    for word in (
+        "公開の頁を開く",
+        "寄せられた一言を閉じる",
+        "寄せられた一言を見る",
+        "分けてほしい",
+        "本当に消す",
+        "公開した人 仲間",
+    ):
+        assert word in seen, word

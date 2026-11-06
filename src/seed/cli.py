@@ -603,10 +603,50 @@ def cmd_say(st: Settings, args) -> int:
     return 0
 
 
+def publish_file(st: Settings, path: Path) -> int:
+    """在る下書き（public/<id>.md）を、中身をそのまま送る。本人が読んだ文と送る文を同じにするため、組み直さない。"""
+    import yaml
+
+    from . import client
+
+    lg = st.language
+    try:
+        text = path.read_text(encoding="utf-8")
+        pub = Public.parse(text)
+    except FileNotFoundError:
+        _err(s("fix_these", lg) + f": {path}")
+        return 1
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError, yaml.YAMLError) as e:
+        _err(s("fix_these", lg) + ":")
+        _err(f"- {path.name}: {e}")
+        return 1
+    bad = pub.check()
+    if not pub.days:
+        bad.append(s("nothing_selected", lg))
+    if bad:
+        _err(s("fix_these", lg) + ":")
+        for b in bad:
+            _err(f"- {b}")
+        return 1
+    try:
+        with client.Client(st.server, st.token, lg, invite=st.invite) as c:
+            got = c.publish(text)
+    except client.ClientError as e:
+        _err(error_text(e, lg, server=st.server))
+        return 2
+    _out(s("published", lg, url=got.get("url") or got.get("id")))
+    return 0
+
+
 def cmd_publish(st: Settings, args) -> int:
     from . import client
 
     lg = st.language
+    if args.file:
+        return publish_file(st, Path(args.file).expanduser())
+    if not (args.observations and args.id and args.place and args.word):
+        _err(s("publish_needs", lg))
+        return 1
     try:
         observations = [_load_obs(st, n)[1] for n in args.observations]
     except FileNotFoundError as e:
@@ -1436,11 +1476,18 @@ def parser() -> argparse.ArgumentParser:
     )
     pl.add_argument("--model", help="--local のモデル（無ければ claude の既定）")
 
-    u = sub.add_parser("publish", parents=[common], help="観察から公開ファイルを作って送る")
-    u.add_argument("observations", nargs="+")
-    u.add_argument("--id", required=True)
-    u.add_argument("--place", required=True)
-    u.add_argument("--word", required=True)
+    u = sub.add_parser(
+        "publish",
+        parents=[common],
+        help="観察から公開ファイルを作って送る（--file なら在る下書きをそのまま送る）",
+    )
+    u.add_argument("observations", nargs="*")
+    u.add_argument(
+        "--file", help="在る下書き（public/<id>.md）を、中身をそのまま送る。観察や --id などは要らない"
+    )
+    u.add_argument("--id")
+    u.add_argument("--place")
+    u.add_argument("--word")
     u.add_argument("--coord", action="store_true", help="座標を小数 2 桁で付ける")
     u.add_argument("--what", help="札。, か 、 で区切る")
     u.add_argument("--next", help="その次。, か 、 で区切る")

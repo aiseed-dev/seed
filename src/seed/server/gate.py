@@ -10,6 +10,7 @@
   `admin`（動かす人。管理の画面。member の事も全部できる）。
 - 記録は kagi の形（追記だけ、連番とハッシュの連鎖と署名。`kagi log verify` で確かめられる）。
   書くのは呼び名、した事、結果。token も招待コードも書かない。
+- 受け付けを止める印は、台帳の隣のファイル `paused`（在れば止めている。設計書 §5.10）。
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ ENV_TOKENS = "SEED_TOKENS"
 ENV_AUDIT = "SEED_AUDIT"
 DEFAULT_TOKENS = "~/.config/aiseed/tokens.json"
 MAX_DAYS = 3650
+EXPIRING_DAYS = 14  # 管理の画面で「もうすぐ切れる」と数える日数
+PAUSE_FILE = "paused"  # 受け付けを止めている印。台帳の隣に置く（再起動しても残る）
 
 log = logging.getLogger("seed.server")
 
@@ -174,6 +177,41 @@ def revoke(path: Path, name: str, today: dt.date | None = None, app: str = APP) 
     return n
 
 
+def revoke_all(path: Path, keep: str, today: dt.date | None = None, app: str = APP) -> int:
+    """生きている token を、呼び名 keep の物（押した本人）を残して全部取り消す。取り消した数を返す（0 もある）。"""
+    today = today or dt.date.today()
+    tokens = load(path)
+    n = 0
+    for t in tokens:
+        if t.get("app", APP) == app and t["name"] != keep and state(t, today) == "live":
+            t["revoked"] = today.isoformat()
+            n += 1
+    if n:
+        save(path, tokens)
+    return n
+
+
+def expiring(entry: dict, today: dt.date | None = None, days: int = EXPIRING_DAYS) -> bool:
+    """生きていて、あと days 日以内に切れる物か。"""
+    today = today or dt.date.today()
+    exp = _date(entry.get("expires"))
+    return state(entry, today) == "live" and exp is not None and exp <= today + dt.timedelta(days=days)
+
+
+def pause_path(tokens: Path | None) -> Path | None:
+    """受け付けを止めている印のファイル。台帳の置き場が無ければ None（止められない）。"""
+    return None if tokens is None else Path(tokens).parent / PAUSE_FILE
+
+
+def set_paused(flag: Path, on: bool) -> None:
+    """印を置くか消す。中身は読まない（在るか無いかだけ）。"""
+    if on:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("paused\n", encoding="utf-8")
+    else:
+        flag.unlink(missing_ok=True)
+
+
 def rows(path: Path, today: dt.date | None = None, app: str = APP) -> list[dict]:
     """一覧に出す物。ハッシュは出さない。"""
     out = []
@@ -287,6 +325,29 @@ class Journal:
                 continue
             out.append({k: r.get(k) for k in ("seq", "ts", "actor", "action", "detail")})
         return out
+
+    def denied_today(self, today: dt.date | None = None) -> int:
+        """今日の、断った行の数（門で断った物と、Web 版の箱の口で断った物）。書いていなければ 0。"""
+        if self._key is None or self.path is None:
+            return 0
+        day = (today or dt.date.today()).isoformat()
+        try:
+            lines = self.path.read_text("utf-8").splitlines()
+        except OSError:
+            return 0
+        n = 0
+        for ln in lines:
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            if (
+                isinstance(r, dict)
+                and str(r.get("ts", "")).startswith(day)
+                and str(r.get("detail", "")).startswith("断った")
+            ):
+                n += 1
+        return n
 
     def verified(self) -> bool | None:
         """記録が書き換えられていないか（kagi log verify と同じ確かめ）。確かめられなければ None。"""

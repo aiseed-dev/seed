@@ -4,7 +4,8 @@
 作者 2026-11-06「管理用を seed に追加しろ」「普通の人用には、管理用画面が必須です」
 「できるだけ AI に聞かなくてもいいように作って」。
 
-上から、今の状態、気を付ける事（する事が一行で分かる形）、人に渡す token、公開された記録、誰が何をしたか。
+上から、今の状態、気を付ける事（何が起きているか → サーバーで打つコマンド）、人に渡す token、公開された記録、
+誰が何をしたか。受け付けを止める・再開するボタンは気を付ける事の札に、token を全部取り消すボタンは token の札に。
 """
 
 from __future__ import annotations
@@ -15,12 +16,14 @@ import flet as ft
 
 from seed.app import theme
 from seed.app.strings import error_text
+from seed.server.gate import EXPIRING_DAYS  # overview の tokens.expiring を数える日数（文に出す）
 
 if TYPE_CHECKING:
     from seed.app.main import App
 
 SCOPES = ("member", "buyer", "admin")
 AUDIT_LINES = 40
+DENIED_MANY = 20  # 今日、断った要求がこの回数以上なら「気を付ける事」に出す
 
 
 def state_rows(app: App, o: dict) -> list[tuple[str, str]]:
@@ -28,9 +31,16 @@ def state_rows(app: App, o: dict) -> list[tuple[str, str]]:
     t = app.t
     left = o.get("remaining", {})
     tk = o.get("tokens", {})
+    keys = o.get("keys", {})
+
+    def have(k: str) -> str:
+        return t("admin_have") if keys.get(k) else t("admin_have_not")
+
     return [
         (t("admin_server"), t("admin_running", version=o.get("version", "?"))),
+        (t("admin_accept"), t("admin_accept_off") if o.get("paused") else t("admin_accept_on")),
         (t("admin_read"), t("admin_yes") if o.get("read") else t("admin_no")),
+        (t("admin_keys"), t("admin_keys_n", claude=have("claude"), plantnet=have("plantnet"))),
         (t("admin_audit"), t(f"admin_audit_{o.get('audit', 'off')}")),
         (t("admin_today"), t("admin_reads_left", n=left.get("reads", "?"))),
         (t("admin_public"), t("admin_public_n", records=o.get("records", 0), connections=o.get("connections", 0))),
@@ -38,24 +48,38 @@ def state_rows(app: App, o: dict) -> list[tuple[str, str]]:
     ]  # fmt: skip
 
 
-def attention(app: App, o: dict, audit: dict | None = None) -> list[str]:
-    """気を付ける事。何が起きていて、何をするかを一行で。無ければ空。"""
+def attention(app: App, o: dict, audit: dict | None = None) -> list[tuple[str, list[str]]]:
+    """気を付ける事。（何が起きているかの文、サーバーで打つコマンドの行）の並び。無ければ空。
+
+    コマンドは画面でそのまま写せるよう、文と分けて返す。打つ物の無い事は行が空。
+    """
     t = app.t
-    out = []
+    out: list[tuple[str, list[str]]] = []
+
+    def warn(word: str, do: str | None = None, **kw) -> None:
+        out.append((t(word, **kw), t(do).splitlines() if do else []))
+
+    if o.get("paused"):
+        warn("admin_warn_paused")
     if not o.get("read"):
-        out.append(t("admin_warn_read"))
+        warn("admin_warn_read", "admin_do_read")
     if o.get("audit") == "off":
-        out.append(t("admin_warn_audit_off"))
+        warn("admin_warn_audit_off", "admin_do_audit_off")
     elif o.get("audit") == "error":
-        out.append(t("admin_warn_audit_error"))
+        warn("admin_warn_audit_error", "admin_do_audit_error")
     if audit and audit.get("verified") is False:
-        out.append(t("admin_warn_tampered"))
-    expired = o.get("tokens", {}).get("expired", 0)
-    if expired:
-        out.append(t("admin_warn_expired", n=expired))
+        warn("admin_warn_tampered", "admin_do_tampered")
+    denied = o.get("denied_today", 0)
+    if isinstance(denied, int) and denied >= DENIED_MANY:
+        warn("admin_warn_denied", n=denied)
+    tk = o.get("tokens", {})
+    if tk.get("expired", 0):
+        warn("admin_warn_expired", n=tk["expired"])
+    if tk.get("expiring", 0):
+        warn("admin_warn_expiring", n=tk["expiring"], days=EXPIRING_DAYS)
     reads = o.get("remaining", {}).get("reads")
     if isinstance(reads, int) and reads <= 0:
-        out.append(t("admin_warn_limit"))
+        warn("admin_warn_limit")
     return out
 
 
@@ -76,6 +100,41 @@ def token_rows(app: App, tokens: list[dict]) -> list[dict]:
             }
         )
     return rows
+
+
+def record_rows(app: App, records: list[dict]) -> list[dict]:
+    """公開された記録の行。名前・場所・始めた年、公開した人、公開した日、寄せられた一言の数、公開の頁。"""
+    t = app.t
+    out = []
+    for rec in records:
+        out.append(
+            {
+                "id": str(rec.get("id", "")),
+                "head": " · ".join(
+                    str(x) for x in (rec.get("name"), rec.get("place"), rec.get("since")) if x
+                ),
+                "meta": t(
+                    "admin_record_meta",
+                    owner=rec.get("owner") or t("admin_unknown_owner"),
+                    published=rec.get("published") or "?",
+                    connections=rec.get("connections", 0),
+                ),
+                "url": str(rec.get("url", "")),
+            }
+        )
+    return out
+
+
+def connection_rows(conns: list[dict]) -> list[dict]:
+    """寄せられた一言の行（日と送った人、言葉、消す時の name）。"""
+    return [
+        {
+            "name": str(c.get("name", "")),
+            "head": f"{c.get('date', '')}　{c.get('from', '')}",
+            "word": str(c.get("word", "")),
+        }
+        for c in conns
+    ]
 
 
 def audit_rows(app: App, lines: list[dict]) -> list[list[str]]:
@@ -139,14 +198,30 @@ def view(app: App) -> ft.View:
         return ft.Row([ft.Card(content=inner, expand=True)])  # 札の幅を揃える
 
     # ---- 今の状態と、気を付ける事
-    warns = attention(app, o, audit)
-    controls.append(card(t("admin_state"), [pairs(state_rows(app, o))]))
-    controls.append(
-        card(
-            t("admin_attention"),
-            [theme.error(w) for w in warns] if warns else [theme.body(t("admin_nothing"))],
+    async def pause(e) -> None:
+        try:  # 一度押しで切り替える（止めている間も、管理の操作は通る）
+            await app.call("admin_pause", not o.get("paused"))
+        except Exception as ex:  # noqa: BLE001
+            app.toast(error_text(ex, app.lang, server=app.settings.server))
+            return
+        await reload()
+
+    at_body: list[ft.Control] = []
+    for text, cmds in attention(app, o, audit):
+        at_body.append(theme.error(text))
+        if cmds:
+            at_body.append(theme.mono("\n".join(cmds)))  # 等幅、選べる、一行に一つ
+    if not at_body:
+        at_body.append(theme.body(t("admin_nothing")))
+    at_body.append(
+        ft.OutlinedButton(
+            t("admin_resume") if o.get("paused") else t("admin_pause"),
+            icon=ft.Icons.PLAY_ARROW if o.get("paused") else ft.Icons.PAUSE,
+            on_click=pause,
         )
     )
+    controls.append(card(t("admin_state"), [pairs(state_rows(app, o))]))
+    controls.append(card(t("admin_attention"), at_body))
 
     # ---- 人に渡す token
     name = ft.TextField(label=t("admin_token_name"), dense=True, width=220)
@@ -191,6 +266,20 @@ def view(app: App) -> ft.View:
             await reload()
 
         return h
+
+    async def revoke_all(e) -> None:
+        if st.get("confirm") != ("revoke_all", ""):  # 一度目は確かめる。二度目で取り消す
+            st["confirm"] = ("revoke_all", "")
+            app.refresh()
+            return
+        st["confirm"] = None
+        try:
+            n = await app.call("admin_token_revoke_all")
+        except Exception as ex:  # noqa: BLE001
+            app.toast(error_text(ex, app.lang, server=app.settings.server))
+            return
+        app.toast(t("admin_revoked_all", n=n))
+        await reload()
 
     async def copy_new(e) -> None:
         await app.page.clipboard.set(st["new_token"]["code"])
@@ -244,6 +333,12 @@ def view(app: App) -> ft.View:
                 )
             )
         tk_body.append(ft.Row(line, vertical_alignment=ft.CrossAxisAlignment.START))
+    asking_all = st.get("confirm") == ("revoke_all", "")
+    tk_body.append(
+        (ft.FilledButton if asking_all else ft.TextButton)(
+            t("admin_revoke_all_sure") if asking_all else t("admin_revoke_all"), on_click=revoke_all
+        )
+    )
     controls.append(card(t("admin_tokens"), tk_body))
 
     # ---- 公開された記録
@@ -264,22 +359,94 @@ def view(app: App) -> ft.View:
 
         return h
 
+    conns: dict = st.setdefault("conns", {})  # 開いている記録の、寄せられた一言（開いた時だけ取りに行く）
+
+    def opener(url: str):
+        async def h(e) -> None:
+            await ft.UrlLauncher().launch_url(url)
+
+        return h
+
+    def shower(rid: str):
+        async def h(e) -> None:
+            if rid in conns:
+                conns.pop(rid)
+                app.refresh()
+                return
+            try:
+                conns[rid] = await app.call("admin_connections", rid)
+            except Exception as ex:  # noqa: BLE001
+                app.toast(error_text(ex, app.lang, server=app.settings.server))
+                return
+            app.refresh()
+
+        return h
+
+    def remover(rid: str, name: str):
+        async def h(e) -> None:
+            if st.get("confirm") != ("connection", f"{rid}/{name}"):  # 一度目は確かめる。二度目で消す
+                st["confirm"] = ("connection", f"{rid}/{name}")
+                app.refresh()
+                return
+            st["confirm"] = None
+            try:
+                await app.call("admin_connection_remove", rid, name)
+                conns[rid] = await app.call("admin_connections", rid)
+            except Exception as ex:  # noqa: BLE001
+                app.toast(error_text(ex, app.lang, server=app.settings.server))
+                return
+            app.index = None
+            await reload()
+
+        return h
+
     rec_body: list[ft.Control] = []
-    for rec in st.get("records") or []:
-        rid = str(rec.get("id", ""))
+    for r in record_rows(app, st.get("records") or []):
+        rid = r["id"]
         asking = st.get("confirm") == ("withdraw", rid)
-        head = " · ".join(str(x) for x in (rec.get("name"), rec.get("place"), rec.get("since")) if x)
-        rec_body.append(
-            ft.Row(
-                [
-                    ft.Column([ft.Text(head, selectable=True), theme.muted(rid)], spacing=2, expand=True),
-                    (ft.FilledButton if asking else ft.TextButton)(
-                        t("admin_withdraw_sure") if asking else t("admin_withdraw"), on_click=withdrawer(rid)
-                    ),
-                ],
-                vertical_alignment=ft.CrossAxisAlignment.START,
+        buttons: list[ft.Control] = []
+        if r["url"]:
+            buttons.append(
+                ft.TextButton(t("admin_open_page"), icon=ft.Icons.OPEN_IN_NEW, on_click=opener(r["url"]))
             )
-        )
+        buttons += [
+            ft.TextButton(
+                t("admin_hide_connections") if rid in conns else t("admin_show_connections"),
+                on_click=shower(rid),
+            ),
+            (ft.FilledButton if asking else ft.TextButton)(
+                t("admin_withdraw_sure") if asking else t("admin_withdraw"), on_click=withdrawer(rid)
+            ),
+        ]
+        one: list[ft.Control] = [
+            ft.Text(r["head"], selectable=True),
+            theme.muted(rid),
+            theme.muted(r["meta"]),
+            ft.Row(buttons, wrap=True, spacing=4),
+        ]
+        if rid in conns:
+            rows_c = connection_rows(conns[rid])
+            for c in rows_c:
+                sure = st.get("confirm") == ("connection", f"{rid}/{c['name']}")
+                one.append(
+                    ft.Row(
+                        [
+                            ft.Column(
+                                [theme.muted(c["head"]), ft.Text(c["word"], selectable=True)],
+                                spacing=0,
+                                expand=True,
+                            ),
+                            (ft.FilledButton if sure else ft.TextButton)(
+                                t("admin_connection_remove_sure") if sure else t("admin_connection_remove"),
+                                on_click=remover(rid, c["name"]),
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                    )
+                )
+            if not rows_c:
+                one.append(theme.muted(t("admin_no_connections")))
+        rec_body.append(ft.Column(one, spacing=4))
     controls.append(card(t("admin_records"), rec_body or [theme.muted(t("admin_no_records"))]))
 
     # ---- 誰が何をしたか

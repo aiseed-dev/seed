@@ -102,6 +102,10 @@ class RevokeBody(BaseModel):
     name: str
 
 
+class PauseBody(BaseModel):
+    paused: bool
+
+
 class ConnectBody(BaseModel):
     token: str | None = None  # あれば from は自分の公開の id。無ければ from は招待コードの呼び名
     to: str
@@ -121,6 +125,15 @@ DENIED = {
     "revoked": "この招待コードは取り消された",
     "scope": "この招待コードでは、ここは使えない",
 }
+PAUSED = "今、受け付けを止めている（サーバーを動かす人が再開するまで）"
+NO_LEDGER = "このサーバーには token の台帳が無い（SEED_TOKENS）"
+
+
+def _paused(settings: Settings) -> JSONResponse | None:
+    """受け付けを止めている間は 503（設計書 §5.10）。公開、一言、写真の読み取り、草の名の口だけが見る。"""
+    if settings.paused():
+        return _error(503, "paused", reason="paused", detail=[PAUSED])
+    return None
 
 
 def _invite(
@@ -129,10 +142,12 @@ def _invite(
     action: str = "",
     need: tuple[str, ...] = ("member",),
     detail: str = "",
+    note: bool = True,
 ) -> str | JSONResponse:
     """門。招待コードか token の呼び名。入れなければ 403 の答え（設計書 §7.5、§5.9）。
 
     need は入ってよい範囲（どれか一つを持っていれば通る）。通した事も断った事も記録に一行（token は書かない）。
+    note が False なら通した行は書かない（結果の数を後で書く口のため。断った行は書く）。
     """
     who, why = settings.who(code)
     if who is not None and "admin" not in who.scopes and not (who.scopes & set(need)):
@@ -140,8 +155,13 @@ def _invite(
     if who is None:
         settings.journal.record("?", action, f"断った: {why}" + (f" {detail}" if detail else ""))
         return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
-    settings.journal.record(who.name or f"（{who.via}）", action, detail or "通した")
+    if note:
+        settings.journal.record(_actor(who), action, detail or "通した")
     return who.name
+
+
+def _actor(who: gate.Who) -> str:
+    return who.name or f"（{who.via}）"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -169,6 +189,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "model": settings.model,
             "remaining": limits.remaining(),
             "audit": settings.journal.state,  # on | off | error（誰が何をしたかの記録。設計書 §5.9）
+            "paused": settings.paused(),  # 受け付けを止めているか（設計書 §5.10）
         }
 
     async def _multipart(request: Request):
@@ -193,6 +214,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/read")
     async def api_read(request: Request):
+        if (closed := _paused(settings)) is not None:
+            return closed
         if app.state.client is None:
             return _error(503, "read_unavailable", detail="このサーバーには API キーが無い")
         form, err = await _multipart(request)
@@ -282,6 +305,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """草の名を Pl@ntNet で（設計書 §17）。サーバーの鍵 PLANTNET_API_KEY。写真は 1〜5 枚、JPEG。"""
         from .. import identify as I
 
+        if (closed := _paused(settings)) is not None:
+            return closed
         if not I.available():
             return _error(503, "identify_unavailable", detail=["このサーバーには Pl@ntNet の鍵が無い"])
         form, err = await _multipart(request)
@@ -352,6 +377,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/publish")
     async def api_publish(body: PublishBody, request: Request):
+        if (closed := _paused(settings)) is not None:
+            return closed
         who = _invite(settings, body.invite, "publish")
         if not isinstance(who, str):
             return who
@@ -359,6 +386,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pub = await run_in_threadpool(P.publish, settings, body.token, body.markdown)
         except P.PublishError as e:
             return _error(e.status, "publish_rejected", detail=e.reasons)
+        await run_in_threadpool(P.note_publisher, settings, pub.id, who)  # 管理の画面の「公開した人」
         # 外向きの url。Web 版は 127.0.0.1 で叩くので、SEED_PUBLIC_URL があればそれを基底にする（11-05）
         base = (settings.public_url or str(request.base_url)).rstrip("/")
         return {"id": pub.id, "url": f"{base}/public/{pub.id}.md"}
@@ -433,21 +461,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         who = _admin(request, "admin.overview")
         if not isinstance(who, str):
             return who
+        from .. import identify as I
+
         idx = await run_in_threadpool(pages.load_index, settings)
         rows = await run_in_threadpool(_token_rows)
         boxes = 0
         if settings.users_dir is not None and settings.users_dir.is_dir():
             boxes = sum(1 for p in settings.users_dir.iterdir() if p.is_dir())
+        tokens = {st: sum(1 for r in rows if r["state"] == st) for st in ("live", "expired", "revoked")}
+        tokens["expiring"] = sum(1 for r in rows if gate.expiring(r))
         return {
             "version": __version__,
             "records": idx.get("total", {}).get("records", 0),
             "connections": idx.get("total", {}).get("connections", 0),
             "boxes": boxes,
-            "tokens": {st: sum(1 for r in rows if r["state"] == st) for st in ("live", "expired", "revoked")},
+            "tokens": tokens,
             "invites": len(settings._book.codes()),
             "read": app.state.client is not None,
             "audit": settings.journal.state,
             "remaining": limits.remaining(),
+            "paused": settings.paused(),
+            # 外の鍵は在るか無いかだけ。値は出さない
+            "keys": {"claude": bool(settings.api_key), "plantnet": I.available()},
+            "denied_today": await run_in_threadpool(settings.journal.denied_today),
         }
 
     def _token_rows() -> list[dict]:
@@ -471,7 +507,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(who, str):
             return who
         if settings.tokens_path is None:
-            return _error(503, "no_ledger", detail=["このサーバーには token の台帳が無い（SEED_TOKENS）"])
+            return _error(503, "no_ledger", detail=[NO_LEDGER])
         try:
             code = await run_in_threadpool(
                 gate.add, settings.tokens_path, body.name, [body.scope], body.days, body.note or ""
@@ -488,7 +524,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(who, str):
             return who
         if settings.tokens_path is None:
-            return _error(503, "no_ledger", detail=["このサーバーには token の台帳が無い（SEED_TOKENS）"])
+            return _error(503, "no_ledger", detail=[NO_LEDGER])
         try:
             n = await run_in_threadpool(gate.revoke, settings.tokens_path, body.name)
         except gate.GateError as e:
@@ -496,6 +532,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except OSError as e:
             return _error(503, "ledger_unwritable", detail=[f"台帳に書けない ({type(e).__name__})"])
         return {"revoked": n}
+
+    @app.post("/api/admin/tokens/revoke_all")
+    async def admin_token_revoke_all(request: Request):
+        """押した本人の token を残して、生きている token を全部取り消す。記録には取り消した数を一行。"""
+        action = "admin.token_revoke_all"
+        who = _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), note=False)
+        if not isinstance(who, str):
+            return who
+        if settings.tokens_path is None:
+            return _error(503, "no_ledger", detail=[NO_LEDGER])
+        try:
+            n = await run_in_threadpool(gate.revoke_all, settings.tokens_path, who)
+        except gate.GateError as e:
+            return _error(400, "token_rejected", detail=[str(e)])
+        except OSError as e:
+            return _error(503, "ledger_unwritable", detail=[f"台帳に書けない ({type(e).__name__})"])
+        settings.journal.record(who or "?", action, f"{n} 件")
+        return {"revoked": n}
+
+    @app.post("/api/admin/pause")
+    async def admin_pause(body: PauseBody, request: Request):
+        """受け付けを止める・再開する。印は台帳の隣のファイルで、再起動しても残る。"""
+        action = "admin.pause" if body.paused else "admin.resume"
+        who = _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), note=False)
+        if not isinstance(who, str):
+            return who
+        flag = settings.pause_path
+        if flag is None:
+            return _error(503, "no_ledger", detail=[NO_LEDGER + "。止める印を置く所が無い"])
+        try:
+            await run_in_threadpool(gate.set_paused, flag, body.paused)
+        except OSError as e:
+            return _error(503, "pause_unwritable", detail=[f"止める印を書けない ({type(e).__name__})"])
+        settings.journal.record(who or "?", action, "通した")  # 印を置けてから一行
+        return {"paused": settings.paused()}
 
     @app.get("/api/admin/audit")
     async def admin_audit(request: Request, limit: int = 100):
@@ -515,7 +586,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(who, str):
             return who
         idx = await run_in_threadpool(pages.load_index, settings)
-        return {"records": idx.get("records", [])}
+        base = (settings.public_url or str(request.base_url)).rstrip("/")
+
+        def more(rec: dict) -> dict:
+            rid = str(rec.get("id", ""))
+            return {
+                **rec,
+                "owner": P.publisher_of(settings, rid),  # 名前だけ。ハッシュは返さない
+                "published": P.published_on(settings, rid),
+                "connections": index.count_connections(settings.connections_dir, rid) if rid else 0,
+                "url": f"{base}/p/{rid}",
+            }
+
+        return {"records": await run_in_threadpool(lambda: [more(r) for r in idx.get("records", [])])}
+
+    @app.get("/api/admin/records/{record_id}/connections")
+    async def admin_connections(record_id: str, request: Request):
+        who = _admin(request, "admin.connections", record_id[:80])
+        if not isinstance(who, str):
+            return who
+        try:
+            return {"connections": await run_in_threadpool(P.connections, settings, record_id)}
+        except P.PublishError as e:
+            return _error(e.status, "connections_rejected", detail=e.reasons)
+
+    @app.delete("/api/admin/records/{record_id}/connections/{name}")
+    async def admin_connection_remove(record_id: str, name: str, request: Request):
+        """寄せられた一言を一件消す。記録には公開の id と日だけ（言葉そのものは書かない）。"""
+        action = "admin.connection_remove"
+        who = _invite(
+            settings,
+            request.headers.get("x-seed-invite"),
+            action,
+            need=("admin",),
+            detail=record_id[:80],
+            note=False,
+        )
+        if not isinstance(who, str):
+            return who
+        try:
+            day = await run_in_threadpool(P.remove_connection, settings, record_id, name)
+        except P.PublishError as e:
+            return _error(e.status, "connection_rejected", detail=e.reasons)
+        settings.journal.record(who or "?", action, f"{record_id} {day}")
+        return {"id": record_id, "name": name, "removed": True}
 
     @app.delete("/api/admin/records/{record_id}")
     async def admin_withdraw(record_id: str, request: Request):
@@ -530,6 +644,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/connect")
     async def api_connect(body: ConnectBody, request: Request):
+        if (closed := _paused(settings)) is not None:
+            return closed
         # 一言は買い手も送れる（買い手の token でできるのはここだけ。設計書 §5.9）
         who = _invite(settings, body.invite, "connect", need=("member", "buyer"), detail=str(body.to)[:80])
         if not isinstance(who, str):

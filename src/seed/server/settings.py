@@ -94,6 +94,16 @@ class Settings:
         )
 
     @property
+    def pause_path(self) -> Path | None:
+        """受け付けを止めている印（台帳の隣）。台帳の置き場が無ければ None で、止められない。"""
+        return gate.pause_path(self.tokens_path)
+
+    def paused(self) -> bool:
+        """受け付けを止めているか。要求ごとに見る（ファイルなので、再起動しても残る）。"""
+        p = self.pause_path
+        return p is not None and p.exists()
+
+    @property
     def site_dir(self) -> Path:
         """静的サイト（index.html、p/<id>.html、index.json、public/<id>.md）。Caddy はここだけを配る。"""
         return self.public_dir / "site"

@@ -97,6 +97,8 @@ class Client:
             if r.status_code == 429:
                 raise ClientError("server_limit", "today's limit is reached", detail, 429)
             if r.status_code == 503:
+                if _error_word(r) == "paused":  # 動かす人が受け付けを止めている（設計書 §5.10）
+                    raise ClientError("server_paused", "the server is not accepting requests now", None, 503)
                 raise ClientError("server_busy", "the server is not reading now", detail, 503)
             if r.status_code in (401, 403):
                 if "invite_required" in (r.text or ""):
@@ -234,6 +236,16 @@ class Client:
         r = self._call("POST", "/api/admin/tokens/revoke", json={"name": name}, headers=self._admin_headers())
         return int(self._json(r).get("revoked", 0))
 
+    def admin_token_revoke_all(self) -> int:
+        """押した本人の token を残して全部取り消す。取り消した数を返す。"""
+        r = self._call("POST", "/api/admin/tokens/revoke_all", headers=self._admin_headers())
+        return int(self._json(r).get("revoked", 0))
+
+    def admin_pause(self, paused: bool) -> bool:
+        """受け付けを止める（True）か再開する（False）。今の状態を返す。"""
+        r = self._call("POST", "/api/admin/pause", json={"paused": paused}, headers=self._admin_headers())
+        return bool(self._json(r).get("paused"))
+
     def admin_audit(self, limit: int = 100) -> dict:
         r = self._call("GET", "/api/admin/audit", params={"limit": limit}, headers=self._admin_headers())
         return self._json(r)
@@ -244,6 +256,16 @@ class Client:
 
     def admin_withdraw(self, public_id: str) -> None:
         self._call("DELETE", f"/api/admin/records/{public_id}", headers=self._admin_headers())
+
+    def admin_connections(self, record_id: str) -> list[dict]:
+        """その公開に寄せられた一言（{"name", "date", "from", "word"}。新しい物が先）。"""
+        r = self._call("GET", f"/api/admin/records/{record_id}/connections", headers=self._admin_headers())
+        return self._json(r).get("connections", [])
+
+    def admin_connection_remove(self, record_id: str, name: str) -> None:
+        """寄せられた一言を一件消す。name は一覧の name（ファイルの名の幹）。"""
+        url = f"/api/admin/records/{record_id}/connections/{name}"
+        self._call("DELETE", url, headers=self._admin_headers())
 
     def index(self) -> dict:
         """index.json（記録の形 §8）。"""
@@ -265,6 +287,14 @@ def _detail(r: httpx.Response) -> str | None:
     if isinstance(d, str):
         return d
     return str(d) if d else None
+
+
+def _error_word(r: httpx.Response) -> str | None:
+    try:
+        e = r.json().get("error")
+    except (ValueError, AttributeError):
+        return None
+    return e if isinstance(e, str) else None
 
 
 def apply_reading(obs: Observation, reading: Reading, today: str | None = None) -> None:

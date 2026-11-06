@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
+import json
+
 import httpx
 import pytest
 from test_photos import make_jpeg
@@ -173,6 +175,61 @@ def test_publish(seedfolder, photo, monkeypatch, capsys):
     assert "photos/" not in sent["json"]
 
 
+def test_publish_file_sends_the_draft_as_read(seedfolder, photo, monkeypatch, capsys):
+    """下書き（--local）→ 本人が読む（手で直してもよい）→ --file で同じ文を送る。"""
+    f = str(seedfolder)
+    mock_server(monkeypatch, lambda req: httpx.Response(200, json=READING))
+    cli.main(["observe", "--folder", f, str(photo), "--say", "did: 見ただけ"])
+    cli.main(["mark", "--folder", f, "2026-11-05-142107", "overall", "right"])
+    base = ["publish", "--folder", f]
+    draft_args = [
+        *base,
+        "2026-11-05-142107",
+        "--id",
+        "draft-1",
+        "--place",
+        "徳島県",
+        "--word",
+        "見本の一言",
+        "--name",
+        "見本",
+    ]
+    sent: list[str] = []
+
+    def handler(req):
+        sent.append(json.loads(req.read().decode())["markdown"])
+        return httpx.Response(200, json={"id": "draft-1", "url": "https://seed.test/public/draft-1.md"})
+
+    mock_server(monkeypatch, handler)
+    assert cli.main([*draft_args, "--local"]) == 0 and sent == []  # 「出す」の前には送らない
+    draft = seedfolder / "public" / "draft-1.md"
+    # 本人が読んで、Claude が手で一言を直した物を、そのまま送る
+    text = draft.read_text(encoding="utf-8").replace("見本の一言", "見本の一言（直した）")
+    draft.write_text(text, encoding="utf-8")
+    capsys.readouterr()
+    assert cli.main([*base, "--file", str(draft)]) == 0
+    assert sent == [text]  # 送られた文はファイルの中身と同じ
+    assert "公開しました" in capsys.readouterr().out
+    assert draft.read_text(encoding="utf-8") == text  # 組み直して書き換えない
+
+    # 形の悪いファイルは送らない
+    bad = seedfolder / "public" / "bad.md"
+    for body in (
+        text.replace("見本の一言（直した）", "電話 090-1234-5678"),  # 電話の形
+        text.replace("id: draft-1", "id: Bad ID"),  # id の形
+        "前書きの無い文\n",
+        text.replace("place:", "secret: x\nplace:"),  # 知らない鍵
+    ):
+        bad.write_text(body, encoding="utf-8")
+        assert cli.main([*base, "--file", str(bad)]) == 1, body
+        assert "直す所" in capsys.readouterr().err
+    assert cli.main([*base, "--file", str(seedfolder / "public" / "none.md")]) == 1
+    assert len(sent) == 1
+    # --file 無しで観察も --id も無ければ止まる。--file 無しの動きは今まで通り
+    assert cli.main(base) == 1 and "--file" in capsys.readouterr().err
+    assert cli.main(draft_args) == 0 and len(sent) == 2 and sent[1] == Public.read(draft).render()
+
+
 def test_publish_local_without_lines(seedfolder, photo, capsys):
     f = str(seedfolder)
     cli.main(["observe", "--folder", f, "--claude-code", str(photo)])
@@ -278,7 +335,15 @@ def test_app_screens_import():
     # 画面は import できることだけ確かめる（動かすのは flet run で）
     from seed.app import main
 
-    assert [sc.route for sc in main.SCREENS] == ["/", "/observe", "/records", "/plan", "/publish", "/find", "/admin"]
+    assert [sc.route for sc in main.SCREENS] == [
+        "/",
+        "/observe",
+        "/records",
+        "/plan",
+        "/publish",
+        "/find",
+        "/admin",
+    ]
     assert callable(main.main) and callable(main.run)
 
 
