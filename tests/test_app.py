@@ -761,6 +761,55 @@ def test_draft_card_shows_outgoing_photos_above_text(app, seedfolder, tmp_path):
     assert not [c for c in walk(ft.Column(got)) if isinstance(c, FORMS)]
 
 
+def test_project_name_listed_and_unlisted(app, seedfolder, tmp_path):
+    from seed import fields as fields_mod
+
+    assert app.project_name == "seed"  # 一覧に無ければフォルダーの名
+    fl = fields_mod.Fields()
+    fl.add("自分の畑", str(seedfolder))
+    fields_mod.save_fields(fl)
+    assert app.project_name == "自分の畑"
+
+
+def test_app_bar_shows_project_and_folder_icon(app, seedfolder):
+    from seed import fields as fields_mod
+
+    fl = fields_mod.Fields()
+    fl.add("自分の畑", str(seedfolder))
+    fields_mod.save_fields(fl)
+    v = app.view("/photos", [])
+    assert v.appbar.title.value.startswith("自分の畑 — ")
+    first = v.appbar.actions[0]
+    assert first.icon == ft.Icons.FOLDER_OPEN_OUTLINED and first.tooltip == "プロジェクトフォルダーを変える"
+
+
+def test_project_sheet_lists_fields_and_switches(app, seedfolder, tmp_path):
+    from seed import fields as fields_mod
+
+    other = tmp_path / "other"
+    other.mkdir()
+    fl = fields_mod.Fields()
+    fl.add("自分の畑", str(seedfolder))
+    fl.add("知人の田", str(other))
+    fields_mod.save_fields(fl)
+    app.show_projects()
+    sheet = app.page.dialogs[-1]
+    assert isinstance(sheet, ft.BottomSheet)
+    words = texts(sheet)
+    assert "今のプロジェクトフォルダー" in words and app.folder_label in words
+    buttons = {c.content: c for c in walk(sheet) if isinstance(c, ft.TextButton)}
+    assert buttons["自分の畑"].disabled and buttons["自分の畑"].icon == ft.Icons.CHECK
+    assert not buttons["知人の田"].disabled
+    assert "別のフォルダーを開く" in buttons  # FakePage は PC
+    run(buttons["知人の田"].on_click(None))
+    assert app.folder.root == other and app.project_name == "知人の田"
+    app.page.platform = ft.PagePlatform.ANDROID
+    app.show_projects()
+    assert "別のフォルダーを開く" not in [
+        c.content for c in walk(app.page.dialogs[-1]) if isinstance(c, ft.TextButton)
+    ]
+
+
 def test_open_other_folder_switches_and_remembers(app, tmp_path):
     from seed import fields as fields_mod
 

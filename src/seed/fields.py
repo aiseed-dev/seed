@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """畑の一覧 fields.toml（docs/記録の形.md §19、設計書 §5.8）。
 
-記録のフォルダー一つが一つの畑。畑が二つ以上ある時は、名を付けて一覧に書き、切り替える。
+プロジェクトフォルダー（記録のフォルダー）一つが一つの畑。畑が二つ以上ある時は、名を付けて一覧に書き、切り替える。
 場所は SEED_FIELDS → ~/.config/seed/fields.toml。秘密は入れない（名とフォルダーと current だけ）。
 無ければ空の一覧で、今まで通り --folder / SEED_FOLDER / 既定 ~/seed。
-フォルダーを決める順: --folder > --field > current > SEED_FOLDER > 既定。
+フォルダーを決める順: --folder > 今いるフォルダー（seed.toml がある時。Claude Code と同じ）
+> --field > current > SEED_FOLDER > 既定。
 書くのは tomllib が読める素の形だけ（current = "..." と [[field]] の並び）。
 """
 
@@ -119,12 +120,15 @@ def save_fields(fl: Fields, path: Path | str | None = None) -> Path:
 
 
 def chosen(field: str | None = None, folder: str | None = None, path: Path | str | None = None) -> str | None:
-    """--folder と --field と current から決まるフォルダー。どれも無ければ None（settings の既定に任せる）。
+    """--folder と今いるフォルダーと --field と current から決まるフォルダー。どれも無ければ None（settings の既定に任せる）。
 
     一覧に無い名の --field は UnknownField。current が一覧に無い名なら、無い物として扱う。
     """
     if folder:
         return folder
+    here = Path.cwd()
+    if (here / "seed.toml").is_file():  # seed のプロジェクトの中にいれば、そのフォルダーが開く
+        return str(here)
     fl = load_fields(path)
     if field:
         f = fl.get(field)
@@ -136,7 +140,7 @@ def chosen(field: str | None = None, folder: str | None = None, path: Path | str
 
 
 def resolve(field: str | None = None, folder: str | None = None, path: Path | str | None = None) -> Path:
-    """記録のフォルダー。--folder > --field > current > SEED_FOLDER > 既定 ~/seed。"""
+    """プロジェクトフォルダー。--folder > 今いるフォルダー（seed.toml がある）> --field > current > SEED_FOLDER > 既定 ~/seed。"""
     got = chosen(field, folder, path)
     return Path(got).expanduser() if got else settings_mod.default_folder()
 

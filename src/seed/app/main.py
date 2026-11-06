@@ -148,6 +148,17 @@ class App:
         root = self.folder.root
         return f"~/{root.relative_to(home).as_posix()}" if root.is_relative_to(home) else str(root)
 
+    @property
+    def project_name(self) -> str:
+        """プロジェクトフォルダーの名: 一覧にある畑の名、無ければフォルダーの名。"""
+        name = fields_mod.selected_name(fields_mod.load_fields(), self.folder.root)
+        return name or self.folder.root.name
+
+    def show_projects(self, e=None) -> None:
+        from seed.app import cards  # cards は main を読むので、使う時に取る
+
+        self.page.show_dialog(cards.project_sheet(self))
+
     def screens(self) -> list[Screen]:
         """切り替えの並び。話す、写真、同梱のプラグイン、本人のプラグイン。"""
         return SCREENS + [
@@ -191,8 +202,15 @@ class App:
         return ft.View(
             route=route,
             appbar=ft.AppBar(
-                title=ft.Text(f"seed — {self.screen_name(screens[idx])}"),
+                title=ft.Text(f"{self.project_name} — {self.screen_name(screens[idx])}"),
                 actions=[
+                    ft.IconButton(
+                        ft.Icons.FOLDER_OPEN_OUTLINED,
+                        tooltip=self.t("project_switch"),
+                        on_click=self.show_projects,
+                    )
+                ]
+                + [
                     ft.IconButton(
                         sc.icon,
                         tooltip=self.screen_name(sc),

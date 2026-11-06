@@ -62,6 +62,26 @@ def test_resolve_order(tmp_path, monkeypatch):
     assert fields_mod.resolve() == Path("~/seed").expanduser()
 
 
+def test_cwd_with_seed_toml_wins(tmp_path, monkeypatch):
+    here = tmp_path / "here"
+    here.mkdir()
+    other = tmp_path / "plain"
+    other.mkdir()
+    fl = fields_mod.Fields()
+    fl.add("a", str(tmp_path / "a"))
+    fl.add("b", str(tmp_path / "b"))
+    fields_mod.save_fields(fl)
+    fields_mod.switch_field("a")
+    monkeypatch.setenv("SEED_FOLDER", str(tmp_path / "env"))
+    monkeypatch.chdir(other)  # seed.toml が無ければ効かない
+    assert fields_mod.resolve() == tmp_path / "a"
+    (here / "seed.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(here)
+    assert fields_mod.resolve() == here  # 今いるフォルダー > current
+    assert fields_mod.resolve(field="b") == here  # 今いるフォルダー > --field
+    assert fields_mod.resolve(folder=str(tmp_path / "f")) == tmp_path / "f"  # --folder が先
+
+
 def test_current_not_in_list_is_ignored(tmp_path, monkeypatch):
     monkeypatch.setenv("SEED_FOLDER", str(tmp_path / "env"))
     fields_mod.save_fields(fields_mod.Fields(current="消えた畑"))

@@ -540,3 +540,42 @@ def settings_card(app: App) -> list[ft.Control]:
         )
     )
     return out
+
+
+def project_sheet(app: App) -> ft.BottomSheet:
+    """プロジェクトフォルダーを選ぶ下の板。今のフォルダー、畑の一覧（今のは印をつけて押せない）、PC なら別のフォルダーを開く。"""
+    t = app.t
+    fl = fields_mod.load_fields()
+    now = app.project_name
+
+    def close() -> None:
+        app.page.pop_dialog()
+
+    def switch(name: str):
+        async def h(e) -> None:
+            close()
+            await app.switch_field(name)
+
+        return h
+
+    async def pick(e) -> None:
+        close()
+        await app.pick_folder()
+
+    rows: list[ft.Control] = [
+        ft.Text(t("project_current"), weight=ft.FontWeight.BOLD),
+        theme.muted(app.folder_label),
+    ]
+    for n in fl.names:
+        here = n == now
+        rows.append(
+            ft.TextButton(
+                n,
+                icon=ft.Icons.CHECK if here else None,
+                disabled=here,
+                on_click=switch(n),
+            )
+        )
+    if capture.is_pc(app):
+        rows.append(ft.TextButton(t("set_folder_open"), icon=ft.Icons.FOLDER_OPEN_OUTLINED, on_click=pick))
+    return ft.BottomSheet(ft.Container(ft.Column(rows, tight=True), padding=16))
