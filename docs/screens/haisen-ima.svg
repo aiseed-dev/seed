@@ -6,7 +6,7 @@
 <text x="480" y="67" font-size="15" fill="#1f2a1c" text-anchor="middle" font-weight="700">インターネット</text>
 <line x1="480" y1="88" x2="480" y2="112" stroke="#1f2a1c" stroke-width="2.2"/>
 <rect x="340" y="112" width="280" height="62" rx="10" fill="#ffffff" stroke="#8a8f86" stroke-width="2.2"/>
-<text x="480.0" y="136" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">家のルーター（ヤマハ）</text>
+<text x="480.0" y="136" text-anchor="middle" font-size="16" font-weight="700" fill="#1f2a1c">家のルーター（RTX830）</text>
 <text x="480.0" y="158" text-anchor="middle" font-size="13" fill="#5f6b5a">出口は一つ。管理の口 80・22 が家の網に開く</text>
 <line x1="480" y1="174" x2="480" y2="214" stroke="#1f2a1c" stroke-width="2.2"/>
 <line x1="60" y1="214" x2="900" y2="214" stroke="#1f2a1c" stroke-width="3"/>
