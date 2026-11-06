@@ -42,6 +42,7 @@ READING_KEYS = (
     "soil_surface",
     "plants",
     "crops",
+    "tags",  # 写真一枚に一行。「<写真の名>: <植物の名>, <状態>, …」（手引き 06「写真のタグ」）
     "water",
     "access",  # 道、通える距離。候補地で特に
     "sun_slope",  # 日当たり、傾斜
@@ -51,6 +52,22 @@ READING_KEYS = (
     "uncertain",
     "next_to_observe",
 )
+# 写真のタグの状態の語（tags の行。手引き 06「写真のタグ」）。植物の名は自由
+TAG_STATES = {
+    "ja": ("発芽", "育ち", "開花", "結実", "枯れ", "刈った", "播いた", "植えた", "収穫", "裸地"),
+    "en": (
+        "sprouting",
+        "growing",
+        "flowering",
+        "fruiting",
+        "withered",
+        "cut",
+        "sown",
+        "planted",
+        "harvested",
+        "bare",
+    ),
+}
 RECORD_KEYS = ("did", "saw", "said", "note", "ask")  # ask は本人が知りたいこと（自由な言葉）
 # 本人が知りたいこと（前書きの ask）。典型の物を選べる。語は英語のまま、表示と依頼の文は ASK_WORDS
 ASKS = ("grow", "soil", "plants", "history", "access", "sow", "next", "names")

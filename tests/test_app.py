@@ -292,7 +292,7 @@ def test_send_words_with_local_claude(app, seedfolder, tmp_path, monkeypatch):
     assert words.index("142107 の手前はオギ（本人の言葉に拠る）") >= 0
     # 返事の中の写真（![…](photos/…)）は、写真として出る
     parts = talk.reply_parts(item["text"], app.folder, talk.photo_index(app.folder))
-    assert parts == [("text", "直しました。"), ("photos", [A])]
+    assert parts == [("text", "直しました。"), ("photos", [(A, "手前")])]
 
 
 def test_send_words_without_local_claude_only_notes(app, seedfolder, tmp_path, monkeypatch):
@@ -379,10 +379,23 @@ def test_reply_parts_keep_photos_inside_the_folder(app, seedfolder, tmp_path):
     text = "## 場所 1\n![手前](photos/2026-11-05/142107.jpg)\n![外](../../etc/passwd) ![絶対](/etc/hosts) ![無い](photos/2026-11-05/000000.jpg)\n142200 は穂が出ている"
     assert talk.reply_parts(text, app.folder, known) == [
         ("text", "## 場所 1"),
-        ("photos", [A]),
+        ("photos", [(A, "手前")]),
         ("text", "外 絶対 無い\n142200 は穂が出ている"),  # 出せない絵は一言だけ。道は Markdown に渡さない
-        ("photos", [B]),
+        ("photos", [(B, "")]),
     ]
+
+
+def test_reply_photos_carry_captions(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, tag_reading())
+    text = "見つけた草です。\n![セイタカアワダチソウ](photos/2026-11-05/142107.jpg) ![オギ](photos/2026-11-05/142200.jpg)"
+    ctl = talk.reply_controls(app, text)
+    caps = [c.value for x in ctl for c in walk(x) if isinstance(c, ft.Text) and c.size == 12]
+    assert sorted(caps) == ["オギ", "セイタカアワダチソウ"]
+    assert len([c for x in ctl for c in walk(x) if isinstance(c, ft.Image)]) == 2
+    # 名で指しただけの写真は、付いたタグを下に出す
+    ctl = talk.reply_controls(app, "142200 を見てください")
+    caps = [c.value for x in ctl for c in walk(x) if isinstance(c, ft.Text) and c.size == 12]
+    assert caps == ["オギ、刈った"]
 
 
 # ---------------------------------------------------------------- この土地の成り立ち（AI 無し）
@@ -800,3 +813,77 @@ def test_open_folder_stops_remote(app, tmp_path, monkeypatch):
     app.open_folder(str(app.folder.root))
     assert r.returncode is not None
     assert "remote" not in app.state
+
+
+# ---------------------------------------------------------------- 写真のタグ
+
+
+def tag_reading(*extra):
+    return [
+        Line("tags", "142107: セイタカアワダチソウ, オギ, 開花", 0.7),
+        Line("tags", "142200: オギ、刈った、オギ", 0.7),
+        *extra,
+    ]
+
+
+def test_tags_of_and_all_tags(app, seedfolder, tmp_path):
+    path = observe(
+        seedfolder,
+        tmp_path,
+        tag_reading(
+            Line("tags", "999999: 幽霊", 0.7),
+            Line("tags", "形が違う", 0.7),
+            Line("tags", "142107: 間違い", 0.7, "wrong"),
+        ),
+    )
+    obs = Observation.read(path)
+    assert H.tags_of(obs) == {
+        "142107": ["セイタカアワダチソウ", "オギ", "開花"],
+        "142200": ["オギ", "刈った"],
+    }
+    assert H.all_tags([("a", obs)]) == [
+        ("オギ", 2),
+        ("セイタカアワダチソウ", 1),
+        ("刈った", 1),
+        ("開花", 1),
+    ]
+    en = Observation.read(path)
+    en.reading = [Line("tags", "142200: Miscanthus, cut", 0.7)]
+    assert H.tags_of(en) == {"142200": ["Miscanthus", "cut"]}
+
+
+def test_gallery_tag_chips_filter(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, tag_reading())
+    v = gallery.view(app)
+    chips = {c.label: c for c in walk(v) if isinstance(c, ft.Chip)}  # walk は逆順に出る
+    assert set(chips) == {"オギ 2", "セイタカアワダチソウ 1", "刈った 1", "開花 1"}
+    tiles = lambda v: [
+        c
+        for c in walk(v)
+        if isinstance(c, ft.Container) and c.on_click and not isinstance(c.content, ft.Text)
+    ]
+    assert len(tiles(v)) == 2
+    chips["開花 1"].on_click(None)
+    assert app.state["photo_tag"] == "開花"
+    v = gallery.view(app)
+    assert {c.label for c in walk(v) if isinstance(c, ft.Chip) and c.selected} == {"開花 1"}
+    assert len(tiles(v)) == 1
+    next(c for c in walk(v) if isinstance(c, ft.Chip) and c.selected).on_click(None)
+    assert app.state["photo_tag"] is None and len(tiles(gallery.view(app))) == 2
+    # 付いた写真が無い語は外れる
+    app.state["photo_tag"] = "存在しない"
+    gallery.view(app)
+    assert app.state["photo_tag"] is None
+    shots = gallery.all_shots(app)
+    assert shots[0].tags and shots[1].tags
+
+
+def test_turn_drops_tags_lines(app, seedfolder, tmp_path):
+    path = observe(seedfolder, tmp_path, [*NEW_READING, *tag_reading()])
+    t = talk.turn_of("x", Observation.read(path))
+    assert t.found and all(f.line.key != "tags" for f in t.found)
+
+
+def test_prompt_rules_ask_for_tags():
+    ja, en = H.prompt_rules("ja"), H.prompt_rules("en")
+    assert "tags" in ja and "開花" in ja and "flowering" in en

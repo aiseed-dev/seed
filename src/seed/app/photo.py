@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,6 +63,7 @@ class Shot:
 
     obs: Observation
     rel: str
+    tags: list[str] = field(default_factory=list)
 
 
 def picture(app: App, path: Path, side: int, max_w: float, max_h: float, on_click=None) -> ft.Control | None:
@@ -107,8 +108,46 @@ def strip(app: App, shots: list[Shot], size: float = SMALL) -> ft.Control:
     return ft.Row(tiles, wrap=True, spacing=8, run_spacing=8)
 
 
+def captioned_strip(app: App, shots: list[Shot], captions: dict[str, str], size: float = SMALL) -> ft.Control:
+    """写真を折り返して並べ、各写真の下に短い一言（無ければタグ。どちらも無ければ何も）。"""
+    sep = "、" if app.lang == "ja" else ", "
+    cells = []
+    for i, s in enumerate(shots):
+        t = tile(app, shots, i, size)
+        if t is None:
+            continue
+        text = captions.get(s.rel) or sep.join(s.tags)
+        cells.append(
+            ft.Column(
+                [
+                    t,
+                    *(
+                        [
+                            ft.Container(
+                                ft.Text(
+                                    text,
+                                    size=12,
+                                    color=ft.Colors.ON_SURFACE_VARIANT,
+                                    max_lines=2,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                ),
+                                width=size,
+                            )
+                        ]
+                        if text
+                        else []
+                    ),
+                ],
+                spacing=4,
+                tight=True,
+            )
+        )
+    return ft.Row(cells, wrap=True, spacing=8, run_spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
+
+
 def shots_of(obs: Observation) -> list[Shot]:
-    return [Shot(obs, r) for r in obs.photos]
+    tags = H.tags_of(obs)
+    return [Shot(obs, r, tags.get(H.stem(r), [])) for r in obs.photos]
 
 
 def taken_text(app: App, shot: Shot) -> str:
@@ -151,6 +190,8 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
         info: list[ft.Control] = [ft.Text(taken_text(app, s), size=13)]
         if not album.has_coord(app.folder.root / s.rel):
             info.append(no_coord_mark(app))
+        if s.tags:
+            info.append(ft.Text(("、" if app.lang == "ja" else ", ").join(s.tags), size=12, italic=True))
         nav: list[ft.Control] = []
         if len(shots) > 1:
             nav = [

@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .records import Line, Observation
+from .records import TAG_STATES, Line, Observation
 
 LABELS = {
     "today": {"ja": "今日の一枚", "en": "Photo of the day"},
@@ -206,17 +206,53 @@ def plants(observations: list[tuple[str, Observation]]) -> list[Plant]:
     return sorted(found.values(), key=lambda p: (-p.count, p.name))
 
 
+# ---------------------------------------------------------------- 写真のタグ（tags の行から）
+
+TAG_RE = re.compile(r"\A(?P<stem>[^\s:：,、]+)\s*[:：]\s*(?P<words>.+)\Z")
+
+
+def tags_of(obs: Observation) -> dict[str, list[str]]:
+    """写真の名（幹）→ 語の並び。違うと付いた行、形の違う行、この観察に無い写真の行は飛ばす。"""
+    stems = {stem(r) for r in obs.photos}
+    out: dict[str, list[str]] = {}
+    for line in obs.reading:
+        if line.key != "tags" or line.verdict == "wrong":
+            continue
+        m = TAG_RE.match(line.text.strip())
+        if not m or m.group("stem") not in stems:
+            continue
+        words = out.setdefault(m.group("stem"), [])
+        for w in re.split(r",|、", m.group("words")):
+            w = w.strip()
+            if w and w not in words:
+                words.append(w)
+    return {k: v for k, v in out.items() if v}
+
+
+def all_tags(observations: list[tuple[str, Observation]]) -> list[tuple[str, int]]:
+    """語と、その語が付いた写真の数（多い順、同じなら語の順）。observations は (観察の名, 観察)。"""
+    count: dict[str, int] = {}
+    for _, obs in observations:
+        for words in tags_of(obs).values():
+            for w in words:
+                count[w] = count.get(w, 0) + 1
+    return sorted(count.items(), key=lambda x: (-x[1], x[0]))
+
+
 # ---------------------------------------------------------------- 読みの指示に足す文（サーバーと手元で同じ）
 
 
 def prompt_rules(language: str) -> str:
     """読みの指示に足す、決まった書き出しの頼み。行はただの文のまま。key は手引きの順のまま。"""
     t, q, n = (label(k, language) for k in ("today", "question", "next_shot"))
+    states = "、".join(TAG_STATES.get(language, TAG_STATES["en"]))
     return (
         "読みの行に、決まった書き出しの行を三つ入れます（行はただの文。key は手引きの順のまま）:\n"
         f"- `overall` の最初の行を「{t}: <写真の名>。<なぜその一枚か、何が写っているかを一言>」にします。"
         "本人に一番見せたい一枚を選びます。\n"
         f"- 本人への問いを一つ、`uncertain` の行で「{q}: …」と書きます。本人しか知らない事か、次に畑で確かめられる事を。\n"
         f"- 次に撮ると分かる事が増える物を一つ、`next_to_observe` の行で「{n}: …」と書きます。どこを、どう撮るか。\n"
-        "ある写真に基づく行には、その写真の名（ファイルの名の幹。例 173445）を書きます。"
+        "ある写真に基づく行には、その写真の名（ファイルの名の幹。例 173445）を書きます。\n"
+        f"- 写真一枚ごとに `tags` の行を一つ: 「<写真の名>: <植物の名>, <状態>, …」。状態の語は {states} から。"
+        "植物の名は分かる物だけ（本人が直した名が先。分からなければ上の括り）。"
     )

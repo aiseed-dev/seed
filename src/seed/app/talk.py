@@ -84,7 +84,7 @@ def turn_of(name: str, obs: Observation) -> Turn:
     found = [
         Found(l, H.photos_of(l.text, obs))
         for l in obs.reading
-        if not H.marked(l) and l.text.strip() != (words or "").strip()
+        if l.key != "tags" and not H.marked(l) and l.text.strip() != (words or "").strip()
     ]
     q = H.question(obs)
     return Turn(
@@ -945,7 +945,8 @@ def safe_rel(folder: Folder, ref: str, known: dict[str, Observation]) -> str | N
 
 
 def reply_parts(text: str, folder: Folder, known: dict[str, Observation]) -> list[tuple[str, object]]:
-    """返事を、文の塊と写真の並びに分ける。写真は `![一言](photos/…)` と、写真の名（ファイルの名の幹）。"""
+    """返事を、文の塊と写真の並びに分ける。写真は `![一言](photos/…)` と、写真の名（ファイルの名の幹）。
+    写真の並びは (道, 一言) の並び。一言は写真の下に添える（名で指した写真は空）。"""
     stems = {Path(r).stem: r for r in known if len(Path(r).stem) >= MIN_STEM}
     parts: list[tuple[str, object]] = []
     buf: list[str] = []
@@ -956,25 +957,44 @@ def reply_parts(text: str, folder: Folder, known: dict[str, Observation]) -> lis
         buf.clear()
 
     for line in text.splitlines():
-        rels = [r for r in (safe_rel(folder, m.group(2), known) for m in IMG_RE.finditer(line)) if r]
+        caps: dict[str, str] = {}  # 写真の道 → 一言（絵の代わりの文）。同じ写真は先のが勝つ
+        for m in IMG_RE.finditer(line):
+            r = safe_rel(folder, m.group(2), known)
+            if r:
+                caps.setdefault(r, m.group(1).strip())
+        rels = list(caps)
         # 絵の書き方は全部外す（出せない物は一言だけ残す。フォルダーの外の道を Markdown に渡さない）
         rest = IMG_RE.sub(lambda m: "" if safe_rel(folder, m.group(2), known) else m.group(1), line)
-        rels += [stems[n] for n in H.names_in(rest, list(stems)) if stems[n] not in rels]
+        for n in H.names_in(rest, list(stems)):
+            if stems[n] not in caps:
+                caps[stems[n]] = ""
+        rels = list(caps)
         if rest.strip() or not rels:
             buf.append(rest)
         if rels:
             flush()
             if parts and parts[-1][0] == "photos":
-                parts[-1][1].extend(r for r in rels if r not in parts[-1][1])  # type: ignore[union-attr]
+                have = parts[-1][1]
+                have.extend((r, caps[r]) for r in rels if r not in {x for x, _ in have})  # type: ignore[union-attr]
             else:
-                parts.append(("photos", list(dict.fromkeys(rels))))
+                parts.append(("photos", [(r, caps[r]) for r in rels]))
     flush()
     return parts
 
 
-def photos_strip(app: App, rels: list[str], known: dict[str, Observation], size: float) -> ft.Control:
-    shots = [photo.Shot(known[r], r) for r in rels if r in known]
-    return photo.strip(app, shots, size)
+def photos_strip(
+    app: App,
+    rels: list[str],
+    known: dict[str, Observation],
+    size: float,
+    captions: dict[str, str] | None = None,
+) -> ft.Control:
+    """写真を並べる。captions を渡すと、各写真の下に一言（無ければ付いたタグ）を添える。"""
+    tags = {id(o): H.tags_of(o) for o in {id(known[r]): known[r] for r in rels if r in known}.values()}
+    shots = [photo.Shot(known[r], r, tags[id(known[r])].get(H.stem(r), [])) for r in rels if r in known]
+    if captions is None:
+        return photo.strip(app, shots, size)
+    return photo.captioned_strip(app, shots, captions, size)
 
 
 def reply_controls(app: App, text: str) -> list[ft.Control]:
@@ -984,7 +1004,9 @@ def reply_controls(app: App, text: str) -> list[ft.Control]:
         if kind == "text":
             out.append(ft.Markdown(str(val), selectable=True))
         else:
-            out.append(photos_strip(app, list(val), known, photo.SMALL * 0.75))  # type: ignore[arg-type]
+            pairs = list(val)  # type: ignore[arg-type]
+            caps = {r: c for r, c in pairs}
+            out.append(photos_strip(app, [r for r, _ in pairs], known, photo.SMALL * 0.75, caps))
     return out
 
 

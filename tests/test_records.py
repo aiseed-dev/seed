@@ -584,3 +584,10 @@ def test_public_photo_lines_parse_split_and_check():
     assert any("一日 3 枚" in b for b in q.check())
     q.days = {f"2026-10-{d:02d}": [Line("photo", f"2026-10-{d:02d}_1.jpg")] for d in range(1, 14)}
     assert any("12 枚" in b for b in q.check())
+
+
+def test_tags_key_after_crops_and_ten_states():
+    from seed.records import READING_KEYS, TAG_STATES
+
+    assert READING_KEYS.index("tags") == READING_KEYS.index("crops") + 1
+    assert len(TAG_STATES["ja"]) == 10 and len(TAG_STATES["en"]) == 10
