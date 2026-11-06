@@ -542,7 +542,7 @@ def test_record_page(settings):
     assert "<h1>にじ</h1>" in t and "徳島県 吉野川市" in t and "discord:niji" in t
     assert "<code>overall</code> 草が大半" in t and "[0.80]" in t and "→ 合う" in t
     assert "<code>did</code> 見ただけ" in t
-    assert "<form" not in t and "一言は seed のアプリ" in t  # 静的: 一言の欄は無い（設計書 §7.5）
+    assert "<form" not in t and "seed のアプリで「ほかの人の畑を見たい」" in t  # 静的: 一言の欄は無い（設計書 §7.5）
     assert "/public/a-1.md" in t
     assert c.get("/p/none-1").status_code == 404
     assert c.get("/p/Bad_ID").status_code == 404
@@ -692,7 +692,7 @@ def test_connect_with_invite_uses_invite_name_and_rebuilds_site(settings, calls)
     assert (site / "index.html").is_file() and (site / "p" / "2026-11-05-yoshino-ai-1.html").is_file()
     assert (site / "public" / "2026-11-05-yoshino-ai-1.md").is_file() and (site / "index.json").is_file()
     page = (site / "p" / "2026-11-05-yoshino-ai-1.html").read_text(encoding="utf-8")
-    assert "一言は seed のアプリ" in page and "<form" not in page  # 静的: 欄は無い
+    assert "seed のアプリで「ほかの人の畑を見たい」" in page and "<form" not in page  # 静的: 欄は無い
     assert "畑を始めてみませんか" in (site / "index.html").read_text(encoding="utf-8")
     assert not (site / ".owners.json").exists() and not (site / "connections").exists()
     r = c.post(

@@ -19,7 +19,7 @@ from .settings import Settings
 
 DISCORD = "https://discord.gg/Q8pwMH2uTA"
 SOURCE = "https://github.com/aiseed-dev/seed"
-LEAD = "畑を始めてみませんか。畑の写真を自分の Claude に渡すと、その土地の成り立ち（地質、土、歴史）を調べてくれる。畑を観察し、記録を書いて人と繋がる。自給農から、その次へ。"
+LEAD = "畑を始めてみませんか。畑の写真を撮って、自分の Claude と話します。その土地の成り立ち（地質、土、歴史）も調べてくれます。記録が残り、人と繋がれます。自給農から、その次へ。"
 
 CSS = """
 :root{--fg:#1d2420;--muted:#5d6b62;--bg:#fbfaf6;--line:#dcd8cc;--accent:#2f6b45}
@@ -91,18 +91,18 @@ def entry_html(idx: dict) -> str:
     listing = (
         f'<ul class="records">{"".join(items)}</ul>'
         if items
-        else '<p class="muted">まだ公開された記録は無い。</p>'
+        else '<p class="muted">まだ公開された記録はありません。</p>'
     )
     body = f"""<h1>seed — Claude と一緒に種を播く</h1>
 <p class="lead">{_e(LEAD)}</p>
-<p>「こうしなさい」とは言わない。読みは、何が見えて、何に拠るか、次に何を見るとよいか、まで。決めるのは畑。
-知識は、公の資料からではなく、一人ひとりの畑の記録と検証の積み重ねから作る。だから、公開と繋がりが要る。</p>
-<p>記録（写真と座標を含む）は本人の物。ここに並ぶのは、<strong>本人が了解して公開した行だけ</strong>。写真はここに置かない。</p>
-<p><strong>使ってくれる人（テスター）を募っています（11-08 まで）。</strong>
-<a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で声をかけてください。招待コードもそこで渡します。繋がった後の話もそこで。</p>
+<p>Claude は「こうしなさい」とは言いません。写真に何が見えたか、次に何を見ると良さそうかを話してくれます。決めるのは畑です。</p>
+<p>畑は一枚ずつ違います。本に書いてある事より、みんなの畑の記録の方が役に立ちます。だから、見せてもよい所を持ち寄って、近い畑の人と繋がれるようにしました。</p>
+<p>記録は、写真も場所も、あなたの物です。ここに並ぶのは、<strong>本人が「出す」と言った行だけ</strong>です。写真は載せません。</p>
+<p><strong>一緒に使ってくれる人を探しています（11-08 まで）。</strong>
+<a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で、気軽に声をかけてください。招待コードをお渡しします。分からない事も、そこで聞いてください。</p>
 <h2>PC で使う</h2>
 <pre>pip install "seed-farm[app]"</pre>
-<p class="muted"><small>Windows / macOS / Linux。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> に。スマートフォンだけの人は Discord で。</small></p>
+<p class="muted"><small>Windows、macOS、Linux で動きます。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> にあります。スマートフォンだけの人は、Discord で声をかけてください。</small></p>
 <h2>公開された記録 {int(total.get("records", 0))} 件 · 繋がり {int(total.get("connections", 0))} 件</h2>
 {listing}
 <p class="muted"><small><a href="/index.json">index.json</a></small></p>"""
@@ -147,18 +147,18 @@ def record_html(pub: R.Public, connections: int) -> str:
 <p class="lead">{_e(pub.word)}</p>
 <p>{_tags(pub.what)}{_tags(pub.next)}</p>
 <dl>{facts}</dl>
-<p class="muted"><small>確からしさ [0.00〜1.00] の付いた行は AI の読み（仮説）。→ の後は本人の判定。
-出典の付いた行は資料。本人が了解して公開した行だけが、ここにある。</small></p>
+<p class="muted"><small>数字 [0.00〜1.00] の付いた行は、AI の読みです（当たっているとは限りません）。→ の後は、本人が合う・違うを付けた物です。
+出典の付いた行は資料です。ここにあるのは、本人が「出す」と言った行だけです。</small></p>
 {days}
 <h2>一言を送る</h2>
-<p>一言は seed のアプリ（PC 版か Web 版）の「探す・繋がる」から、招待コード付きで送れます。送った人の呼び名が持ち主に届きます。
-招待コードは <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で。</p>
+<p>seed のアプリで「ほかの人の畑を見たい」と話すと、この畑へ一言を送れます。あなたの呼び名と一緒に、持ち主に届きます。
+招待コードは <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>でお渡しします。</p>
 <p class="muted"><small><a href="/public/{_e(pub.id)}.md">公開ファイル（Markdown）</a></small></p>"""
     return page_html(f"{pub.name} — seed", body, description=pub.word or LEAD)
 
 
 def not_found_html() -> str:
-    return page_html("seed", '<h1>見つからない</h1><p><a href="/">入口へ</a></p>')
+    return page_html("seed", '<h1>見つかりません</h1><p><a href="/">入口へ戻る</a></p>')
 
 
 def write_site(settings: Settings) -> Path:
