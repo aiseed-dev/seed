@@ -262,3 +262,9 @@ def test_not_logged_in_is_local_auth():
     with pytest.raises(local.LocalError) as e:
         local._check({"is_error": True, "result": "Not logged in · Please run /login"})
     assert e.value.word == "local_auth"
+
+
+def test_talk_rules_allow_move_but_not_delete(folder):
+    rules = local.talk_rules(folder, None, "ja")
+    assert "フォルダーを作る" in rules and "消す事はしません" in rules and "rm" in rules
+    assert "移すことはしません" not in rules

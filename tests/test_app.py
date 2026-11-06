@@ -633,6 +633,8 @@ def test_local_talk_command(seedfolder, monkeypatch):
     allowed = cmd[cmd.index("--allowedTools") + 1 :]
     assert "Bash(seed mark *)" in allowed and "Bash(seed photos *)" in allowed
     assert not any("token" in a or "prune" in a or "invite" in a for a in allowed)
+    assert "Bash(mkdir *)" in allowed and "Bash(mv *)" in allowed
+    assert not any(a.startswith("Bash(rm") for a in allowed)
     system = cmd[cmd.index("--system-prompt") + 1]
     assert "![一言](photos/…)" in system and "seed mark --folder" in system and "直した行を先に" in system
     assert seen["env"]["SEED_FOLDER"] == str(seedfolder) and seen["cwd"] == folder.root
