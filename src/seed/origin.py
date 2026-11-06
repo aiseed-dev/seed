@@ -26,10 +26,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from . import __version__
+from . import __version__, lookup_ja
 from . import records as R
 from .app.strings import s
-from .server import lookup_ja
 
 TILE = 256
 EARTH_R = 6378137.0  # Web メルカトルの球の半径

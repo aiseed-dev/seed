@@ -395,7 +395,6 @@ async def take_invite(app: App, code: str) -> None:
     app.settings.invite = code.strip()
     app.settings.save()
     say(app, app.t("talk_invite_set"))
-    app.page.run_task(app.load_scopes)
     name = last_name(app)
     if name is None:
         return
@@ -1094,7 +1093,7 @@ async def place_data(app: App, quiet: bool = False) -> bool:
         if not quiet:
             say(app, app.t("land_need_photo"))
         return False
-    from seed.server import lookup as L
+    from seed import lookup as L
 
     if not L.available() and not app.settings.invite:
         if not quiet:

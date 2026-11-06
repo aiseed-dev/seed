@@ -5,7 +5,7 @@
 `seed app --web` は、この PC の中だけで、ブラウザで画面を確かめるための一人用。人ごとに分ける Web 版はやめた
 （作者 2026-11-06「Web 版は、マニュアル的なものだけにする」）。
 
-画面は二つ（話す /、写真 /photos）と、動かす人にだけ管理 /admin。道（route）で切り替える。
+画面は二つ（話す /、写真 /photos）。道（route）で切り替える。サーバーの管理は kagi の机の画面「人の出入り」から。
 古い道（/observe、/records など）に来たら「話す」へ。
 """
 
@@ -23,7 +23,7 @@ import flet as ft
 from seed import fields as fields_mod
 from seed import lang
 from seed import settings as settings_mod
-from seed.app import admin, gallery, talk, theme
+from seed.app import gallery, talk, theme
 from seed.app.strings import s
 from seed.cli import prepare
 from seed.client import Client
@@ -56,7 +56,6 @@ class Screen:
 SCREENS = [
     Screen("/", "nav_talk", ft.Icons.CHAT_BUBBLE_OUTLINE, talk.view),
     Screen("/photos", "nav_photos", ft.Icons.PHOTO_LIBRARY_OUTLINED, gallery.view),
-    Screen("/admin", "nav_admin", ft.Icons.ADMIN_PANEL_SETTINGS_OUTLINED, admin.view),  # 動かす人にだけ出る
 ]
 
 
@@ -67,7 +66,6 @@ class App:
         self.page = page
         folder = fields_mod.chosen(None, folder)  # 畑の一覧の current も見る（記録の形 §19）
         self.index: dict | None = None
-        self.scopes: set[str] | None = None  # 入れてある token の範囲（サーバーに尋ねる。まだなら None）
         self.picker = ft.FilePicker()  # 参照を持っておく（無いと外される）
         self.open_folder(folder)
 
@@ -96,28 +94,12 @@ class App:
         root = self.folder.root
         return f"~/{root.relative_to(home).as_posix()}" if root.is_relative_to(home) else str(root)
 
-    @property
-    def is_admin(self) -> bool:
-        return "admin" in (self.scopes or ())
-
     def screens(self) -> list[Screen]:
-        """切り替えの並び。管理は、動かす人（範囲 admin の token を入れた人）にだけ出す。"""
-        return [sc for sc in SCREENS if sc.route != "/admin" or self.is_admin]
-
-    async def load_scopes(self) -> None:
-        """入れてある token の範囲をサーバーに尋ねる。管理の画面を出すかが決まる。"""
-        before = self.is_admin
-        try:
-            self.scopes = (
-                set((await self.call("whoami")).get("scopes", [])) if self.settings.invite else set()
-            )
-        except Exception:  # noqa: BLE001 — 繋がらない、入れない。管理は出さない
-            self.scopes = set()
-        if self.is_admin != before:
-            self.refresh()
+        """切り替えの並び。"""
+        return SCREENS
 
     def view(self, route: str, controls: list[ft.Control]) -> ft.View:
-        """縦に流れる画面（写真、管理、撮る）。"""
+        """縦に流れる画面（写真、撮る）。"""
         return self.frame(route, None, controls)
 
     def frame(self, route: str, body: ft.Control | None, controls: list[ft.Control] | None = None) -> ft.View:
@@ -238,7 +220,6 @@ def make_main(folder: str | None = None) -> Callable[[ft.Page], object]:
         app = App(page, folder)
         page.on_route_change = app.route_change
         app.route_change()
-        page.run_task(app.load_scopes)
 
     return main
 

@@ -52,7 +52,7 @@ def scrub(text: str) -> str:
 
 def facts(lines: list[R.Line], language: str) -> list[Fact]:
     """place.md の data 行 → Fact。日本語なら照会の英語の枠を日本語に（lookup_ja）。出典の無い行も文だけは使う。"""
-    from .server import lookup_ja
+    from . import lookup_ja
 
     out = []
     for l in lines:

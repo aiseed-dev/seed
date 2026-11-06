@@ -2,7 +2,7 @@
 """画面の組み立ての確認。Flet の page は偽物で、view() が返す物の文を見る。
 
 話す（やり取りを記録から組む、送った時の分かれ道、「こういう事ができます」の例、返事の中の写真）、
-写真（大きく開いた所の三つの操作）、Form 形式を残さない事、管理。
+写真（大きく開いた所の三つの操作）、Form 形式を残さない事、電話の包みで import できる事。
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def texts(control) -> list[str]:
 @pytest.fixture(autouse=True)
 def no_lookup(monkeypatch):
     """土地の照会は網に出るので、テストでは呼ばない（使うテストは上書きする）。"""
-    from seed.server import lookup as L
+    from seed import lookup as L
 
     monkeypatch.setattr(L, "available", lambda: False)
 
@@ -467,7 +467,7 @@ def test_origin_frames_old_to_new(app, seedfolder):
 
 def test_land_examples_do_not_call_ai(app, seedfolder, tmp_path, monkeypatch):
     from seed import land
-    from seed.server import lookup as L
+    from seed import lookup as L
 
     observe(seedfolder, tmp_path, NEW_READING)
     no_ai(monkeypatch)
@@ -632,251 +632,38 @@ def test_local_talk_command(seedfolder, monkeypatch):
     assert seen["env"]["SEED_FOLDER"] == str(seedfolder) and seen["cwd"] == folder.root
 
 
-# ---- 管理の画面（動かす人）
+# ---- 電話の包み（seed/server と kagi は入らない。anthropic と fastapi も入れない）
+
+PHONE_PROBE = """
+import importlib, sys
+
+BLOCKED = ("seed.server", "kagi", "anthropic", "fastapi")
 
 
-def _admin_app(tmp_path, monkeypatch, scopes=("admin",)):
-    monkeypatch.setenv("SEED_CREDENTIALS", str(tmp_path / "cred.toml"))
-    app = App(FakePage(), str(tmp_path / "seed"))
-    app.scopes = set(scopes)
-    return app
+class Block:
+    def find_spec(self, name, path=None, target=None):
+        if any(name == b or name.startswith(b + ".") for b in BLOCKED):
+            raise ImportError(f"not in the phone build: {name}")
+        return None
 
 
-OVERVIEW = {
-    "version": "0.0.1",
-    "records": 2,
-    "connections": 3,
-    "tokens": {"live": 2, "expired": 1, "revoked": 0},
-    "invites": 4,
-    "read": False,
-    "audit": "off",
-    "remaining": {"reads": 0, "talks": 0, "usd": 20.0},
-}
+sys.meta_path.insert(0, Block())
+from seed.app.main import make_main  # seed_mobile.py と同じ道（ft.run は呼ばない）
+
+assert callable(make_main())
+for m in ("seed.app.talk", "seed.app.cards", "seed.app.gallery", "seed.app.photo",
+          "seed.direct", "seed.prompts", "seed.land"):
+    importlib.import_module(m)
+print("ok")
+"""
 
 
-def test_admin_tab_only_for_the_operator(tmp_path, monkeypatch):
-    app = _admin_app(tmp_path, monkeypatch, scopes=("member",))
-    assert "/admin" not in [sc.route for sc in app.screens()]
-    app.route_change(path="/admin")  # 入れない人が道を打っても、入口に戻る
-    assert "管理" not in texts(app.page.views[-1])
-    app.scopes = {"admin"}
-    assert [sc.route for sc in app.screens()][-1] == "/admin"
+def test_phone_build_imports_without_server_parts():
+    import subprocess
+    import sys
 
-
-def test_admin_says_what_to_do(tmp_path, monkeypatch):
-    from seed.app import admin
-
-    app = _admin_app(tmp_path, monkeypatch)
-    warns = admin.attention(app, OVERVIEW, {"verified": False})
-    assert len(warns) == 5
-    # 何が起きているか → サーバーで打つコマンド（文とコマンドは分かれている。コマンドは一行に一つ）
-    (read_off,) = [w for w in warns if w[0].startswith("写真を読み取れず、話す口も使えません。")]
-    # 鍵は root だけが読めるファイルに（無い時だけ作る。systemd が seed.service にだけ渡す）
-    assert read_off[1] == [
-        "sudo install -d -o root -g root -m 700 /etc/seed/keys",
-        "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
-        "sudo systemctl restart seed",
-    ]
-    assert "鍵がもう在る時は作り直しません" in read_off[0]
-    (audit_off,) = [w for w in warns if w[0].startswith("操作の記録を書いていません。")]
-    assert "鍵がもう在る時は作り直しません" in audit_off[0]
-    assert audit_off[1] == [
-        "sudo test -e /etc/seed/log-key || sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'",
-        "sudo systemctl restart seed",
-    ]
-    (tampered,) = [w for w in warns if w[0].startswith("操作の記録が書き換えられています。")]
-    assert "『受け付けを止める』" in tampered[0]
-    assert tampered[1] == ["last -n 20", "sudo journalctl -u ssh --since -2d"]
-    assert any("出し直します" in w and not cmds for w, cmds in warns)
-    err = admin.attention(app, {**OVERVIEW, "audit": "error"})
-    assert ["df -h /var/lib/seed", "ls -ld /var/lib/seed/audit"] in [c for _, c in err]
-    good = {**OVERVIEW, "read": True, "audit": "on", "tokens": {"live": 2, "expired": 0, "revoked": 0}}
-    good["remaining"] = {"reads": 180, "talks": 290}
-    good["denied_today"] = admin.DENIED_MANY - 1
-    good["keys"] = {"claude": True, "plantnet": False}
-    assert admin.attention(app, good, {"verified": True}) == []
-    rows = dict(admin.state_rows(app, good))
-    assert (
-        rows["写真の読み取り（Claude）"] == "できます"
-        and rows["操作の記録"] == "書いています"
-        and rows["今日の残り"] == "読み取り 180 回、話す 290 回"
-        and rows["受け付け"] == "受け付けています"
-        and rows["外の鍵"] == "Claude 在る、Pl@ntNet 無い"
-        and rows["公開"] == "記録 2 件、寄せられた一言 3 件"
-        and rows["入れる人"] == "token 2 人、招待コード 4 人"
+    r = subprocess.run(
+        [sys.executable, "-c", PHONE_PROBE], check=False, capture_output=True, text=True, timeout=120
     )
-    # 止めている、断った要求が多い、もうすぐ切れる token
-    busy = {**good, "paused": True, "denied_today": admin.DENIED_MANY}
-    busy["tokens"] = {**good["tokens"], "expiring": 3}
-    warns = admin.attention(app, busy, {"verified": True})
-    assert [w for w, _ in warns] == [
-        "受け付けを止めています。戻すには下の『受け付けを再開する』を押します。",
-        (
-            f"今日、断った要求が {admin.DENIED_MANY} 回あります。誰かが試しているかもしれません。"
-            "下の『誰が何をしたか』で相手を見ます。続くなら『受け付けを止める』を押します。"
-        ),
-        "あと 14 日以内に切れる token が 3 件あります。要る人には、切れる前に出し直します。",
-    ]
-    assert all(cmds == [] for _, cmds in warns)
-    assert dict(admin.state_rows(app, busy))["受け付け"] == "止めています"
-    # en も同じ形
-    app.lang = "en"
-    assert dict(admin.state_rows(app, busy))["Requests"] == "Paused"
-    assert len(admin.attention(app, OVERVIEW, {"verified": False})) == 5
-    app.lang = "ja"
-    tokens = [
-        {
-            "name": "b",
-            "scope": ["buyer"],
-            "state": "revoked",
-            "created": "2026-11-01",
-            "expires": "2026-12-01",
-        },
-        {
-            "name": "a",
-            "scope": ["admin"],
-            "state": "live",
-            "created": "2026-11-06",
-            "expires": "2027-02-04",
-            "note": "n",
-        },
-    ]
-    tr = admin.token_rows(app, tokens)
-    assert [(r["name"], r["live"]) for r in tr] == [("a", True), ("b", False)]
-    assert tr[0]["scope"] == "動かす人（この画面）" and tr[1]["state"] == "取り消し済み"
-    lines = [
-        {"ts": "2026-11-06T16:55:01+09:00", "actor": "?", "action": "publish", "detail": "断った: scope"},
-        {
-            "ts": "2026-11-06T16:54:00+09:00",
-            "actor": "にじ",
-            "action": "admin.token.add",
-            "detail": "買い手 buyer",
-        },
-    ]
-    assert admin.audit_rows(app, lines) == [
-        ["2026-11-06 16:55", "知らない人", "公開した", "断った: scope"],
-        ["2026-11-06 16:54", "にじ", "管理: token を出した", "買い手 buyer"],
-    ]
-    more = [
-        {"ts": "2026-11-06T17:00:00+09:00", "actor": "にじ", "action": a, "detail": d}
-        for a, d in (
-            ("admin.pause", "通した"),
-            ("admin.resume", "通した"),
-            ("admin.token_revoke_all", "3 件"),
-        )
-    ]
-    assert [r[2] for r in admin.audit_rows(app, more)] == [
-        "管理: 受け付けを止めた",
-        "管理: 受け付けを再開した",
-        "管理: token を全部取り消した",
-    ]
-
-
-def test_admin_view_builds_from_loaded_state(tmp_path, monkeypatch):
-    app = _admin_app(tmp_path, monkeypatch)
-    app.state["admin"] = {
-        "loaded": True,
-        "overview": OVERVIEW,
-        "tokens": [
-            {
-                "name": "買い手 A",
-                "scope": ["buyer"],
-                "state": "live",
-                "created": "2026-11-06",
-                "expires": "2026-12-06",
-            }
-        ],
-        "audit": {"state": "off", "verified": None, "lines": []},
-        "records": [{"id": "2026-11-06-x-1", "name": "にじ", "place": "徳島県", "since": "2026-11-06"}],
-        "new_token": {"name": "買い手 A", "code": "not-a-real-token-000"},
-    }
-    app.route_change(path="/admin")
-    seen = " ".join(texts(app.page.views[-1]))
-    for word in (
-        "今の状態",
-        "気を付ける事",
-        "人に渡す、入る鍵（token）",
-        "渡す相手の名前",
-        "受け付けを止める",
-        "token を全部取り消す",
-        "sudo systemctl restart seed",
-        "公開された記録",
-        "誰が何をしたか",
-        "買い手 A",
-        "取り消す",
-        "取り下げる",
-        "出るのはこの一度だけ",
-        "not-a-real-token-000",
-    ):
-        assert word in seen, word
-    # 止めている間は、同じ所のボタンが「再開する」になる。全部取り消すは二度押し
-    app.state["admin"].update(overview={**OVERVIEW, "paused": True}, confirm=("revoke_all", ""))
-    app.route_change(path="/admin")
-    seen = " ".join(texts(app.page.views[-1]))
-    assert "受け付けを再開する" in seen and "受け付けを止める" not in seen
-    assert "本当に全部取り消す（自分の分は残す）" in seen
-    # まだ読んでいなければ、尋ねている事だけを出す
-    app.state["admin"] = {}
-    app.route_change(path="/admin")
-    assert "サーバーに尋ねています…" in texts(app.page.views[-1])
-
-
-def test_admin_record_rows(tmp_path, monkeypatch):
-    from seed.app import admin
-
-    app = _admin_app(tmp_path, monkeypatch)
-    recs = [
-        {
-            "id": "2026-11-06-x-1",
-            "name": "にじ",
-            "place": "徳島県",
-            "since": "2026-11-06",
-            "owner": "仲間",
-            "published": "2026-11-06",
-            "connections": 2,
-            "url": "https://seed.example/p/2026-11-06-x-1",
-        },
-        {
-            "id": "2026-11-05-y-1",
-            "name": "y",
-            "owner": "",
-            "published": "2026-11-05",
-            "connections": 0,
-            "url": "",
-        },
-    ]
-    rows = admin.record_rows(app, recs)
-    assert rows[0] == {
-        "id": "2026-11-06-x-1",
-        "head": "にじ · 徳島県 · 2026-11-06",
-        "meta": "公開した人 仲間　公開した日 2026-11-06　寄せられた一言 2 件",
-        "url": "https://seed.example/p/2026-11-06-x-1",
-    }
-    assert rows[1]["meta"].startswith("公開した人 分からない人")
-    conns = [
-        {"name": "2026-11-06-n-0123abcd", "date": "2026-11-06", "from": "買い手", "word": "分けてほしい"}
-    ]
-    assert admin.connection_rows(conns) == [
-        {"name": "2026-11-06-n-0123abcd", "head": "2026-11-06　買い手", "word": "分けてほしい"}
-    ]
-    # 画面: 開いた記録の下に一言と「消す」。二度押しで「本当に消す」
-    app.state["admin"] = {
-        "loaded": True,
-        "overview": OVERVIEW,
-        "tokens": [],
-        "audit": {"lines": []},
-        "records": recs,
-        "conns": {"2026-11-06-x-1": conns},
-        "confirm": ("connection", "2026-11-06-x-1/2026-11-06-n-0123abcd"),
-    }
-    app.route_change(path="/admin")
-    seen = " ".join(texts(app.page.views[-1]))
-    for word in (
-        "公開の頁を開く",
-        "寄せられた一言を閉じる",
-        "寄せられた一言を見る",
-        "分けてほしい",
-        "本当に消す",
-        "公開した人 仲間",
-    ):
-        assert word in seen, word
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "ok"

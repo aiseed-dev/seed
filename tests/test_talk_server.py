@@ -14,9 +14,9 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from seed import lookup as L
 from seed import prompts as P
 from seed.server import gate
-from seed.server import lookup as L
 from seed.server import read as RD
 from seed.server import settings as S
 from seed.server.main import create_app

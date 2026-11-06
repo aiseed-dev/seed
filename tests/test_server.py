@@ -13,10 +13,10 @@ import anthropic
 import pytest
 from fastapi.testclient import TestClient
 
+from seed import lookup as L
 from seed import records as R
 from seed.records import READING_KEYS, Line, Public
 from seed.server import limits as LM
-from seed.server import lookup as L
 from seed.server import read as RD
 from seed.server.main import create_app
 from seed.server.settings import Settings

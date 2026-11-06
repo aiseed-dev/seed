@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 
 from kagi import audit
 from seed import cli
+from seed import lookup as L
 from seed.records import Line, Public
 from seed.server import gate
-from seed.server import lookup as L
 from seed.server import publish as P
 from seed.server.main import create_app
 from seed.server.settings import Settings
@@ -512,14 +512,12 @@ def test_client_turns_paused_into_words(tmp_path, ledger):
         )
         return httpx.Response(r.status_code, content=r.content, headers=r.headers)
 
+    assert tc.post("/api/admin/pause", json={"paused": True}, headers=hdr(admin)).json() == {"paused": True}
     with Client("http://seed.test", TOKEN, "ja", transport=httpx.MockTransport(handler), invite=admin) as cl:
-        assert cl.admin_pause(True) is True
         with pytest.raises(ClientError) as e:
             cl.publish(PUBLIC)
         assert e.value.word == "server_paused"
         assert error_text(e.value, "ja") == "今、受け付けを止めています。"
-        assert cl.admin_pause(False) is False
-        assert cl.admin_token_revoke_all() == 1
 
 
 # ---- 公開された記録の管理（公開した人、日、寄せられた一言を見る・消す）

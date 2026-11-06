@@ -16,8 +16,9 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, wait
 
-from .. import records as R
-from . import clean_text, lookup_ja
+from . import lookup_ja
+from . import records as R
+from .prompts import clean_text
 
 CACHE_SECONDS = 24 * 3600
 WALL_SECONDS = 40  # 一回の照会に待つ長さ。遅い元は落とす

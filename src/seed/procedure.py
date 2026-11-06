@@ -165,7 +165,7 @@ SOURCES: tuple[tuple[str, str], ...] = (
 )
 SOURCE_RE = re.compile(r"^- (?P<key>[a-z][a-z0-9_]*): ")
 
-# place.md の照会の行（server/lookup_ja.py の日本語と、英語のまま）
+# place.md の照会の行（lookup_ja.py の日本語と、英語のまま）
 ADDRESS_RES = (
     re.compile(r"住所: (?P<a>.+?)（市区町村コード"),
     re.compile(r"Address: (?P<a>.+?) \(市区町村コード"),

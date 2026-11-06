@@ -60,4 +60,4 @@ LAN 分割、管理の口を絞る命令、口ごとのフィルター、ファ�
 - `docs/deb2 の配備.md` §0、`deploy/deb2/手順.md`、`deploy/deb2/*.toml`
 - `docs/設計書.md` §5.9、§5.10、`docs/利用マニュアル.md` §11c、`docs/iPhone 版.md`
 - コード: `src/kagi/cli.py`、`src/kagi/machine.py`、`src/kagi/install.py`、`src/seed/cli.py`（`seed token`）、
-  `src/seed/server/gate.py`、`src/seed/app/admin.py`
+  `src/seed/server/gate.py`、`src/kagi/admin.py`

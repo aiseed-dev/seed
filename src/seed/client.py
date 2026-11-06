@@ -229,63 +229,6 @@ class Client:
         body = {"messages": messages, "language": self.language, **self._inv()}
         return self._json(self._call("POST", "/api/talk", json=body))
 
-    # --- 管理の口（動かす人。範囲 admin の token を招待コードの所に入れて使う）
-    def _admin_headers(self) -> dict:
-        return {"X-Seed-Invite": self.invite} if self.invite else {}
-
-    def whoami(self) -> dict:
-        """入れてある token の呼び名と範囲。{"name", "scopes"}。"""
-        return self._json(self._call("GET", "/api/whoami", headers=self._admin_headers()))
-
-    def admin_overview(self) -> dict:
-        return self._json(self._call("GET", "/api/admin/overview", headers=self._admin_headers()))
-
-    def admin_tokens(self) -> list[dict]:
-        return self._json(self._call("GET", "/api/admin/tokens", headers=self._admin_headers())).get(
-            "tokens", []
-        )
-
-    def admin_token_add(self, name: str, scope: str, days: int, note: str = "") -> str:
-        """一件出して、token を返す（出るのはこの一度だけ）。"""
-        body = {"name": name, "scope": scope, "days": days, "note": note}
-        r = self._call("POST", "/api/admin/tokens", json=body, headers=self._admin_headers())
-        return str(self._json(r).get("token", ""))
-
-    def admin_token_revoke(self, name: str) -> int:
-        r = self._call("POST", "/api/admin/tokens/revoke", json={"name": name}, headers=self._admin_headers())
-        return int(self._json(r).get("revoked", 0))
-
-    def admin_token_revoke_all(self) -> int:
-        """押した本人の token を残して全部取り消す。取り消した数を返す。"""
-        r = self._call("POST", "/api/admin/tokens/revoke_all", headers=self._admin_headers())
-        return int(self._json(r).get("revoked", 0))
-
-    def admin_pause(self, paused: bool) -> bool:
-        """受け付けを止める（True）か再開する（False）。今の状態を返す。"""
-        r = self._call("POST", "/api/admin/pause", json={"paused": paused}, headers=self._admin_headers())
-        return bool(self._json(r).get("paused"))
-
-    def admin_audit(self, limit: int = 100) -> dict:
-        r = self._call("GET", "/api/admin/audit", params={"limit": limit}, headers=self._admin_headers())
-        return self._json(r)
-
-    def admin_records(self) -> list[dict]:
-        r = self._call("GET", "/api/admin/records", headers=self._admin_headers())
-        return self._json(r).get("records", [])
-
-    def admin_withdraw(self, public_id: str) -> None:
-        self._call("DELETE", f"/api/admin/records/{public_id}", headers=self._admin_headers())
-
-    def admin_connections(self, record_id: str) -> list[dict]:
-        """その公開に寄せられた一言（{"name", "date", "from", "word"}。新しい物が先）。"""
-        r = self._call("GET", f"/api/admin/records/{record_id}/connections", headers=self._admin_headers())
-        return self._json(r).get("connections", [])
-
-    def admin_connection_remove(self, record_id: str, name: str) -> None:
-        """寄せられた一言を一件消す。name は一覧の name（ファイルの名の幹）。"""
-        url = f"/api/admin/records/{record_id}/connections/{name}"
-        self._call("DELETE", url, headers=self._admin_headers())
-
     def index(self) -> dict:
         """index.json（記録の形 §8）。"""
         data = self._json(self._call("GET", "/index.json"))

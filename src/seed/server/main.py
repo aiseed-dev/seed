@@ -23,11 +23,11 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from .. import __version__, index, lang
+from .. import lookup as L
 from .. import prompts as PR
 from .. import records as R
 from . import connect as C
 from . import gate, pages
-from . import lookup as L
 from . import publish as P
 from . import read as RD
 from . import talk as TK

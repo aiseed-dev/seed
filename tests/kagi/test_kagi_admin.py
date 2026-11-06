@@ -18,12 +18,11 @@ OVERVIEW = {
     "version": "0.9",
     "records": 3,
     "connections": 5,
-    "boxes": 1,
     "tokens": {"live": 4, "expired": 1, "revoked": 2, "expiring": 1},
     "invites": 2,
     "read": False,
     "audit": "off",
-    "remaining": {"reads": 0, "usd": 1.5},
+    "remaining": {"reads": 0, "talks": 3, "usd": 1.5},
     "paused": True,
     "keys": {"claude": True, "plantnet": False},
     "denied_today": 25,
@@ -223,9 +222,9 @@ def test_load_all_and_rows(tmp_path):
     assert rows["Claude を呼べるか"] == "呼べません"
     assert rows["外の鍵"] == "Claude 在る、Pl@ntNet 無い"
     assert rows["操作の記録"] == "書いていません"
-    assert rows["今日の残り"] == "読み取り 0 回、使える額 1.5 ドル"
+    assert rows["今日の残り"] == "読み取り 0 回、話す 3 回、使える額 1.5 ドル"
     assert rows["公開"] == "記録 3 件、寄せられた一言 5 件"
-    assert rows["入れる人"].startswith("token 4 人、招待コード 2 人")
+    assert rows["入れる人"] == "token 4 人、招待コード 2 人"  # Web 版の人数（boxes）はもう無い
 
     at = admin.attention(data["overview"], data["audit"])
     texts = [t for t, _ in at]
@@ -233,8 +232,11 @@ def test_load_all_and_rows(tmp_path):
     assert any("Claude の鍵" in t for t in texts)
     cmds = dict(at)
     read = next(t for t in texts if "Claude の鍵" in t)
-    assert cmds[read] == [
-        "sudoedit /etc/seed/env   # ANTHROPIC_API_KEY= の後に鍵を入れる",
+    assert cmds[
+        read
+    ] == [  # 鍵は root だけが読めるファイルに（無い時だけ作る。systemd が seed.service にだけ渡す）
+        "sudo install -d -o root -g root -m 700 /etc/seed/keys",
+        "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
         "sudo systemctl restart seed",
     ]
     assert any("25 回" in t for t in texts) and any("上限" in t for t in texts)
@@ -268,6 +270,20 @@ def test_load_all_and_rows(tmp_path):
     assert admin.audit_view({"verified": False})["tampered"]
     assert "確かめられなかった" in admin.audit_view({})["head"]
     assert TOKEN not in repr(data)
+
+
+def test_audit_talk_lines():
+    """deb2 経由で Claude と話した行（talk）。誰が、通した・断った。"""
+    a = {
+        "verified": True,
+        "lines": [
+            {"ts": "2026-11-06T21:00:00", "actor": "仲間", "action": "talk", "detail": "通した"},
+            {"ts": "2026-11-06T21:05:00", "actor": "?", "action": "talk", "detail": "断った: limit talks"},
+        ],
+    }
+    rows = admin.audit_view(a)["rows"]
+    assert rows[0] == ["2026-11-06 21:00", "仲間", "Claude と話した", "通した"]
+    assert rows[1] == ["2026-11-06 21:05", "知らない人", "Claude と話した", "断った: limit talks"]
 
 
 def test_overview_unknown_and_missing_keys():

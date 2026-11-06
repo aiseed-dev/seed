@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(autouse=True)
 def no_lookup(monkeypatch):
-    from seed.server import lookup as L
+    from seed import lookup as L
 
     monkeypatch.setattr(L, "available", lambda: False)
 

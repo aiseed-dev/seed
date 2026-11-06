@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""照会の data 行の日本語化（server/lookup_ja.py）。枠の文は fieldnotes-farm の lookup_jp.py と lookup.py の物。"""
+"""照会の data 行の日本語化（lookup_ja.py）。枠の文は fieldnotes-farm の lookup_jp.py と lookup.py の物。"""
 
 from __future__ import annotations
 
+from seed import lookup as L
+from seed import lookup_ja as J
 from seed.records import Line
-from seed.server import lookup as L
-from seed.server import lookup_ja as J
 
 
 def test_is_ja():

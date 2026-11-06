@@ -53,6 +53,7 @@ SERVER_KEYS = {
 
 ACT = {
     "read": "写真を読み取った",
+    "talk": "Claude と話した",
     "identify": "草の名を確かめた",
     "lookup": "土地を調べた",
     "publish": "公開した",
@@ -320,6 +321,8 @@ def state_rows(o: dict) -> list[list[str]]:
     today = []
     if _int(left.get("reads")) is not None:
         today.append(f"読み取り {left['reads']} 回")
+    if _int(left.get("talks")) is not None:
+        today.append(f"話す {left['talks']} 回")
     if isinstance(left.get("usd"), int | float) and not isinstance(left.get("usd"), bool):
         today.append(f"使える額 {left['usd']} ドル")
     if today:
@@ -331,8 +334,6 @@ def state_rows(o: dict) -> list[list[str]]:
         people.append(f"token {tk['live']} 人")
     if _int(o.get("invites")) is not None:
         people.append(f"招待コード {o['invites']} 人")
-    if _int(o.get("boxes")) is not None:
-        people.append(f"Web 版で記録を置いている人 {o['boxes']} 人")
     if people:
         rows.append(["入れる人", "、".join(people)])
     if _int(o.get("denied_today")) is not None:
@@ -352,8 +353,10 @@ def attention(o: dict, audit_: dict | None = None) -> list[tuple[str, list[str]]
         warn("受け付けを止めています。戻すには下の「受け付けを再開する」を押します。")
     if "read" in o and not o.get("read"):
         warn(
-            "写真を読み取れません。Claude の鍵が入っていません。サーバーで次を打ちます。",
-            "sudoedit /etc/seed/env   # ANTHROPIC_API_KEY= の後に鍵を入れる",
+            "写真を読み取れず、話す口も使えません。Claude の鍵が入っていません。サーバーで次を打ちます。"
+            "二行目で鍵を貼り、Enter の後に Ctrl-D で終えます（鍵がもう在る時は作り直しません）。",
+            "sudo install -d -o root -g root -m 700 /etc/seed/keys",
+            "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
             "sudo systemctl restart seed",
         )
     if o.get("audit") == "off":
