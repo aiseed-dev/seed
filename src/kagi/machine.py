@@ -498,6 +498,20 @@ class Finding:
     what: str
     result: str
     how: list[str] = field(default_factory=list)  # 直す手（sh の行。kagi は走らせない）
+    confirm: bool = False  # 連載 2-02 の八つに当たる手。人が一行ずつ読んで確かめてから打つ
+
+
+# 連載 2-02 の「重要な仕事は人が確認する」八つに当たる直す物の見出し（認証、鍵、権限、口を開ける・閉じる）。
+# 当たらない物: 更新（自動の更新を入れるのは新しいソフトだが、apt の unattended-upgrades で連載 第 5 章が勧める
+# 形そのものなので、こちら）、時計、サービス、盤、控え、データ、鍵の表（机の側の表を書く物）。
+CONFIRM_WHAT = frozenset({"認証（ssh）", "機械の鍵", "入っている鍵", "アカウント", "管理者", "防火壁", "口", "入口"})
+
+
+def _needs_confirm(f: Finding) -> bool:
+    if not f.fix or f.what not in CONFIRM_WHAT:
+        return False
+    # 表にあって開いていない口は、サービスを起こす側の物（口を開ける手ではない）
+    return not (f.what == "口" and f.result.startswith("表にあって開いていない"))
 
 
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-kagi.conf"
@@ -1188,6 +1202,8 @@ def check(
         out.append(Finding(False, "盤", "暗号化されていない（持ち出す機械なら入れ直す時に。K-08）"))
     elif crypt and crypt.isdigit() and m.get("encrypt") is True:
         out.append(Finding(False, "盤", "暗号化されている（表の通り）"))
+    for f in out:
+        f.confirm = f.confirm or _needs_confirm(f)
     return out
 
 
@@ -1238,14 +1254,16 @@ def fix_script(host: str, facts: Facts, findings: list[Finding]) -> str:
     out = [
         "#!/bin/sh",
         f"# {head(host, facts, findings)}",
-        "# kagi はこれを走らせない。人が読んで、機械の端末で一つずつ。終わったら写しを取り直して確かめる。",
+        "# kagi はこれを走らせない。人が機械の端末で一つずつ打つ。",
+        "# 印のある手は、一行ずつ読んで確かめてから。印の無い手は打って、写しを取り直して確かめる。",
         "",
     ]
     done: set[tuple[str, ...]] = set()
     for f in findings:
         if not f.fix:
             continue
-        out.append(f"# {f.what}: {f.result}")
+        mark = "【読んで確かめてから】 " if f.confirm else ""
+        out.append(f"# {mark}{f.what}: {f.result}")
         key = tuple(f.how)
         if not f.how:
             out.append("#   決まった手は無い。見て決める")

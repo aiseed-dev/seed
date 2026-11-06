@@ -834,3 +834,31 @@ def test_check_inventory_empty_but_keys(tmp_path, capsys):
     (tmp_path / "machines.toml").write_text("[[machine]\n", "utf-8")  # 読めない表なら言わない
     assert cli.main(["check", "inventory", "--dir", str(tmp_path)]) == 0
     assert "在庫表は空" not in capsys.readouterr().out
+
+
+def test_confirm_marks_the_eight(tbl):
+    """連載 2-02 の八つに当たる直す物に印。更新やサービスには付けない。"""
+    f = run_check(
+        tbl,
+        facts_text(
+            sshd="effective=0\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\nPermitRootLogin no",
+            reboot="required",
+        ),
+    )
+    by = {(x.what, x.result): x for x in f if x.fix}
+    ssh = [x for x in by.values() if x.what == "認証（ssh）"]
+    assert ssh and all(x.confirm for x in ssh)
+    upd = [x for x in by.values() if x.what == "更新"]
+    assert upd and not any(x.confirm for x in upd)
+    assert not any(x.confirm for x in f if not x.fix)  # 見るだけには付けない
+    text = machine.fix_script("box", machine.parse_facts(facts_text()), f)
+    assert "# 【読んで確かめてから】 認証（ssh）:" in text
+    assert "# 更新: 再起動が要る" in text
+    assert "印のある手は、一行ずつ読んで確かめてから。" in text
+
+
+def test_confirm_port_closed_is_not_marked():
+    a = machine.Finding(True, "口", "表にあって開いていない: 8010（seed）")
+    b = machine.Finding(True, "口", "外向きで表と違う: 11435（機械は 0.0.0.0、表は 127.0.0.1）")
+    c = machine.Finding(True, "サービス", "動いていない: seed")
+    assert [machine._needs_confirm(x) for x in (a, b, c)] == [False, True, False]
