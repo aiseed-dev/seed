@@ -117,6 +117,7 @@ def _machines_card(d: Path, now: dt.datetime | None = None) -> dict:
 def collect_machine(d: Path, host: str, local: bool = False, env: dict | None = None, runner=None) -> Path:
     """写しを取って置く。ssh を使った時は記録に一行（署名の鍵があれば）。"""
     m = machine.load(Path(d) / machine.FILENAME).machine(host)
+    local = local or m.get("local") is True
     alias = None if local else str(m.get("ssh", host))
     text = machine.collect(alias, runner)
     path = machine.save_facts(d, host, text)
@@ -217,6 +218,97 @@ def write_report(
     return out, text
 
 
+def machine_view(d: Path, host: str, now: dt.datetime | None = None) -> dict:
+    """一台の機械の画面の中身: 頭の一行、直す物（手付き）、見るだけ。Flet を使わない。"""
+    d = Path(d)
+    v = {"host": host, "role": "", "facts": None, "head": "", "fixes": [], "notes": [], "error": None}
+    try:
+        row = next((r for r in report.machine_rows(d, now) if r["host"] == host), None)
+    except inventory.Refused as e:
+        v["error"] = str(e)
+        return v
+    if row is None:
+        v["error"] = f"機械の表に {host} が無い"
+        return v
+    v["role"], v["facts"] = row["role"], row["facts"]
+    if row["facts"] is None:
+        v["head"] = f"機械 {host}: 写しが無い。「写しを取る」から"
+        v["error"] = "、".join(row["what"]) or None
+        return v
+    facts = machine.load_facts(d / machine.FACTS_DIR / row["facts"])
+    v["head"] = machine.head(host, facts, row["findings"])
+    v["fixes"] = [{"what": f.what, "result": f.result, "how": list(f.how)} for f in row["findings"] if f.fix]
+    v["notes"] = [[f.what, f.result] for f in row["findings"] if not f.fix]
+    return v
+
+
+def keys_view(d: Path) -> dict:
+    """鍵の画面の中身。指紋は公開の物。秘密鍵は読まない。"""
+    v = {
+        "columns": ["id", "持つ人", "指紋", "入れてよい機械", "在庫表"],
+        "rows": [],
+        "problems": [],
+        "error": None,
+    }
+    try:
+        table = machine.load(Path(d) / machine.FILENAME)
+    except inventory.Refused as e:
+        v["error"] = str(e)
+        return v
+    try:
+        inv = inventory.load(Path(d) / "inventory.toml")
+    except inventory.Refused:
+        inv = None
+    v["rows"] = machine.key_rows(table, inv)
+    v["problems"] = machine.key_fingerprints(table)[1]
+    return v
+
+
+def _list(text: str) -> list[str]:
+    return [x for x in (t.strip() for t in (text or "").replace("、", ",").split(",")) if x]
+
+
+def add_machine(
+    d: Path,
+    host: str,
+    ssh: str = "",
+    role: str = "",
+    users: str = "",
+    admins: str = "",
+    keys: str = "",
+    services: str = "",
+    local: bool = False,
+) -> None:
+    """機械の表に一台足す（画面の欄から。名の並びは , で区切る）。"""
+    row = {
+        "host": host.strip(),
+        "ssh": ssh.strip(),
+        "role": role.strip(),
+        "os": "debian-13",
+        "users": _list(users),
+        "admins": _list(admins),
+        "keys": _list(keys),
+        "services": _list(services),
+        "local": bool(local),
+    }
+    machine.append_row(Path(d) / machine.FILENAME, "machine", row)
+
+
+def add_key(d: Path, kid: str, holder: str, pub: str) -> str:
+    """鍵の表に一件足す。公開鍵のファイル（.pub）を読んで指紋を返す。"""
+    infos = machine.read_pub(Path(pub.strip()))
+    machine.append_row(
+        Path(d) / machine.FILENAME, "key", {"id": kid.strip(), "holder": holder.strip(), "pub": pub.strip()}
+    )
+    return infos[0][1].fingerprint
+
+
+def install_files(d: Path, host: str) -> list[Path]:
+    from kagi import install
+
+    return install.write(Path(d), machine.load(Path(d) / machine.FILENAME), host)
+
+
 def make_main(d: Path):
     import flet as ft
 
@@ -228,15 +320,30 @@ def make_main(d: Path):
         page.dark_theme = ft.Theme(color_scheme_seed=SEED_COLOR, font_family=FONT)
         page.theme_mode = ft.ThemeMode.SYSTEM
         picker = ft.FilePicker()  # 参照を持っておく（無いと外される）
-        st: dict = {"ss": None, "scan": [], "report": None, "fix": None}
-        mc_field = ft.TextField(label="host（機械の表の名）", dense=True, width=220)
+        st: dict = {
+            "view": "machines",
+            "host": None,
+            "adding": False,
+            "busy": None,
+            "ss": None,
+            "scan": [],
+            "report": None,
+        }
 
-        ss_field = ft.TextField(label="ss -ltnp の写しのファイル", dense=True, width=420)
-        host_field = ft.TextField(label="host（表に機械が二つ以上なら）", dense=True, width=220)
-        scan_field = ft.TextField(label="走査する場所", dense=True, width=420)
-        actor = ft.TextField(label="actor", dense=True, width=160)
-        action = ft.TextField(label="action", dense=True, width=200)
-        detail = ft.TextField(label="detail", dense=True, width=320)
+        def field(label: str, width: int = 220, **kw) -> ft.TextField:
+            return ft.TextField(label=label, dense=True, width=width, **kw)
+
+        ss_field = field("ss -ltnp の写しのファイル", 420)
+        host_field = field("host（表に機械が二つ以上なら）")
+        scan_field = field("走査する場所", 420)
+        actor, action, detail = field("actor", 160), field("action", 200), field("detail", 320)
+        m_host, m_ssh = field("機械の名（host）", 180), field("ssh の名か番地（空なら host）", 240)
+        m_role = field("役", 300)
+        m_users, m_admins = field("入れてよい人（, で区切る）", 240), field("sudo を持ってよい人", 200)
+        m_keys, m_services = field("入れてよい鍵の id", 200), field("動いているべきサービス", 260)
+        m_local = ft.Checkbox(label="この PC 自身")
+        k_id, k_holder = field("鍵の id（在庫表と同じ名）", 220), field("持つ人", 140)
+        k_pub = field("公開鍵のファイル（.pub）", 320, value="~/.ssh/id_ed25519.pub")
         body = ft.Column(spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
         def muted(text: str) -> ft.Text:
@@ -244,6 +351,14 @@ def make_main(d: Path):
 
         def err(text: str) -> ft.Text:
             return ft.Text(text, color=ft.Colors.ERROR, selectable=True)
+
+        def mono(text: str) -> ft.Container:
+            return ft.Container(
+                ft.Text(text, font_family="monospace", size=13, selectable=True),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                padding=10,
+                border_radius=8,
+            )
 
         def table(columns: list[str], rows: list[list[str]]) -> ft.Control:
             return ft.Row(
@@ -259,6 +374,22 @@ def make_main(d: Path):
                 scroll=ft.ScrollMode.AUTO,
             )
 
+        def lines(rows: list[list[str]], first: int = 110) -> ft.Control:
+            """二列の行（長い文が折り返す。DataTable は切れるので使わない）。"""
+            return ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Container(ft.Text(a, weight=ft.FontWeight.W_600), width=first),
+                            ft.Text(b, selectable=True, expand=True),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.START,
+                    )
+                    for a, b in rows
+                ],
+                spacing=6,
+            )
+
         def card(title: str, controls: list[ft.Control]) -> ft.Card:
             head = ft.Text(title, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, weight=ft.FontWeight.W_600)
             return ft.Card(content=ft.Container(ft.Column([head, *controls], spacing=8), padding=16))
@@ -266,10 +397,215 @@ def make_main(d: Path):
         def toast(text: str) -> None:
             page.show_dialog(ft.SnackBar(ft.Text(text)))
 
+        def copier(text: str):
+            async def h(e) -> None:
+                await page.clipboard.set(text)
+                toast("写した（機械の端末に貼る）")
+
+            return h
+
+        def switch(view: str):
+            async def h(e) -> None:
+                st["view"] = view
+                render()
+
+            return h
+
+        def choose(h: str):
+            async def f(e) -> None:
+                st["host"] = h
+                render()
+
+            return f
+
         def host() -> str | None:
             return (host_field.value or "").strip() or None
 
-        def render() -> None:
+        # ---- 機械 ----
+
+        def machines_view() -> list[ft.Control]:
+            try:
+                rows = report.machine_rows(d)
+            except inventory.Refused as e:
+                rows = []
+                top: list[ft.Control] = [
+                    muted("機械の表がまだ無い（machines.toml）。下の「機械を足す」から一台目を書く。"),
+                ]
+                if (d / machine.FILENAME).exists():
+                    top.append(err(str(e)))
+            else:
+                top = []
+            hosts = [r["host"] for r in rows]
+            if st["host"] not in hosts:
+                st["host"] = hosts[0] if hosts else None
+            chips: list[ft.Control] = []
+            for r in rows:
+                state = "写し無し" if r["facts"] is None else (f"直す {r['fixes']}" if r["fixes"] else "よし")
+                label = f"{r['host']}  {state}"
+                btn = ft.FilledButton if r["host"] == st["host"] else ft.OutlinedButton
+                chips.append(btn(label, on_click=choose(r["host"])))
+            chips.append(ft.TextButton("機械を足す", icon=ft.Icons.ADD, on_click=toggle_add))
+            out: list[ft.Control] = [*top, ft.Row(chips, wrap=True)]
+            if st["adding"] or not rows:
+                out.append(
+                    card(
+                        "機械を足す",
+                        [
+                            muted(
+                                "書くのは名と役と、入れてよい人と鍵。パスワードと秘密鍵は書かない。"
+                                "足した後は machines.toml をエディタで直せる。"
+                            ),
+                            ft.Row([m_host, m_ssh, m_local], wrap=True),
+                            ft.Row([m_role], wrap=True),
+                            ft.Row([m_users, m_admins, m_keys], wrap=True),
+                            ft.Row([m_services], wrap=True),
+                            ft.FilledButton("足す", icon=ft.Icons.ADD, on_click=do_add_machine),
+                        ],
+                    )
+                )
+            if st["host"]:
+                v = machine_view(d, st["host"])
+                script = "\n".join(ln for f in v["fixes"] for ln in f["how"])
+                ctl: list[ft.Control] = [
+                    ft.Text(v["head"], weight=ft.FontWeight.W_600, selectable=True),
+                    muted(f"役: {v['role'] or '（書いていない）'}　写し: {v['facts'] or '無い'}"),
+                    ft.Row(
+                        [
+                            ft.FilledButton("写しを取る", icon=ft.Icons.SYNC, on_click=collect),
+                            ft.OutlinedButton(
+                                "直す手を全部写す",
+                                icon=ft.Icons.CONTENT_COPY,
+                                on_click=copier(script),
+                                disabled=not script,
+                            ),
+                            ft.OutlinedButton(
+                                "入れる時のファイルを作る", icon=ft.Icons.INSTALL_DESKTOP, on_click=do_install
+                            ),
+                        ],
+                        wrap=True,
+                    ),
+                ]
+                if st["busy"]:
+                    ctl.append(ft.Row([ft.ProgressRing(width=16, height=16), muted(st["busy"])]))
+                if v["error"]:
+                    ctl.append(err(v["error"]))
+                out.append(card(f"{st['host']}", ctl))
+                if v["fixes"]:
+                    fx: list[ft.Control] = [
+                        muted(
+                            "kagi は機械を変えない。手を読んで、機械の端末で一つずつ。終わったら「写しを取る」。"
+                        )
+                    ]
+                    for f in v["fixes"]:
+                        row: list[ft.Control] = [
+                            ft.Container(ft.Text(f["what"], weight=ft.FontWeight.W_600), width=110),
+                            ft.Column(
+                                [
+                                    ft.Text(f["result"], selectable=True),
+                                    *([mono("\n".join(f["how"]))] if f["how"] else []),
+                                ],
+                                spacing=6,
+                                expand=True,
+                            ),
+                        ]
+                        if f["how"]:
+                            row.append(
+                                ft.IconButton(
+                                    ft.Icons.CONTENT_COPY,
+                                    tooltip="この手を写す",
+                                    on_click=copier("\n".join(f["how"])),
+                                )
+                            )
+                        fx.append(ft.Row(row, vertical_alignment=ft.CrossAxisAlignment.START))
+                    out.append(card(f"直す物 {len(v['fixes'])}", fx))
+                if v["notes"]:
+                    out.append(card("見るだけ", [lines(v["notes"])]))
+            return out
+
+        async def toggle_add(e) -> None:
+            st["adding"] = not st["adding"]
+            render()
+
+        async def do_add_machine(e) -> None:
+            try:
+                add_machine(
+                    d,
+                    m_host.value or "",
+                    m_ssh.value or "",
+                    m_role.value or "",
+                    m_users.value or "",
+                    m_admins.value or "",
+                    m_keys.value or "",
+                    m_services.value or "",
+                    bool(m_local.value),
+                )
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            st["host"], st["adding"] = (m_host.value or "").strip(), False
+            for f in (m_host, m_ssh, m_role, m_users, m_admins, m_keys, m_services):
+                f.value = ""
+            render()
+
+        async def collect(e) -> None:
+            h = st["host"]
+            st["busy"] = f"{h} の写しを取っている（読むだけ）"
+            render()
+            try:
+                await asyncio.to_thread(collect_machine, d, h)
+            except inventory.Refused as ex:
+                toast(str(ex))
+            st["busy"] = None
+            render()
+
+        async def do_install(e) -> None:
+            try:
+                paths = install_files(d, st["host"])
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            toast(f"書いた: {paths[0].parent}（次は 手順.md。パスワードと盤は入っていない）")
+
+        # ---- 鍵 ----
+
+        def keys_view_controls() -> list[ft.Control]:
+            v = keys_view(d)
+            c: list[ft.Control] = [
+                muted(
+                    "誰が入れるか（機械の画面）と、どの鍵で入るか（ここ）はひと組。出るのは公開鍵の指紋だけ。"
+                )
+            ]
+            if v["error"]:
+                c.append(muted("機械の表がまだ無い（machines.toml）。"))
+            if v["rows"]:
+                c.append(table(v["columns"], v["rows"]))
+            c += [err(f"直す: {p}") for p in v["problems"]]
+            add = card(
+                "鍵を足す",
+                [
+                    muted(
+                        "鍵は人が作る: ssh-keygen -t ed25519 -a 64（合言葉を付ける）。ここに渡すのは .pub だけ。"
+                        "足したら、機械の keys に id を書き、在庫表に同じ id で一件。"
+                    ),
+                    ft.Row([k_id, k_holder, k_pub], wrap=True),
+                    ft.FilledButton("足す", icon=ft.Icons.ADD, on_click=do_add_key),
+                ],
+            )
+            return [card("鍵", c), add]
+
+        async def do_add_key(e) -> None:
+            try:
+                fp = add_key(d, k_id.value or "", k_holder.value or "", k_pub.value or "")
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            k_id.value = k_holder.value = ""
+            toast(f"足した: {fp}")
+            render()
+
+        # ---- 在庫・口・走査・記録・報告 ----
+
+        def other_view() -> list[ft.Control]:
             c = build_cards(d, st["ss"], st["scan"], host=host())
             inv, prt, scn, aud = c["inventory"], c["ports"], c["scan"], c["audit"]
 
@@ -278,6 +614,7 @@ def make_main(d: Path):
                 inv_c.append(table(inv["columns"], inv["rows"]))
 
             prt_c: list[ft.Control] = [
+                muted("機械の画面の「写しを取る」でも口は突き合わせる。ここは ss の写しを手で渡す時。"),
                 ft.Row(
                     [
                         ss_field,
@@ -292,35 +629,6 @@ def make_main(d: Path):
             if prt["rows"]:
                 prt_c.append(table(prt["columns"], prt["rows"]))
 
-            mch = c["machines"]
-            mch_c: list[ft.Control] = [
-                ft.Row(
-                    [
-                        mc_field,
-                        ft.FilledButton("写しを取る（ssh）", icon=ft.Icons.SYNC, on_click=collect),
-                        ft.OutlinedButton("直す手を見る", on_click=show_fix),
-                    ],
-                    wrap=True,
-                ),
-                ft.Text(mch["summary"]),
-            ]
-            if mch["error"]:
-                mch_c.append(err(mch["error"]))
-            if mch["rows"]:
-                mch_c.append(table(mch["columns"], mch["rows"]))
-            if mch["detail"]:
-                mch_c.append(table(mch["detail_columns"], mch["detail"]))
-            if st["fix"]:
-                mch_c += [
-                    muted("直す手（kagi は走らせない。人が読んで、機械の端末で一つずつ）"),
-                    ft.Container(
-                        ft.Text(st["fix"], font_family="monospace", size=13, selectable=True),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                        padding=12,
-                        border_radius=8,
-                    ),
-                ]
-
             scn_c: list[ft.Control] = [
                 ft.Row(
                     [
@@ -333,14 +641,7 @@ def make_main(d: Path):
                 ft.Text(scn["summary"]),
             ]
             if scn["lines"]:
-                scn_c.append(
-                    ft.Container(
-                        ft.Text("\n".join(scn["lines"]), font_family="monospace", size=13, selectable=True),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                        padding=12,
-                        border_radius=8,
-                    )
-                )
+                scn_c.append(mono("\n".join(scn["lines"])))
 
             aud_c: list[ft.Control] = [ft.Text(aud["summary"])]
             if aud["warning"]:
@@ -363,33 +664,38 @@ def make_main(d: Path):
             ]
             if st["report"]:
                 path, text = st["report"]
-                rep_c += [
-                    muted(f"書いた: {path}"),
-                    ft.Container(
-                        ft.Text(text, font_family="monospace", size=13, selectable=True),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                        padding=12,
-                        border_radius=8,
-                    ),
-                ]
+                rep_c += [muted(f"書いた: {path}"), mono(text)]
+            return [
+                card("在庫", inv_c),
+                card("口", prt_c),
+                card("走査", scn_c),
+                card("記録", aud_c),
+                card("報告", rep_c),
+            ]
 
+        def render() -> None:
+            tabs = []
+            for key, label, icon in (
+                ("machines", "機械", ft.Icons.DNS_OUTLINED),
+                ("keys", "鍵", ft.Icons.KEY_OUTLINED),
+                ("other", "在庫・口・記録", ft.Icons.FACT_CHECK_OUTLINED),
+            ):
+                btn = ft.FilledTonalButton if st["view"] == key else ft.TextButton
+                tabs.append(btn(label, icon=icon, on_click=switch(key)))
+            view = {"machines": machines_view, "keys": keys_view_controls, "other": other_view}[st["view"]]()
             body.controls = [
                 ft.Text(
                     "kagi — 係の机", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, weight=ft.FontWeight.W_600
                 ),
-                muted(f"作業の場所: {c['dir']}"),
-                card("在庫", inv_c),
-                card("口", prt_c),
-                card("機械", mch_c),
-                card("走査", scn_c),
-                card("記録", aud_c),
-                card("報告", rep_c),
-                muted("鍵の値はこの画面に出ない（K-13）。"),
+                muted(f"作業の場所: {d}"),
+                ft.Row(tabs),
+                *view,
+                muted("鍵の値はこの画面に出ない（K-13）。kagi は機械を変えない。"),
             ]
             page.update()
 
-        def path_of(field: ft.TextField) -> Path | None:
-            v = (field.value or "").strip()
+        def path_of(f: ft.TextField) -> Path | None:
+            v = (f.value or "").strip()
             return Path(v).expanduser() if v else None
 
         async def pick_ss(e) -> None:
@@ -402,29 +708,6 @@ def make_main(d: Path):
 
         async def use_ss(e) -> None:
             st["ss"] = path_of(ss_field)
-            render()
-
-        async def collect(e) -> None:
-            h = (mc_field.value or "").strip()
-            if not h:
-                toast("host を書く")
-                return
-            toast(f"{h} の写しを取っている")
-            try:
-                await asyncio.to_thread(collect_machine, d, h)
-            except inventory.Refused as ex:
-                toast(str(ex))
-                return
-            st["fix"] = None
-            render()
-
-        async def show_fix(e) -> None:
-            h = (mc_field.value or "").strip()
-            try:
-                st["fix"] = fix_text(d, h)
-            except inventory.Refused as ex:
-                toast(str(ex))
-                return
             render()
 
         async def pick_scan(e) -> None:
@@ -464,7 +747,18 @@ def make_main(d: Path):
                 return
             render()
 
-        page.add(ft.Container(body, width=MAX_WIDTH, padding=16, expand=True))
+        frame = ft.Container(body, padding=16, expand=True)
+
+        def fit(e=None) -> None:
+            # 窓が狭い時は窓の幅に合わせる（決めた幅のままだと右が切れる）
+            w = page.width or 0
+            frame.width = min(MAX_WIDTH, w) if w else MAX_WIDTH
+            if e is not None:
+                page.update()
+
+        page.on_resize = fit
+        fit()
+        page.add(frame)
         page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         render()
 

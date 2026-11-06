@@ -15,6 +15,7 @@ import base64
 import binascii
 import datetime as dt
 import hashlib
+import json
 import re
 import subprocess
 import tomllib
@@ -32,6 +33,7 @@ OLD_LISTS_DAYS = 7
 DISK_FULL = 85  # %
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")  # 機械の名、ssh の名（先頭に - を許さない）
 USER = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+UNIT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9@._:-]{0,127}$")
 FP = re.compile(r"^SHA256:[A-Za-z0-9+/]{43}$")
 KEY_TYPES = (
     "ssh-ed25519",
@@ -133,11 +135,22 @@ timedatectl show -p NTP -p NTPSynchronized -p Timezone 2>/dev/null
 sec failed
 systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}'
 
+sec services
+systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null | awk '{print $1}'
+
+sec user-services
+systemctl --user list-units --type=service --state=running --no-legend --plain 2>/dev/null | awk '{print $1}'
+
 sec disk
 df -P -x tmpfs -x devtmpfs -x overlay -x squashfs -x efivarfs 2>/dev/null | awk 'NR>1 {print $6, $5}'
 
 sec crypt
 echo "crypt=$(lsblk -rno TYPE 2>/dev/null | grep -c crypt)"
+
+sec load
+echo "since=$(uptime -s 2>/dev/null)"
+echo "loadavg=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
+awk '/^(MemTotal|MemAvailable):/ {sub(":", "", $1); print $1 "=" $2}' /proc/meminfo 2>/dev/null
 """
 
 
@@ -259,6 +272,10 @@ def parse_table(text: str, where: str = FILENAME) -> Table:
                 if not USER.match(u):
                     raise Refused(f"機械の表の {host} の {k} に、アカウントの名として読めない物がある")
         _names(m, "keys", host)
+        for k in ("services", "user_services"):
+            for u in _names(m, k, host):
+                if not UNIT.match(u):
+                    raise Refused(f"機械の表の {host} の {k} に、サービスの名として読めない物がある")
         if "hostkey" in m and not (isinstance(m["hostkey"], str) and FP.match(m["hostkey"])):
             raise Refused(f"機械の表の {host} の hostkey は指紋（SHA256:…）で書く")
     seen = set()
@@ -687,6 +704,16 @@ def check(
     if os_.get("HOSTNAME") and os_["HOSTNAME"].split(".")[0] != host:
         out.append(Finding(False, "OS", f"機械の名が表と違う（機械は {os_['HOSTNAME']}）"))
 
+    ld = facts.pairs("load")
+    if ld:
+        mem = ""
+        if ld.get("MemTotal", "").isdigit() and ld.get("MemAvailable", "").isdigit():
+            tot, av = int(ld["MemTotal"]) // 1048576, int(ld["MemAvailable"]) // 1048576  # kB → GB
+            mem = f"、メモリ {tot - av}/{tot} GB"
+        out.append(
+            Finding(False, "動き", f"起動 {ld.get('since') or '?'}、load {ld.get('loadavg') or '?'}{mem}")
+        )
+
     if "required" in facts.lines("reboot"):
         out.append(Finding(True, "更新", "再起動が要る", ["sudo systemctl reboot   # 時を選んで"]))
     up = facts.pairs("updates")
@@ -764,12 +791,36 @@ def check(
         diff = ports.compare(rows, listens, host)
         for l in diff.unlisted:
             out.append(
-                Finding(True, "口", f"表に無い口: {l.port}（{l.bind} {l.process}）".replace(" ）", "）"))
+                Finding(
+                    True,
+                    "口",
+                    f"表に無い口: {l.port}（{l.bind} {l.process}）".replace(" ）", "）"),
+                    [
+                        f"sudo ss -ltnp | grep ':{l.port} '   # 何が開けているかを見る",
+                        "# 要る口なら ports.toml に足す。要らなければ、そのサービスを止める",
+                    ],
+                )
             )
         for p in diff.closed:
-            out.append(Finding(True, "口", f"表にあって開いていない: {p['port']}（{p.get('service', '')}）"))
+            out.append(
+                Finding(
+                    True,
+                    "口",
+                    f"表にあって開いていない: {p['port']}（{p.get('service', '')}）",
+                    ["# そのサービスが動いているかを見る。もう要らない口なら ports.toml から消す"],
+                )
+            )
         for l, want in diff.outward:
-            out.append(Finding(True, "口", f"外向きで表と違う: {l.port}（機械は {l.bind}、表は {want}）"))
+            out.append(
+                Finding(
+                    True,
+                    "口",
+                    f"外向きで表と違う: {l.port}（機械は {l.bind}、表は {want}）",
+                    [
+                        "# そのサービスの設定で 127.0.0.1 に縛る。外から使うなら、前に門（token を確かめる口）を置く"
+                    ],
+                )
+            )
     else:
         nums = sorted({l.port for l in listens})
         out.append(
@@ -794,10 +845,34 @@ def check(
                 [f"systemctl status {unit.strip()}   # 理由を見る"],
             )
         )
+    for key, sec, ctl in (
+        ("services", "services", "sudo systemctl"),
+        ("user_services", "user-services", "systemctl --user"),
+    ):
+        want = m.get(key, [])
+        if not want:
+            continue
+        running = {ln.strip().removesuffix(".service") for ln in facts.lines(sec)}
+        down = [u for u in want if u.removesuffix(".service") not in running]
+        for u in down:
+            see = ctl.replace("sudo ", "")
+            out.append(
+                Finding(
+                    True,
+                    "サービス",
+                    f"動いていない: {u}" + ("（その人の systemd）" if key == "user_services" else ""),
+                    [f"{see} status {u} --no-pager | head -20   # 理由を見る", f"{ctl} restart {u}"],
+                )
+            )
+        if not down:
+            out.append(Finding(False, "サービス", f"表の {len(want)} 件が動いている（{', '.join(want)}）"))
     for line in facts.lines("disk"):
         cols = line.split()
         if len(cols) == 2 and cols[1].rstrip("%").isdigit() and int(cols[1].rstrip("%")) >= DISK_FULL:
             out.append(Finding(True, "盤", f"{cols[0]} が {cols[1]}"))
+    disks = [ln.split() for ln in facts.lines("disk")]
+    if disks:
+        out.append(Finding(False, "盤", "、".join(f"{c[0]} {c[1]}" for c in disks if len(c) == 2)))
     if facts.pairs("crypt").get("crypt") == "0":
         out.append(Finding(False, "盤", "暗号化されていない（持ち出す機械なら入れ直す時に。K-08）"))
     return out
@@ -807,7 +882,7 @@ def fixes(findings: list[Finding]) -> int:
     return sum(1 for f in findings if f.fix)
 
 
-def _head(host: str, facts: Facts, findings: list[Finding]) -> str:
+def head(host: str, facts: Facts, findings: list[Finding]) -> str:
     when = facts.collected
     stamp = when.strftime("%Y-%m-%d %H:%M") if when else "時が読めない"
     who = "root の写し" if facts.root else "root でない写し"
@@ -816,7 +891,7 @@ def _head(host: str, facts: Facts, findings: list[Finding]) -> str:
 
 
 def table(host: str, facts: Facts, findings: list[Finding]) -> str:
-    lines = [_head(host, facts, findings), "", "| | 何 | 見た物 |", "|---|---|---|"]
+    lines = [head(host, facts, findings), "", "| | 何 | 見た物 |", "|---|---|---|"]
     for fix in (True, False):
         for f in findings:
             if f.fix == fix:
@@ -828,7 +903,7 @@ def fix_script(host: str, facts: Facts, findings: list[Finding]) -> str:
     """直す手を sh の文にする。kagi は走らせない。人が読んで、機械で、一つずつ。"""
     out = [
         "#!/bin/sh",
-        f"# {_head(host, facts, findings)}",
+        f"# {head(host, facts, findings)}",
         "# kagi はこれを走らせない。人が読んで、機械の端末で一つずつ。終わったら写しを取り直して確かめる。",
         "",
     ]
@@ -849,16 +924,34 @@ def fix_script(host: str, facts: Facts, findings: list[Finding]) -> str:
     return "\n".join(out)
 
 
-def key_table(table: Table, inventory: list[dict] | None = None) -> str:
-    """鍵の一覧: 持つ人、指紋、入れてよい機械、在庫表の期限。値は無い（指紋は公開の物）。"""
-    fps, problems = key_fingerprints(table)
+def _toml(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, list):
+        return "[" + ", ".join(json.dumps(str(x), ensure_ascii=False) for x in v) + "]"
+    return json.dumps(str(v), ensure_ascii=False)
+
+
+def append_row(path: Path, kind: str, row: dict) -> None:
+    """機械の表に [[machine]] か [[key]] を一件足す。足した形を読めるか確かめてから書く。空の欄は書かない。"""
+    if kind not in ("machine", "key"):
+        raise Refused("足せるのは machine か key")
+    path = Path(path)
+    body = "".join(f"{k} = {_toml(v)}\n" for k, v in row.items() if v not in ("", [], None, False))
+    try:
+        old = path.read_text("utf-8") if path.exists() else ""
+    except (OSError, UnicodeDecodeError) as e:
+        raise Refused(f"機械の表を読めない: {path} ({type(e).__name__})") from None
+    new = old.rstrip("\n") + ("\n\n" if old.strip() else "") + f"[[{kind}]]\n{body}"
+    parse_table(new, str(path))
+    path.write_text(new, "utf-8")
+
+
+def key_rows(table: Table, inventory: list[dict] | None = None) -> list[list[str]]:
+    """鍵ごとの一行: id、持つ人、指紋、入れてよい機械、在庫表。"""
+    fps, _problems = key_fingerprints(table)
     inv = {str(s.get("id")): s for s in (inventory or [])}
-    lines = [
-        f"鍵 {len(table.keys)} 件。",
-        "",
-        "| id | 持つ人 | 指紋 | 入れてよい機械 | 在庫表 |",
-        "|---|---|---|---|---|",
-    ]
+    rows = []
     for k in table.keys:
         kid = k["id"]
         if inventory is None:
@@ -868,8 +961,19 @@ def key_table(table: Table, inventory: list[dict] | None = None) -> str:
         else:
             stock = f"期限 {inv[kid]['expires']}" if inv[kid].get("expires") else "期限が無い（K-05）"
         hosts = ", ".join(table.machines_of(kid)) or "どこにも無い"
-        lines.append(
-            f"| {kid} | {k.get('holder', '書いていない')} | {fps.get(kid, '読めない')} | {hosts} | {stock} |"
-        )
+        rows.append([kid, str(k.get("holder", "書いていない")), fps.get(kid, "読めない"), hosts, stock])
+    return rows
+
+
+def key_table(table: Table, inventory: list[dict] | None = None) -> str:
+    """鍵の一覧: 持つ人、指紋、入れてよい機械、在庫表の期限。値は無い（指紋は公開の物）。"""
+    _fps, problems = key_fingerprints(table)
+    lines = [
+        f"鍵 {len(table.keys)} 件。",
+        "",
+        "| id | 持つ人 | 指紋 | 入れてよい機械 | 在庫表 |",
+        "|---|---|---|---|---|",
+    ]
+    lines += ["| " + " | ".join(r) + " |" for r in key_rows(table, inventory)]
     lines += [f"- 直す: {p}" for p in problems]
     return "\n".join(lines)

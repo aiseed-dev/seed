@@ -454,3 +454,89 @@ def test_app_card_and_report(tmp_path, monkeypatch):
     empty.mkdir()
     assert "機械の表が無い" in app.build_cards(empty)["machines"]["summary"]
     assert "機械の表が無い" in report.build(empty)
+
+
+# ---- 管理の画面（Flet を使わない所）、サービス、動き ----
+
+
+def test_services_and_load(tbl):
+    tbl.machines[0]["services"] = ["seed", "caddy.service"]
+    tbl.machines[0]["user_services"] = ["glimmer"]
+    text = facts_text(
+        services="caddy.service\nssh.service",
+        **{
+            "user-services": "glimmer.service",
+            "load": "since=2026-10-28 14:25:57\nloadavg=1.01 1.01 1.00\nMemTotal=129468412\nMemAvailable=23993536",
+        },
+    )
+    f = run_check(tbl, text)
+    assert ("サービス", "動いていない: seed") in whats(f)
+    assert not any("caddy" in r for _w, r in whats(f))
+    seen = whats(f, fix=False)
+    assert ("サービス", "表の 1 件が動いている（glimmer）") in seen
+    assert ("動き", "起動 2026-10-28 14:25:57、load 1.01 1.01 1.00、メモリ 101/123 GB") in seen
+    assert ("盤", "/ 41%") in seen
+    script = machine.fix_script("box", machine.parse_facts(text), f)
+    assert "sudo systemctl restart seed" in script and "systemctl status seed" in script
+    tbl.machines[0]["user_services"] = ["sd-server"]
+    f = run_check(tbl, text)
+    assert ("サービス", "動いていない: sd-server（その人の systemd）") in whats(f)
+    assert "systemctl --user restart sd-server" in machine.fix_script("box", machine.parse_facts(text), f)
+    with pytest.raises(Refused, match="サービスの名"):
+        machine.parse_table('[[machine]]\nhost = "a"\nservices = ["x; rm -rf /"]\n')
+
+
+def test_port_findings_have_guidance(tbl):
+    f = run_check(tbl, facts_text(listen="LISTEN 0 128 0.0.0.0:8080 0.0.0.0:*"))
+    hows = {x.result: x.how for x in f if x.fix and x.what == "口"}
+    assert any("grep ':8080 '" in h[0] for r, h in hows.items() if "表に無い口" in r)
+    assert all(h for h in hows.values())
+
+
+def test_add_machine_and_key_from_the_desk(tmp_path):
+    d = tmp_path / "k"
+    d.mkdir()
+    pub = tmp_path / "a.pub"
+    pub.write_text(KEY_A + "\n")
+    assert app.keys_view(d)["error"]
+    app.add_machine(d, "box", "", "見本", "dev、ops", "ops", "k-a", "seed, caddy", local=True)
+    assert app.add_key(d, "k-a", "someone", str(pub)) == FP_A
+    t = machine.load(d / "machines.toml")
+    m = t.machine("box")
+    assert m["users"] == ["dev", "ops"] and m["admins"] == ["ops"] and m["services"] == ["seed", "caddy"]
+    assert m["local"] is True and "ssh" not in m and m["os"] == "debian-13"
+    assert app.keys_view(d)["rows"] == [["k-a", "someone", FP_A, "box", "見ていない"]]
+    # 読めない形は足さない（ファイルは元のまま）
+    before = (d / "machines.toml").read_text()
+    for bad in ({"host": "box"}, {"host": "-x"}, {"host": "ok", "users": "Bad Name"}):
+        with pytest.raises(Refused):
+            app.add_machine(d, **bad)
+    with pytest.raises(Refused):
+        app.add_key(d, "k-b", "x", str(tmp_path / "id_ed25519"))  # .pub でない
+    assert (d / "machines.toml").read_text() == before
+
+
+def test_machine_view_and_local_collect(tmp_path, monkeypatch):
+    monkeypatch.delenv("KAGI_LOG_KEY_FILE", raising=False)
+    d = tmp_path / "k"
+    d.mkdir()
+    app.add_machine(d, "box", users="dev", admins="dev", local=True)
+    v = app.machine_view(d, "box")
+    assert v["facts"] is None and "写しが無い" in v["head"]
+    assert app.machine_view(d, "nope")["error"] == "機械の表に nope が無い"
+    called = []
+
+    def fake(cmd, **kw):
+        called.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, facts_text(reboot="required"), "")
+
+    app.collect_machine(d, "box", runner=fake)
+    assert called == [["sh", "-s"]]  # local = true の機械は ssh を使わない
+    assert not (d / "audit.log").exists()
+    v = app.machine_view(d, "box")
+    assert v["head"].startswith("機械 box（") and "直す物" in v["head"]
+    fix = next(f for f in v["fixes"] if f["result"] == "再起動が要る")
+    assert fix["what"] == "更新" and fix["how"] == ["sudo systemctl reboot   # 時を選んで"]
+    assert ["OS", "Debian GNU/Linux 13 (trixie)、kernel 6.12.0"] in v["notes"]
+    with pytest.raises(Refused, match="公開鍵が要る"):
+        app.install_files(d, "box")

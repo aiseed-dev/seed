@@ -56,6 +56,9 @@ MACHINES_TEMPLATE = """\
 # admins = ["dev"]              # sudo を持ってよい人。入れる時は先頭が最初の管理者
 # keys = ["yniji-debpc"]        # 入れてよい鍵（下の [[key]] の id）
 # hostkey = "SHA256:…"          # 機械の鍵（ed25519）の指紋。機械の画面で見て書く
+# services = ["seed", "caddy"]  # 動いているべきサービス（systemd）。止まっていたら直す手が出る
+# user_services = ["glimmer"]   # 写しを取る人の systemd（systemctl --user）で動いているべき物
+# local = true                  # この PC 自身（写しを ssh でなくここで取る）
 # lan = "192.168.1.0/24"        # 入れる時: ssh を通す網。無ければどこからでも（回数を絞る）
 # profile = "server"            # 入れる時: server | desktop
 # encrypt = true                # 入れる時: 盤を暗号化する機械（選ぶのは人）
@@ -262,13 +265,14 @@ def cmd_machine_script(args) -> int:
 def cmd_machine_collect(args) -> int:
     try:
         m = _table(args).machine(args.host)
-        text = machine.collect(None if args.local else str(m.get("ssh", m["host"])))
+        local = args.local or m.get("local") is True
+        text = machine.collect(None if local else str(m.get("ssh", m["host"])))
         path = machine.save_facts(_dir(args), args.host, text)
     except inventory.Refused as e:
         _err(str(e))
         return 2
     print(path)
-    if not args.local:
+    if not local:
         _log(args, "machine.collect", args.host)
     return 0
 
