@@ -17,8 +17,8 @@ import sys
 from importlib import resources
 from pathlib import Path
 
+from . import claude_md, highlights, lang
 from . import fields as fields_mod
-from . import highlights, lang
 from . import keep as keep_mod
 from . import settings as settings_mod
 from .app.strings import error_text, s
@@ -83,9 +83,14 @@ def copy_skill(folder: Folder) -> str:
     return "copied"
 
 
-def prepare(folder: Folder) -> str:
-    """フォルダーを作り、手引きを写す。seed init とアプリの始まり。"""
+def prepare(folder: Folder, language: str | None = None) -> str:
+    """フォルダーを作り、手引きを写す。seed init とアプリの始まり。
+
+    language を渡すと CLAUDE.md も置く（もうあれば触らない）。
+    """
     folder.init()
+    if language is not None:
+        claude_md.write(folder.root, language)
     return copy_skill(folder)
 
 
@@ -486,6 +491,7 @@ def cmd_init(st: Settings, args) -> int:
         _err(s("skill_missing", st.language))
     else:
         _out(s(f"skill_{got}", st.language, path=st.records.skill))
+    _out(s(f"claude_md_{claude_md.write(st.records.root, st.language)}", st.language))
     if not _set_keep(st, getattr(args, "keep", None), getattr(args, "bulk", None)):
         return 1
     _keep_status(st)

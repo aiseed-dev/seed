@@ -77,7 +77,7 @@ class App:
             old.stop()
         self.settings = settings_mod.load(folder)
         self.folder = self.settings.records
-        prepare(self.folder)  # 手引きの写しも（もうあれば触らない）
+        prepare(self.folder, self.settings.language)  # 手引きの写しと CLAUDE.md も（もうあれば触らない）
         self.lang = self.settings.language
         self.plugins = plugins.load(self.folder)
         self._plugins_stamp = plugins.stamp(self.folder)

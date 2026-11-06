@@ -687,3 +687,19 @@ def test_publish_sends_chosen_photo(seedfolder, photo, monkeypatch, capsys):
     (seedfolder / "photos" / "2026-11-05" / "142107.jpg").unlink()
     assert cli.main(["publish", "--folder", f, "--file", str(seedfolder / "public" / "p-1.md")]) == 1
     assert name in capsys.readouterr().err and len(sent) == 1
+
+
+def test_init_writes_claude_md_and_keeps_edits(seedfolder, capsys):
+    from seed import claude_md
+
+    f = str(seedfolder)
+    assert cli.main(["init", "--folder", f]) == 0
+    assert "CLAUDE.md を書いた" in capsys.readouterr().out
+    mine = seedfolder / "CLAUDE.md"
+    body = mine.read_text(encoding="utf-8")
+    assert "skill/SKILL.md" in body and "plugins/" in body
+    mine.write_text("# 直した\n", encoding="utf-8")
+    assert cli.main(["init", "--folder", f]) == 0
+    assert "CLAUDE.md はもうある" in capsys.readouterr().out
+    assert mine.read_text(encoding="utf-8") == "# 直した\n"
+    assert "skill/SKILL.md" in claude_md.text("en")
