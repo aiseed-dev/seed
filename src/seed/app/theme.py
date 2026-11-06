@@ -82,7 +82,7 @@ def line_text(line: Line, language: str) -> ft.Text:
 
 
 def fit_width(page_width: float | None) -> float:
-    """本文の幅。窓が狭い時（電話）は窓の幅に合わせる。決めた幅のままだと右が切れる。"""
+    """本文の幅。窓が狭い時（スマートフォン）は窓の幅に合わせる。決めた幅のままだと右が切れる。"""
     return min(MAX_WIDTH, page_width) if page_width else MAX_WIDTH
 
 

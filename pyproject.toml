@@ -28,7 +28,7 @@ server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pill
 # （作者 2026-11-05。前は期間前のコミット 2bc2c4f）。記録の一行の形は仕様（fieldnotes の docs/records.md）で
 # 揃え、コードは共有しない（設計書 §13 の 2 と 18）。
 lookup = ["fieldnotes-farm==0.2.0"]
-# 撮る画面（電話のアプリと Web 版。カメラと位置の部品。PC の窓では使わない）
+# 撮る画面（スマートフォンのアプリと Web 版。カメラと位置の部品。PC の窓では使わない）
 capture = ["flet-camera==1.1.0", "flet-geolocator==1.1.0"]
 dev = ["pytest", "ruff", "seed-farm[app,server,grow,capture]"]
 
@@ -40,7 +40,7 @@ kagi = "kagi.cli:main"
 Homepage = "https://seed.aiseed.dev"
 Source = "https://github.com/aiseed-dev/seed"
 
-# 電話のアプリ（flet build ipa / apk。docs/iPhone 版.md）。入口は src/seed_mobile.py
+# スマートフォンのアプリ（flet build ipa / apk。docs/iPhone 版.md）。入口は src/seed_mobile.py
 [tool.flet]
 product = "seed"
 org = "dev.aiseed"

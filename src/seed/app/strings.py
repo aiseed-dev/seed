@@ -447,7 +447,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "talk_draft_send": "出す",
         "talk_draft_changed": "下書きが変わっていました。新しい全文を読んでから、もう一度押します。",
         "talk_draft_missing": "下書きが見つかりません。",
-        "web_serve_gone": "人ごとに記録を置く Web 版はやめました。アプリは PC 版と電話です（seed app）。",
+        "web_serve_gone": "人ごとに記録を置く Web 版はやめました。アプリは PC 版とスマートフォンです（seed app）。",
         "ex_landform": "この土地の成り立ちを教えて",
         "ex_soil_q": "土はどんな土？",
         "ex_past": "昔はどんな土地だった？（昔の地図と空中写真）",

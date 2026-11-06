@@ -8,7 +8,7 @@
 見つけた事（読みの行）、問い、次の一枚。文字を打てる所は、一番下の一行だけ。
 
 Claude を呼ぶ所（route。設定の札の一行で変えられる）は、PC が「手元の Claude Code → 自分の鍵 → サーバー」、
-電話が「自分の鍵 → サーバー」の順で、在る物（設計書 §7.6）。
+スマートフォンが「自分の鍵 → サーバー」の順で、在る物（設計書 §7.6）。
 
 送った時の分かれ道（send）:
 - 写真あり → 新しい観察にし、読む（Claude を呼ぶ所の通り）
@@ -435,7 +435,7 @@ async def take_invite(app: App, code: str) -> None:
 
 
 async def add_photos(app: App, text: str) -> None:
-    """写真を足す: 電話は撮る画面（画面の確かめ用のブラウザでも）、PC は写真を選ぶ。"""
+    """写真を足す: スマートフォンは撮る画面（画面の確かめ用のブラウザでも）、PC は写真を選ぶ。"""
     if capture.available(app.page):
         app.state["capture"] = capture.Session()
         app.state["capture_text"] = text
@@ -893,7 +893,7 @@ EXAMPLE_ICONS = {"first": ft.Icons.PHOTO_CAMERA_OUTLINED, "more": ft.Icons.MORE_
 
 
 def example_chips(app: App, keys: list[str], one_line: bool = False) -> ft.Control:
-    """例の並び。入力の上では一行で横に送る（狭い電話でもやり取りの場所を取らない）。返事の中では折り返す。"""
+    """例の並び。入力の上では一行で横に送る（狭いスマートフォンでもやり取りの場所を取らない）。返事の中では折り返す。"""
 
     def press(key: str):
         async def h(e) -> None:

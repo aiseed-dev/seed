@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Claude Code と同じやり方を、アプリの中に（設計書 §7.6）。
 
-手元に Claude Code が無い端末（電話、入れていない PC）でも、言葉で頼む細かい作業と間違いの指摘ができるように、
+手元に Claude Code が無い端末（スマートフォン、入れていない PC）でも、言葉で頼む細かい作業と間違いの指摘ができるように、
 Claude に道具（seed/prompts.py の TOOLS）を渡し、Claude が道具を呼び、この端末の中で道具を動かして結果を返す、を
 答えが出るまで繰り返す（run）。道具は記録のフォルダーの中だけに効く（Desk）。公開を送る道具と、命令を走らせる道具は無い。
 
@@ -10,7 +10,7 @@ Claude を呼ぶ運び方は二つ。繰り返しと道具は同じ:
 - ServerTransport: seed のサーバー（deb2）の /api/talk 経由（作者の鍵。招待コードか token が要る）。
   system と道具の形はサーバーが持つ物を使う。この端末は、やり取りだけを送る。
 
-電話の包みに入るよう、anthropic の SDK は使わず httpx で書く（要求の形は Claude の API の資料の通り:
+スマートフォンの包みに入るよう、anthropic の SDK は使わず httpx で書く（要求の形は Claude の API の資料の通り:
 x-api-key、anthropic-version、tool_use と tool_result、stop_reason）。鍵の値は、Claude に渡す文、道具の結果、
 例外の文、ログのどれにも入れない。送り先は API_URL だけ。
 """

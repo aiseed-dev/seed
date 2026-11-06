@@ -83,5 +83,5 @@ def test_page_column_fits_a_phone():
     from seed.app import theme
 
     assert theme.fit_width(None) == theme.MAX_WIDTH and theme.fit_width(1280) == theme.MAX_WIDTH
-    assert theme.fit_width(390) == 390  # 電話の幅では、窓の幅に合わせる（右が切れない）
+    assert theme.fit_width(390) == 390  # スマートフォンの幅では、窓の幅に合わせる（右が切れない）
     assert theme.page_column([], 390).width == 390

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Claude に渡す指示と道具の形。端末（アプリ、seed）とサーバー（seed/server）の両方が使う（設計書 §7.2、§7.6）。
 
-電話の包みは seed/server を外すので、ここは seed/server の外に置き、Python の標準と pyyaml だけに依る。
+スマートフォンの包みは seed/server を外すので、ここは seed/server の外に置き、Python の標準と pyyaml だけに依る。
 
 - 写真の読み取り: 手引きと「この読みの形」を system に、写真と資料を user に。答えは JSON（lines）。
   サーバーの /api/read と、本人の鍵で端末から直に読む時で、同じ文を組む。

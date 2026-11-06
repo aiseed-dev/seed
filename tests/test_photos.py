@@ -279,7 +279,7 @@ def test_stamp_writes_coordinates_time_and_heading(tmp_path):
     info = photos.exif_info(_write(tmp_path, "s.jpg", out))
     assert abs(info.lat - 34.123456) < 1e-6 and abs(info.lon - 134.654321) < 1e-6
     assert info.taken == when and abs(info.heading - 271.5) < 0.01
-    # 観察の location も、電話のカメラの写真と同じに作れる
+    # 観察の location も、スマートフォンのカメラの写真と同じに作れる
     loc = photos.location([info])
     assert loc["points"] == 1 and loc["center"] == [34.123456, 134.654321]
 

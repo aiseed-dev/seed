@@ -2,7 +2,7 @@
 """画面の組み立ての確認。Flet の page は偽物で、view() が返す物の文を見る。
 
 話す（やり取りを記録から組む、送った時の分かれ道、「こういう事ができます」の例、返事の中の写真）、
-写真（大きく開いた所の三つの操作）、Form 形式を残さない事、電話の包みで import できる事。
+写真（大きく開いた所の三つの操作）、Form 形式を残さない事、スマートフォンの包みで import できる事。
 """
 
 from __future__ import annotations
@@ -637,7 +637,7 @@ def test_local_talk_command(seedfolder, monkeypatch):
     assert seen["env"]["SEED_FOLDER"] == str(seedfolder) and seen["cwd"] == folder.root
 
 
-# ---- 電話の包み（seed/server と kagi は入らない。anthropic と fastapi も入れない）
+# ---- スマートフォンの包み（seed/server と kagi は入らない。anthropic と fastapi も入れない）
 
 PHONE_PROBE = """
 import importlib, sys

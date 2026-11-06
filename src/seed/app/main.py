@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """アプリの始まり。`flet run src/seed/app/main.py` か `seed app` で開く。
 
-アプリは PC 版と電話（iOS、Android）。本人のフォルダー（既定 ~/seed）を読む（設計書 §6）。
+アプリは PC 版とスマートフォン（iOS、Android）。本人のフォルダー（既定 ~/seed）を読む（設計書 §6）。
 `seed app --web` は、この PC の中だけで、ブラウザで画面を確かめるための一人用。人ごとに分ける Web 版はやめた
 （作者 2026-11-06「Web 版は、マニュアル的なものだけにする」）。
 

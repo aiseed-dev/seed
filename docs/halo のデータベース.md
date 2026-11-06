@@ -66,8 +66,8 @@ digitaldoor の鍵の階層（扉コントローラ仕様書 §5.2b: 管理者�
 
 | 層 | 誰が誰に | 形 | 5.2b の位置 |
 |---|---|---|---|
-| **人**（ブラウザ、スマホ） | 人が入口（deb2）に | **パスキー（WebAuthn）を主**に。許可も費用も要らず、iPhone・Android・PC で使え、フィッシングに強い。Apple・Google のサインインは任意の二つ目（digitaldoor の ninshou にある形）。招待コードは口座を作る門として残す（コードだけの人は今の通り動く）。ログインの印は PocketBase の token を httpOnly の cookie で。seed の `/api/*` は招待コードに加えて口座の token を受ける | 端末の鍵（パスキーの秘密鍵は電話の中。digitaldoor R-AC-21「資格情報を端末の鍵に結ぶ」と同じ） |
-| **AI・機械**（seed の PC 版、買い手の AI、電話のアプリ） | 人が自分の口座から発行し、客に渡す | 客の token（研究室 §5b の通り。`Authorization: Bearer`、受ける側はハッシュだけ、scope は `read`／`mark`／`write`／`buyer`、seed の絵は `draw`）。発行・一覧・失効は口座の頁と `seed token` | 発行者の鍵（本人） |
+| **人**（ブラウザ、スマホ） | 人が入口（deb2）に | **パスキー（WebAuthn）を主**に。許可も費用も要らず、iPhone・Android・PC で使え、フィッシングに強い。Apple・Google のサインインは任意の二つ目（digitaldoor の ninshou にある形）。招待コードは口座を作る門として残す（コードだけの人は今の通り動く）。ログインの印は PocketBase の token を httpOnly の cookie で。seed の `/api/*` は招待コードに加えて口座の token を受ける | 端末の鍵（パスキーの秘密鍵はスマートフォンの中。digitaldoor R-AC-21「資格情報を端末の鍵に結ぶ」と同じ） |
+| **AI・機械**（seed の PC 版、買い手の AI、スマートフォンのアプリ） | 人が自分の口座から発行し、客に渡す | 客の token（研究室 §5b の通り。`Authorization: Bearer`、受ける側はハッシュだけ、scope は `read`／`mark`／`write`／`buyer`、seed の絵は `draw`）。発行・一覧・失効は口座の頁と `seed token` | 発行者の鍵（本人） |
 | **機械同士**（deb2↔halo、halo の中） | 作者が機械に | WireGuard の鍵の対（halo→deb2）。PostgreSQL は wg0 だけに listen、`scram-sha-256`、TLS、役ごとの role（deb2 の proxy は読み書きできる表を絞る。superuser は halo のコンソールだけ）。Glimmer・sd-server に token。ssh は鍵だけ、パスワード認証は切る | 管理者の鍵（作者の ssh 鍵と sudo）、記録の鍵（盤の暗号化。今は無い） |
 
 - **更新の署名の鍵**: git の commit と deb2 の clone に署名は無い。11-08 の後に、作者の鍵で tag に署名し、deb2 の更新はその tag だけ、を足す。

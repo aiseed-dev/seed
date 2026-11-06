@@ -460,7 +460,7 @@ def settings_card(app: App) -> list[ft.Control]:
                 [ft.TextButton(t("set_field_to", name=n), on_click=switch(n)) for n in fl.names if n != now],
             )
         )
-    # フォルダーを開くのは PC のアプリだけ（電話と Web 版は箱が一つ）
+    # フォルダーを開くのは PC のアプリだけ（スマートフォンと Web 版は箱が一つ）
     pc = not getattr(app.page, "web", False) and getattr(app.page, "platform", None) not in capture.MOBILE
 
     async def pick(e) -> None:

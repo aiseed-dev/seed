@@ -68,7 +68,7 @@ aiai-tools（`/home/dev/dev/aiai-tools`。会社が外に預けている物を O
 
 **ERP（Tryton）との繋ぎ。** 鍵の管理の形（§5c〜5d）で言えば、ERP は「仕事ごとの口」の一番分かりやすい例で、四つの繋ぎがある。
 
-1. **口。** `trytond` は `localhost:8000` に聞くので、`ports.toml` に `host = "erp", port = 8000, bind = "127.0.0.1"` と書き、外から見えるのは前に置いた門（パスキーで入る逆向きの代理）だけにする（§5d の形 1。ERP は触らない）。画面 sao は Web なので、社員は電話からでも入れる。業務だけ Windows が要る理由が ERP には無い。
+1. **口。** `trytond` は `localhost:8000` に聞くので、`ports.toml` に `host = "erp", port = 8000, bind = "127.0.0.1"` と書き、外から見えるのは前に置いた門（パスキーで入る逆向きの代理）だけにする（§5d の形 1。ERP は触らない）。画面 sao は Web なので、社員はスマートフォンからでも入れる。業務だけ Windows が要る理由が ERP には無い。
 2. **在庫表。** Tryton の秘密を `[[secret]]` に: PostgreSQL のパスワード（置き場 `erp:~/apps/tryton/…`）、`admin`、`trytond.conf` の session の鍵、控えの資格情報、門の鍵。値は書かない。
 3. **記録。** Tryton の管理者の操作（admin のパスワードを替えた、モジュールを足した、権限を変えた）は、その時に `kagi log add --action erp.admin` を一行。Tryton 自身の帳簿（確定した書類は書き換えず打ち消しで直す）と、kagi の記録（追記だけ）は同じ形で、繋ぐ必要は無く、並べて置く。
 4. **認証。** Tryton は自分の認証を持ち、PocketBase は他の道具にサインインを貸す側（OpenID Connect の提供者）にならない（ninshou が 2026-09-28 に確かめた）。だから門のパスキーと Tryton の ID の二段になる。一段にしたいなら、ninshou が挙げる Forgejo の OIDC か、Tryton の側の認証の差し替えで、どちらも aiai-tools の側の決め。

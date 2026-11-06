@@ -2,7 +2,7 @@
 """Claude Code と同じやり方をアプリの中に（seed/direct.py）。Claude は呼ばない（運び方と網を差し替える）。
 
 道具の繰り返し、上限、記録のフォルダーの外を断る事、公開を送る道具が無い事、自分の鍵の扱い、運び方の分かれ道、
-読みの指示がサーバーと端末で同じ事、電話の包みの依存。
+読みの指示がサーバーと端末で同じ事、スマートフォンの包みの依存。
 """
 
 from __future__ import annotations
@@ -433,7 +433,9 @@ def test_routes_order(app, monkeypatch):
     app.settings.invite = "inv-x"
     assert talk.route(app) == "server"
     app.settings.anthropic_key = KEY
-    assert talk.routes(app) == ["key", "server"] and talk.route(app) == "key"  # 電話: 自分の鍵 → サーバー
+    assert (
+        talk.routes(app) == ["key", "server"] and talk.route(app) == "key"
+    )  # スマートフォン: 自分の鍵 → サーバー
     monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
     assert talk.routes(app) == ["local", "key", "server"] and talk.route(app) == "local"  # PC: 手元が先
     app.settings.read = "server"
@@ -462,7 +464,7 @@ def test_words_go_by_route(app, seedfolder, tmp_path, monkeypatch):
     app.settings.invite = "inv-x"
     run(talk.send(app, "どう？"))
     assert used == ["server"] and app.state["talk"][-1]["text"] == "server で答えた"
-    # 自分の鍵（電話でも）
+    # 自分の鍵（スマートフォンでも）
     app.settings.anthropic_key = KEY
     run(talk.send(app, "どう？"))
     assert used[-1] == "key"
@@ -510,7 +512,7 @@ def test_fresh_start_before_limits():
     assert not direct.fresh_if_needed(msgs) and len(msgs) == 1
 
 
-# ---------------------------------------------------------------- 電話の包み
+# ---------------------------------------------------------------- スマートフォンの包み
 
 
 def test_phone_package_has_what_the_new_path_needs():
@@ -525,7 +527,7 @@ def test_phone_package_has_what_the_new_path_needs():
 
 
 def test_new_path_imports_without_server_and_sdk():
-    """seed/server と anthropic の SDK が無い所（電話の包み）でも、話すの道が import できる。"""
+    """seed/server と anthropic の SDK が無い所（スマートフォンの包み）でも、話すの道が import できる。"""
     code = (
         "import sys, importlib.abc\n"
         "class Block(importlib.abc.MetaPathFinder):\n"
