@@ -3,6 +3,7 @@
 `build_cards` は Flet を使わない純粋な関数で、在庫・口・走査・記録の結果を札の文字と表に変える。
 `flet` は `run` と `make_main` の中で遅く import する（kagi の本体は標準ライブラリだけのまま）。
 鍵の値は読まない。札に出るのは在庫の id と欄の名、口の番号、path:line と種類、記録の連番と理由だけ。
+四つ目の画面「人の出入り」は seed のサーバーの管理の口を使う（`kagi.admin`）。管理者の token は画面に出さない。
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import datetime as dt
 import os
 from pathlib import Path
 
-from kagi import audit, inventory, machine, ports, report, scan, tokens
+from kagi import admin, audit, inventory, machine, ports, report, scan, tokens
 
 SEED_COLOR = "#5B7A3A"  # seed の theme と同じ種の色
 FONT = "Roboto"  # Flet 1.1 の既定の字体は日本語の字形を持たない（seed の theme.py と同じ理由）
@@ -436,6 +437,10 @@ def make_main(d: Path):
 
         def switch(view: str):
             async def h(e) -> None:
+                if st["view"] != view:
+                    g["new"], g["confirm"] = None, None  # 出した token は一度だけ。画面を移ったら消す
+                    if view == "gate":
+                        g["loaded"] = False  # 開くたびに読み直す
                 st["view"] = view
                 render()
 
@@ -647,7 +652,490 @@ def make_main(d: Path):
             toast(f"足した: {fp}")
             render()
 
+        # ---- 人の出入り（seed のサーバーの門） ----
+
+        g: dict = {"data": None, "error": None, "loaded": False, "new": None, "confirm": None, "conns": {}}
+        g["replacing"], g["touched"], g["scope"] = False, set(), "member"
+        g_url = field("サーバーの URL（https://…）", 320)
+        g_token = field("管理者の token", 320, password=True)
+        t_name = field("渡す相手の名前（必須）", 220)
+        t_scope = ft.Dropdown(
+            label="できる事",
+            value="member",
+            options=[ft.DropdownOption(key=s, text=admin.SCOPE_LABEL[s]) for s in admin.SCOPES],
+            dense=True,
+            width=260,
+        )
+        t_days = field("期限（日。1〜365）", 150, value=str(admin.default_days("member")))
+        t_note = field("覚え書き", 260)
+        s_fields = {k: field(label, 220) for k, label in admin.SECRET_FIELDS}
+        s_fields["expires"].label = "期限（2027-11-06 の形）"
+        for k in ("where", "role", "lost", "leaked"):
+            s_fields[k].width = 420
+
+        def conn() -> admin.Conn | None:
+            try:
+                return admin.load_conn(d)
+            except inventory.Refused:
+                return None
+
+        def client() -> admin.Client:
+            c = admin.load_conn(d)
+            if c is None:
+                raise inventory.Refused("繋ぐ先が入っていない（上の「繋ぐ先」）")
+            return admin.Client(c)
+
+        def overview() -> dict | None:
+            return (g["data"] or {}).get("overview")
+
+        def form_check() -> None:
+            errs, ok = admin.check_token_form(t_name.value or "", t_scope.value or "", t_days.value or "")
+            t_name.error = errs.get("name") if "name" in g["touched"] else None
+            t_days.error = errs.get("days")
+            issue_btn.disabled = ok is None
+
+        async def form_changed(e) -> None:
+            g["touched"].add("name" if e.control is t_name else "days")
+            form_check()
+            page.update()
+
+        async def scope_changed(e) -> None:
+            new = t_scope.value or "member"
+            if (t_days.value or "").strip() == str(admin.default_days(g["scope"])):
+                t_days.value = str(
+                    admin.default_days(new)
+                )  # 書き換えていなければ既定を合わせる（管理者は短く）
+            g["scope"] = new
+            form_check()
+            page.update()
+
+        t_name.on_change = form_changed
+        t_days.on_change = form_changed
+        t_scope.on_select = scope_changed
+
+        async def gate_load() -> None:
+            try:
+                g["data"] = await asyncio.to_thread(admin.load_all, client())
+                g["error"] = None
+            except (admin.AdminError, inventory.Refused) as ex:
+                g["error"] = str(ex)
+            g["loaded"] = True
+            render()
+
+        async def gate_reload(e=None) -> None:
+            g["loaded"], g["new"], g["conns"] = False, None, {}
+            render()
+
+        def asking(key) -> bool:
+            return g["confirm"] == key
+
+        def twice(key):
+            """二度押しの釦の手。一度目は印だけ、二度目で走らせる。"""
+
+            def wrap(fn):
+                async def h(e) -> None:
+                    if not admin.second_press(g, key):
+                        render()
+                        return
+                    try:
+                        msg = await fn()
+                    except (admin.AdminError, inventory.Refused) as ex:
+                        toast(str(ex))
+                        render()
+                        return
+                    if msg:
+                        toast(msg)
+                    await gate_reload()
+
+                return h
+
+            return wrap
+
+        def sure_button(label: str, sure: str, key, fn, icon=None) -> ft.Control:
+            b = ft.FilledButton if asking(key) else ft.TextButton
+            return b(sure if asking(key) else label, icon=icon, on_click=twice(key)(fn))
+
+        async def save_conn(e) -> None:
+            try:
+                admin.save_conn(d, g_url.value or "", g_token.value or "")
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            g_token.value = ""  # 欄に残さない
+            g["replacing"] = False
+            toast("保存した（持ち主だけが読める形）")
+            await gate_reload()
+
+        async def replace_conn(e) -> None:
+            g["replacing"] = not g["replacing"]
+            render()
+
+        async def forget() -> None:
+            admin.forget_conn(d)
+            g["data"] = None
+            return "繋ぐ先を外した"
+
+        def to_inventory(prefill: dict):
+            async def h(e) -> None:
+                for k, f in s_fields.items():
+                    f.value, f.error = prefill.get(k, ""), None
+                st["view"] = "other"
+                render()
+
+            return h
+
+        async def do_issue(e) -> None:
+            try:
+                code, msg = await asyncio.to_thread(
+                    admin.issue_token,
+                    d,
+                    client(),
+                    t_name.value or "",
+                    t_scope.value or "",
+                    t_days.value or "",
+                    t_note.value or "",
+                )
+            except (admin.AdminError, inventory.Refused) as ex:
+                toast(str(ex))
+                return
+            name = (t_name.value or "").strip()
+            t_name.value = t_note.value = ""
+            g["touched"] = set()
+            await gate_reload()
+            g["new"] = {"name": name, "code": code}  # 一度だけ見せる（読み直すか画面を移ると消える）
+            if msg:
+                toast(msg)
+            render()
+
+        issue_btn = ft.FilledButton("出す", icon=ft.Icons.KEY_OUTLINED, on_click=do_issue, disabled=True)
+
+        async def copy_new(e) -> None:
+            if g["new"]:
+                await page.clipboard.set(g["new"]["code"])
+                toast("写した。その人にだけ渡す")
+
+        async def close_new(e) -> None:
+            g["new"] = None
+            render()
+
+        def opener(url: str):
+            async def h(e) -> None:
+                await ft.UrlLauncher().launch_url(url)
+
+            return h
+
+        def shower(rid: str):
+            async def h(e) -> None:
+                if rid in g["conns"]:
+                    g["conns"].pop(rid)
+                    render()
+                    return
+                try:
+                    g["conns"][rid] = await asyncio.to_thread(lambda: client().connections(rid))
+                except (admin.AdminError, inventory.Refused) as ex:
+                    toast(str(ex))
+                    return
+                render()
+
+            return h
+
+        def paused_banner() -> list[ft.Control]:
+            o = overview()
+            if not (o and o.get("paused")):
+                return []
+            c = conn()
+            text = f"{c.host if c else 'seed のサーバー'} は受け付けを止めています。「人の出入り」の「受け付けを再開する」で戻す。"
+            return [
+                ft.Container(
+                    ft.Row(
+                        [
+                            ft.Icon(ft.Icons.PAUSE, color=ft.Colors.ON_ERROR_CONTAINER),
+                            ft.Text(
+                                text,
+                                color=ft.Colors.ON_ERROR_CONTAINER,
+                                weight=ft.FontWeight.W_600,
+                                expand=True,
+                            ),
+                        ]
+                    ),
+                    bgcolor=ft.Colors.ERROR_CONTAINER,
+                    padding=12,
+                    border_radius=8,
+                )
+            ]
+
+        def gate_view() -> list[ft.Control]:
+            c = None
+            problem = None
+            try:
+                c = admin.load_conn(d)
+            except inventory.Refused as ex:
+                problem = str(ex)
+            cc: list[ft.Control] = [
+                muted(
+                    "seed のサーバーの管理の口に、管理者の token で入る。token は作業の場所の "
+                    f"{admin.CONN_FILE} に、持ち主だけが読める形（600）で置く。画面には出さない。"
+                    "通すのは https だけ。"
+                )
+            ]
+            if problem:
+                cc.append(err(problem))
+            if c:
+                cc.append(ft.Text(f"サーバー: {c.url}　管理者の token: 入っています", selectable=True))
+                if c.warning:
+                    cc.append(err(f"注意: {c.warning}"))
+                cc.append(
+                    ft.Row(
+                        [
+                            ft.OutlinedButton(
+                                "入れ替える", icon=ft.Icons.EDIT_OUTLINED, on_click=replace_conn
+                            ),
+                            sure_button(
+                                "外す", "本当に外す", ("forget", ""), forget, ft.Icons.DELETE_OUTLINE
+                            ),
+                        ],
+                        wrap=True,
+                    )
+                )
+            if not c or g["replacing"]:
+                if c and not g_url.value:
+                    g_url.value = c.url
+                cc += [
+                    ft.Row([g_url, g_token], wrap=True),
+                    ft.FilledButton("保存", icon=ft.Icons.SAVE, on_click=save_conn),
+                ]
+            if c and not admin.has_admin_token_row(d):
+                cc += [
+                    err(
+                        "在庫表に一件足してください（名、置き場、持つ人、役、期限、なくした時、漏れた時）。"
+                        "この token も、持つ秘密の一つ（K-14）。"
+                    ),
+                    ft.OutlinedButton(
+                        "在庫表に一件足す",
+                        icon=ft.Icons.ADD,
+                        on_click=to_inventory(admin.admin_token_prefill(d, c)),
+                    ),
+                ]
+            out: list[ft.Control] = [card("繋ぐ先", cc)]
+            if not c:
+                return out
+            if not g["loaded"]:
+                out.append(ft.Row([ft.ProgressRing(width=16, height=16), muted("サーバーに尋ねている…")]))
+                page.run_task(gate_load)
+                return out
+            if g["error"]:
+                out += [
+                    err(g["error"]),
+                    ft.OutlinedButton("読み直す", icon=ft.Icons.REFRESH, on_click=gate_reload),
+                ]
+                return out
+            data = g["data"] or {}
+            o, au = data.get("overview") or {}, data.get("audit") or {}
+
+            out.append(card("今の状態", [lines(admin.state_rows(o), 140)]))
+
+            async def pause() -> str | None:
+                _now, msg = await asyncio.to_thread(admin.set_paused, d, client(), not o.get("paused"))
+                return msg
+
+            at: list[ft.Control] = []
+            for text, cmds in admin.attention(o, au):
+                at.append(err(text))
+                if cmds:
+                    cmd = "\n".join(cmds)
+                    at.append(
+                        ft.Row(
+                            [
+                                ft.Container(mono(cmd), expand=True),
+                                ft.IconButton(ft.Icons.CONTENT_COPY, tooltip="写す", on_click=copier(cmd)),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                        )
+                    )
+            if not at:
+                at.append(ft.Text("ありません。"))
+            if o.get("paused"):
+                at.append(
+                    sure_button(
+                        "受け付けを再開する", "本当に再開する", ("pause", ""), pause, ft.Icons.PLAY_ARROW
+                    )
+                )
+            else:
+                at.append(
+                    sure_button("受け付けを止める", "本当に止める", ("pause", ""), pause, ft.Icons.PAUSE)
+                )
+            out.append(card("気を付ける事", at))
+
+            tk: list[ft.Control] = []
+            if g["new"]:
+                tk.append(
+                    ft.Container(
+                        ft.Column(
+                            [
+                                ft.Text(
+                                    f"{g['new']['name']} の token。出るのはこの一度だけ。その人にだけ渡す。"
+                                    "どこにも書き写さない。"
+                                ),
+                                ft.Row(
+                                    [
+                                        ft.Text(
+                                            g["new"]["code"],
+                                            font_family="monospace",
+                                            size=16,
+                                            selectable=True,
+                                        ),
+                                        ft.IconButton(
+                                            ft.Icons.CONTENT_COPY, tooltip="写す", on_click=copy_new
+                                        ),
+                                        ft.TextButton("渡した（消す）", on_click=close_new),
+                                    ],
+                                    wrap=True,
+                                ),
+                            ],
+                            spacing=6,
+                        ),
+                        bgcolor=ft.Colors.SECONDARY_CONTAINER,
+                        padding=12,
+                        border_radius=8,
+                    )
+                )
+            form_check()
+            tk += [
+                muted("期限は 1〜365 日。管理者に出す物は短く（既定 30 日）。"),
+                ft.Row([t_name, t_scope, t_days, t_note], wrap=True),
+                issue_btn,
+            ]
+            rows = admin.token_rows(data.get("tokens") or [])
+            for r in rows:
+                head = f"{r['name']}　{r['scope']}　{r['state']}"
+                line: list[ft.Control] = [
+                    ft.Column(
+                        [
+                            ft.Text(head, selectable=True, color=ft.Colors.ERROR if r["soon"] else None),
+                            muted("　".join(x for x in (r["period"], r["note"]) if x)),
+                        ],
+                        spacing=2,
+                        expand=True,
+                    )
+                ]
+                if r["live"]:
+
+                    async def rv(name=r["name"]) -> str | None:
+                        _n, msg = await asyncio.to_thread(admin.revoke_token, d, client(), name)
+                        return msg
+
+                    line.append(sure_button("取り消す", "本当に取り消す", ("revoke", r["name"]), rv))
+                tk.append(ft.Row(line, vertical_alignment=ft.CrossAxisAlignment.START))
+            if not rows:
+                tk.append(muted("出した token はまだ無い。"))
+
+            async def rv_all() -> str | None:
+                n, msg = await asyncio.to_thread(admin.revoke_all_tokens, d, client())
+                return "　".join(x for x in (f"{n} 件を取り消した", msg) if x)
+
+            tk.append(
+                sure_button(
+                    "token を全部取り消す", "本当に全部取り消す（自分の分は残す）", ("revoke_all", ""), rv_all
+                )
+            )
+            out.append(card("人に渡す token", tk))
+
+            rec: list[ft.Control] = []
+            for r in admin.record_rows(data.get("records") or []):
+                rid = r["id"]
+
+                async def wd(rid=rid) -> str | None:
+                    return await asyncio.to_thread(admin.withdraw_record, d, client(), rid)
+
+                btns: list[ft.Control] = []
+                if r["url"]:
+                    btns.append(
+                        ft.TextButton("頁を開く", icon=ft.Icons.OPEN_IN_NEW, on_click=opener(r["url"]))
+                    )
+                btns += [
+                    ft.TextButton(
+                        "寄せられた一言を閉じる" if rid in g["conns"] else "寄せられた一言を見る",
+                        on_click=shower(rid),
+                    ),
+                    sure_button("取り下げる", "本当に取り下げる", ("withdraw", rid), wd),
+                ]
+                one: list[ft.Control] = [
+                    ft.Text(r["head"] or rid, selectable=True),
+                    muted(r["meta"]),
+                    ft.Row(btns, wrap=True, spacing=4),
+                ]
+                if rid in g["conns"]:
+                    cs = admin.connection_rows(g["conns"][rid])
+                    for cn in cs:
+
+                        async def rm(rid=rid, name=cn["name"]) -> str | None:
+                            return await asyncio.to_thread(admin.remove_connection, d, client(), rid, name)
+
+                        one.append(
+                            ft.Row(
+                                [
+                                    ft.Column(
+                                        [muted(cn["head"]), ft.Text(cn["word"], selectable=True)],
+                                        spacing=0,
+                                        expand=True,
+                                    ),
+                                    sure_button(
+                                        "消す", "本当に消す", ("connection", f"{rid}/{cn['name']}"), rm
+                                    ),
+                                ],
+                                vertical_alignment=ft.CrossAxisAlignment.START,
+                            )
+                        )
+                    if not cs:
+                        one.append(muted("寄せられた一言はありません。"))
+                rec.append(ft.Column(one, spacing=4))
+            out.append(card("公開された記録", rec or [muted("まだありません。")]))
+
+            av = admin.audit_view(au)
+            ac: list[ft.Control] = [err(av["head"]) if av["tampered"] else muted(av["head"])]
+            ac += [
+                ft.Column(
+                    [
+                        ft.Text(f"{ts}　{who}　{what}", selectable=True, size=14),
+                        *([muted(det)] if det else []),
+                    ],
+                    spacing=0,
+                )
+                for ts, who, what, det in av["rows"]
+            ] or [muted("まだありません。")]
+            out.append(card("操作の記録（サーバー）", ac))
+            out.append(
+                muted(
+                    "ここでした操作は、kagi の記録（audit.log）にも一行ずつ残る（誰に何を、まで。値は書かない）。"
+                )
+            )
+            out.append(ft.OutlinedButton("読み直す", icon=ft.Icons.REFRESH, on_click=gate_reload))
+            return out
+
         # ---- 在庫・口・走査・記録・報告 ----
+
+        async def do_add_secret(e) -> None:
+            vals = {k: f.value or "" for k, f in s_fields.items()}
+            try:
+                existing = inventory.load(d / "inventory.toml") if (d / "inventory.toml").exists() else []
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            errs = admin.check_secret_form(vals, existing)
+            for k, f in s_fields.items():
+                f.error = errs.get(k)
+            if errs:
+                page.update()
+                return
+            try:
+                sid = admin.add_secret(d, vals)
+            except inventory.Refused as ex:
+                toast(str(ex))
+                return
+            for f in s_fields.values():
+                f.value = ""
+            toast(f"在庫表に足した: {sid}")
+            render()
 
         def other_view() -> list[ft.Control]:
             c = build_cards(d, st["ss"], st["scan"], host=host())
@@ -656,6 +1144,27 @@ def make_main(d: Path):
             inv_c: list[ft.Control] = [err(inv["error"])] if inv["error"] else [ft.Text(inv["summary"])]
             if inv["rows"]:
                 inv_c.append(table(inv["columns"], inv["rows"]))
+
+            sk = admin.server_keys_view(d, overview())
+            sk_c: list[ft.Control] = [
+                muted(
+                    "seed のサーバーが外のサービスを呼ぶ鍵（Claude、Pl@ntNet）。サーバーには在るか無いかだけを尋ねる。"
+                    "在庫表の行は、名か置き場に anthropic・claude、plantnet の語を含む物を、その鍵の一件と見る。"
+                )
+            ]
+            if not sk["seen"]:
+                sk_c.append(
+                    muted("サーバーの在るか無いかは、まだ尋ねていない（「人の出入り」を開くと読む）。")
+                )
+            sk_c.append(table(sk["columns"], sk["rows"]))
+            sk_c += [err(f"直す: {x}") for x in sk["fixes"]]
+            sk_c += [muted(f"見るだけ: {x}") for x in sk["notes"]]
+            add_c: list[ft.Control] = [
+                muted("値の欄は無い。値らしい物（長い乱数、sk- で始まる物など）を貼ると断る。"),
+                ft.Row([s_fields["id"], s_fields["holder"], s_fields["expires"]], wrap=True),
+                *[ft.Row([s_fields[k]], wrap=True) for k in ("where", "role", "lost", "leaked")],
+                ft.FilledButton("足す", icon=ft.Icons.ADD, on_click=do_add_secret),
+            ]
 
             prt_c: list[ft.Control] = [
                 muted("機械の画面の「写しを取る」でも口は突き合わせる。ここは ss の写しを手で渡す時。"),
@@ -711,6 +1220,8 @@ def make_main(d: Path):
                 rep_c += [muted(f"書いた: {path}"), mono(text)]
             return [
                 card("在庫", inv_c),
+                card("サーバーの外の鍵（在庫表と突き合わせ）", sk_c),
+                card("在庫表に一件足す", add_c),
                 card("口", prt_c),
                 card("走査", scn_c),
                 card("記録", aud_c),
@@ -723,16 +1234,24 @@ def make_main(d: Path):
                 ("machines", "機械", ft.Icons.DNS_OUTLINED),
                 ("keys", "鍵", ft.Icons.KEY_OUTLINED),
                 ("other", "在庫・口・記録", ft.Icons.FACT_CHECK_OUTLINED),
+                ("gate", "人の出入り", ft.Icons.PEOPLE_OUTLINE),
             ):
                 btn = ft.FilledTonalButton if st["view"] == key else ft.TextButton
                 tabs.append(btn(label, icon=icon, on_click=switch(key)))
-            view = {"machines": machines_view, "keys": keys_view_controls, "other": other_view}[st["view"]]()
+            views = {
+                "machines": machines_view,
+                "keys": keys_view_controls,
+                "other": other_view,
+                "gate": gate_view,
+            }
+            view = views[st["view"]]()
             body.controls = [
                 ft.Text(
                     "kagi — 係の机", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, weight=ft.FontWeight.W_600
                 ),
                 muted(f"作業の場所: {d}"),
-                ft.Row(tabs),
+                *paused_banner(),
+                ft.Row(tabs, wrap=True),
                 *view,
                 muted("鍵の値はこの画面に出ない（K-13）。kagi は機械を変えない。"),
             ]
