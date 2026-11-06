@@ -655,8 +655,6 @@ def item_controls(app: App, item: dict) -> list[ft.Control]:
         side += reply_controls(app, item["text"]) if item.get("reply") else [words_text(item["text"])]
     if item.get("photos"):
         side.append(photos_strip(app, item["photos"], photo_index(app.folder), photo.SMALL))
-    if item.get("land"):
-        side += land_controls(app, item["land"])
     if item.get("places"):
         side += places_controls(app)
     if item.get("examples"):
@@ -725,10 +723,6 @@ def conversation(app: App) -> list[ft.Control]:
     all_turns = turns(app.folder)
     if not all_turns:
         out.append(claude_side([words_text(t("talk_hello")), words_text(first_photo_text(app))]))
-    if app.folder.place_data() or land.frames(
-        app.folder
-    ):  # 一番上に、この土地の成り立ち（昔 → 今 → 自分の観察）
-        out.append(claude_side(land_controls(app, "top")))
     for it in items:
         if it.get("after") is None:
             out += item_controls(app, it)
@@ -845,6 +839,12 @@ async def run_example(app: App, key: str) -> None:
         await add_photos(app, "")
         return
     phrase = app.t(f"ex_{key}")
+    if key in ("landform", "soil_q"):  # 打った言葉と同じに Claude へ。土地の画面は「この土地」
+        await send(app, phrase, as_example=False)
+        return
+    if key == "past":
+        await app.go("/p/land")
+        return
     if ex.needs_claude and can_talk(app):
         await send(app, phrase, as_example=False)
         return
@@ -861,11 +861,6 @@ async def run_example(app: App, key: str) -> None:
         add(app, who="claude", text=app.t("ex_more_intro"), examples=examples(app, everything=True))
     elif key == "name_it":
         await name_latest(app)
-    elif key in ("landform", "soil_q"):
-        if await place_data(app):
-            add(app, who="claude", land="all" if key == "landform" else "soil")
-    elif key == "past":
-        await past(app)
     app.refresh()
 
 
@@ -1172,70 +1167,3 @@ async def place_data(app: App, quiet: bool = False) -> bool:
     elif not quiet:
         say(app, app.t("land_none"))
     return bool(lines)
-
-
-async def past(app: App) -> None:
-    """昔の地図と空中写真。まだ無ければ作る（seed origin の絵だけ。動画は作らない）。"""
-    if not land.frames(app.folder):
-        if land.center(app.folder) is None:
-            say(app, app.t("land_need_photo"))
-            return
-        app.state["pending"] = {"text": "", "photos": [], "word": "land_fetching"}
-        app.refresh()
-        try:
-            await asyncio.to_thread(land.make_frames, app.folder, app.lang)
-        except Exception as ex:  # noqa: BLE001 — 地図の元に届かない、Pillow が無い、など。一文で見せる
-            say(app, app.t("land_past_failed", detail=type(ex).__name__))
-            return
-        finally:
-            app.state.pop("pending", None)
-    if land.frames(app.folder):
-        add(app, who="claude", land="past")
-    else:
-        say(app, app.t("land_past_none"))
-
-
-def frame_items(frames: list[land.Frame]) -> list[tuple[Path, str]]:
-    return [(f.path, f.title) for f in frames]
-
-
-def land_controls(app: App, mode: str) -> list[ft.Control]:
-    """この土地の成り立ち。mode: top（やり取りの一番上）、all、soil、past。"""
-    t = app.t
-    groups = land.summary(app.folder, app.lang)
-    frames = land.frames(app.folder)
-    out: list[ft.Control] = []
-    if mode == "past":
-        out.append(theme.subheading(t("land_past")))
-        out.append(photo.plain_tiles(app, frame_items(frames)))
-        return out
-    if mode == "soil":
-        groups = [g for g in groups if g.key == "soil"]
-        frames = [f for f in frames if f.name == "soil"]
-    else:
-        out.append(theme.subheading(t("land_title")))
-    opened: set[str] = app.state.setdefault("talk_open", set())
-    full = mode != "top" or "land" in opened
-    hidden = 0
-    for g in groups:
-        out.append(ft.Text(t(f"land_{g.key}"), weight=ft.FontWeight.W_600, size=theme.BODY_SIZE))
-        shown = g.facts if full else g.facts[:1]
-        hidden += len(g.facts) - len(shown)
-        for f in shown:
-            out.append(words_text(f.body))
-            if f.source:
-                out.append(theme.muted(f.source))
-    if not groups:
-        out.append(words_text(t("land_none")))
-    if hidden:
-
-        def more(e) -> None:
-            opened.add("land")
-            app.refresh()
-
-        out.append(ft.TextButton(t("talk_more", n=hidden), on_click=more))
-    if frames:
-        if mode != "soil":
-            out.append(theme.muted(t("land_past")))
-        out.append(photo.plain_tiles(app, frame_items(frames), photo.SMALL * 0.9))
-    return out

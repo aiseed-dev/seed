@@ -23,7 +23,7 @@ import flet as ft
 from seed import fields as fields_mod
 from seed import lang
 from seed import settings as settings_mod
-from seed.app import gallery, talk, theme
+from seed.app import gallery, plugins, talk, theme
 from seed.app.strings import s
 from seed.cli import prepare
 from seed.client import Client
@@ -51,6 +51,7 @@ class Screen:
     word: str
     icon: ft.IconData
     build: Callable[[App], ft.View]
+    title: dict[str, str] | None = None  # プラグインの画面は、言葉の鍵ではなくこの名を使う
 
 
 SCREENS = [
@@ -78,6 +79,8 @@ class App:
         self.folder = self.settings.records
         prepare(self.folder)  # 手引きの写しも（もうあれば触らない）
         self.lang = self.settings.language
+        self.plugins = plugins.load(self.folder)
+        self._plugins_stamp = plugins.stamp(self.folder)
         self.state: dict = {}  # この窓の間だけ残す物（やり取りに足した物、撮っている間の物）。畑が替われば空に
 
     # --- 畑（記録の形 §19。切り替えは「話す」の設定の札から）
@@ -146,8 +149,26 @@ class App:
         return f"~/{root.relative_to(home).as_posix()}" if root.is_relative_to(home) else str(root)
 
     def screens(self) -> list[Screen]:
-        """切り替えの並び。"""
-        return SCREENS
+        """切り替えの並び。話す、写真、同梱のプラグイン、本人のプラグイン。"""
+        return SCREENS + [
+            Screen(p.route, p.name, p.icon, self._plugin_builder(p), p.title) for p in self.plugins
+        ]
+
+    def screen_name(self, sc: Screen) -> str:
+        if sc.title is not None:
+            return sc.title.get(self.lang) or sc.title.get("en") or next(iter(sc.title.values()))
+        return self.t(sc.word)
+
+    def _plugin_builder(self, p: plugins.Plugin) -> Callable[[App], ft.View]:
+        def build(app: App) -> ft.View:
+            try:
+                controls = p.build(app)
+            except Exception as ex:
+                log.exception("プラグインが動かない: %s", p.name)
+                controls = [theme.muted(app.t("plugin_failed", name=p.name, detail=type(ex).__name__))]
+            return app.view(p.route, controls)
+
+        return build
 
     def view(self, route: str, controls: list[ft.Control]) -> ft.View:
         """縦に流れる画面（写真、撮る）。"""
@@ -170,11 +191,11 @@ class App:
         return ft.View(
             route=route,
             appbar=ft.AppBar(
-                title=ft.Text(f"seed — {self.t(screens[idx].word)}"),
+                title=ft.Text(f"seed — {self.screen_name(screens[idx])}"),
                 actions=[
                     ft.IconButton(
                         sc.icon,
-                        tooltip=self.t(sc.word),
+                        tooltip=self.screen_name(sc),
                         selected=i == idx,
                         icon_color=ft.Colors.PRIMARY if i == idx else None,
                         on_click=self._nav_to(sc.route),
@@ -194,7 +215,15 @@ class App:
             body.width = theme.fit_width(getattr(self.page, "width", None))
             self.page.update()
 
+    def reload_plugins(self) -> None:
+        """話す間に Claude Code が <フォルダー>/plugins/ に書いた物を、開き直さずに拾う。"""
+        now = plugins.stamp(self.folder)
+        if now != self._plugins_stamp:
+            self._plugins_stamp = now
+            self.plugins = plugins.load(self.folder)
+
     def route_change(self, e=None, path: str | None = None) -> None:
+        self.reload_plugins()
         path = path or urlparse(self.page.route or "/").path or "/"
         sc = next((sc for sc in self.screens() if sc.route == path), SCREENS[0])  # 知らない道は「話す」へ
         try:

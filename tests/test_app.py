@@ -142,8 +142,8 @@ def run(coro):
 def test_screens_build_on_every_version(app, seedfolder, tmp_path, web, platform):
     observe(seedfolder, tmp_path, NEW_READING)
     app.page.web, app.page.platform = web, platform
-    assert [sc.route for sc in app.screens()] == ["/", "/photos"]
-    for path in ("/", "/photos"):
+    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land"]
+    for path in ("/", "/photos", "/p/land"):
         app.route_change(path=path)
         v = app.page.views[-1]
         assert v.route == path and any(w.startswith("seed — ") for w in texts(v))
@@ -456,24 +456,60 @@ def test_land_summary_in_four_groups_without_fine_coords(app, seedfolder):
         groups[0].facts[2].body == "氾濫平野 … の辺り"
         and groups[0].facts[2].source == "見本の地形分類（2026-11-05）"
     )
-    # やり取りの一番上に、まとめた形で（各組の頭の一行。「続きを読む」で全部）
-    words = texts(talk.view(app))
-    assert (
-        "この土地の成り立ち" in words
-        and "水田化褐色低地土" in words
-        and "後期更新世の段丘堆積物" not in words
-    )
+    # 「この土地」の画面に、四つの組の全部（出典つき）。座標は細かく出さない
+    words = texts(land_view(app))
+    assert "この土地の成り立ち" in words and "水田化褐色低地土" in words
+    assert "後期更新世の段丘堆積物" in words and "見本の土壌図（2026-11-05）" in words
     assert not any("34.05123" in w for w in words)
-    app.state["talk_open"] = {"land"}
-    assert "後期更新世の段丘堆積物" in texts(talk.view(app))
+    # 話すの上にはもう出ない
+    assert "水田化褐色低地土" not in texts(talk.view(app))
 
 
-def test_land_is_on_top_before_the_first_observation(app, seedfolder, tmp_path):
+def land_view(app):
+    """プラグイン「この土地」の画面を、画面の並び（screens）から組む。"""
+    (sc,) = [sc for sc in app.screens() if sc.route == "/p/land"]
+    return sc.build(app)
+
+
+def test_land_is_not_in_the_talk_screen(app, seedfolder, tmp_path):
     observe(seedfolder, tmp_path, NEW_READING)
     app.folder.add_place_data(PLACE)
     conv = talk.conversation(app)
-    first, second = texts(conv[0]), texts(conv[1])
-    assert "この土地の成り立ち" in first and "2026-11-05 14:21" in second
+    assert all("この土地の成り立ち" not in texts(c) for c in conv)
+    assert "2026-11-05 14:21" in texts(conv[0])
+    v = land_view(app)
+    assert v.route == "/p/land" and "seed — この土地" in texts(v)
+
+
+def test_land_screen_buttons(app, seedfolder, tmp_path, monkeypatch):
+    from seed import land
+    from seed import lookup as L
+
+    # 位置の入った写真が無い
+    assert "位置の入った写真を一枚送ると、この土地を調べられます。" in texts(land_view(app))
+    observe(seedfolder, tmp_path, NEW_READING)
+    no_ai(monkeypatch)
+    words = texts(land_view(app))
+    assert "この場所の資料を調べる" in words and "昔の地図と空中写真を取って来る" in words
+    buttons = {b.content: b for b in walk(land_view(app)) if isinstance(b, ft.TextButton)}
+    asked = []
+    monkeypatch.setattr(L, "available", lambda: True)
+    monkeypatch.setattr(L, "data_lines", lambda lat, lon, lg: asked.append(round(lat)) or PLACE)
+    run(buttons["この場所の資料を調べる"].on_click(None))
+    assert asked == [34] and app.folder.place_data()
+    made = []
+
+    def make(folder, language, fetch=None):
+        made.append(language)
+        fake_frames(seedfolder)
+        return land.frames(folder)
+
+    monkeypatch.setattr(land, "make_frames", make)
+    run(buttons["昔の地図と空中写真を取って来る"].on_click(None))
+    assert made == ["ja"]
+    words = texts(land_view(app))
+    assert "題 photo-1961" in words and "昔の地図と空中写真（地図を先に、空中写真は古い順）" in words
+    assert "昔の地図と空中写真を取って来る" not in words
 
 
 def test_origin_frames_old_to_new(app, seedfolder):
@@ -490,41 +526,28 @@ def test_origin_frames_old_to_new(app, seedfolder):
         "photo-latest",
     ]  # 本人の写真は入れない
     assert got[0].title == "題 std-z14"
-    words = texts(talk.view(app))
+    words = texts(land_view(app))
     assert "題 photo-1936" in words and "題 own" not in words
 
 
-def test_land_examples_do_not_call_ai(app, seedfolder, tmp_path, monkeypatch):
-    from seed import land
-    from seed import lookup as L
-
+def test_land_examples(app, seedfolder, tmp_path, monkeypatch):
+    """「この土地の成り立ち」「土は？」は、打った言葉と同じに話す道へ。「昔は」は土地の画面へ。"""
     observe(seedfolder, tmp_path, NEW_READING)
-    no_ai(monkeypatch)
-    asked = []
-    monkeypatch.setattr(L, "available", lambda: True)
-    monkeypatch.setattr(L, "data_lines", lambda lat, lon, lg: asked.append((round(lat), round(lon))) or PLACE)
+    monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
+    calls = []
+
+    def fake_talk(folder, text, language, session=None):
+        calls.append(text)
+        return "答えです", None
+
+    monkeypatch.setattr(local, "talk", fake_talk)
     run(talk.run_example(app, "landform"))
-    assert asked == [(34, 134)] and app.folder.place_data()  # 照会の結果が無ければ、照会する（AI 無し）
-    assert (
-        app.state["talk"][-2]["text"] == "この土地の成り立ちを教えて"
-        and app.state["talk"][-1]["land"] == "all"
-    )
-    run(talk.send(app, "土はどんな土？"))
-    assert app.state["talk"][-1]["land"] == "soil" and len(asked) == 1
-    made = []
-
-    def make(folder, language, fetch=None):
-        made.append(language)
-        fake_frames(seedfolder)
-        return land.frames(folder)
-
-    monkeypatch.setattr(land, "make_frames", make)
+    run(talk.run_example(app, "soil_q"))
+    assert calls == ["この土地の成り立ちを教えて", "土はどんな土？"]
+    assert all("land" not in it for it in app.state["talk"])
     run(talk.run_example(app, "past"))
-    assert made == ["ja"] and app.state["talk"][-1]["land"] == "past"
-    run(talk.run_example(app, "past"))
-    assert made == ["ja"]  # もう在れば作らない
-    words = texts(talk.view(app))
-    assert "題 photo-1961" in words and "昔の地図と空中写真（地図を先に、空中写真は古い順）" in words
+    assert app.page.route == "/p/land" and app.page.views[-1].route == "/p/land"
+    assert len(calls) == 2
 
 
 def test_land_lines_are_shown_apart_from_photo_lines(app, seedfolder, tmp_path):
