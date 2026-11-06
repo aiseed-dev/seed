@@ -62,7 +62,47 @@ cd seed
 python -m venv .venv && .venv/bin/pip install -e ".[app]"
 ```
 
-Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHub だけです。** PyPI にもアプリのストアにも出しません。使う人は、フォークして自分の物にします（下の「機能は自分で足す」）。スマートフォンのアプリ（APK）は、自分のフォークから `flet build apk` で作るか、作者が GitHub の Releases に置いた物を入れます。
+Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHub だけです。** PyPI にもアプリのストアにも出しません。使う人は、フォークして自分の物にします（下の「機能は自分で足す」）。
+
+### 動かす
+
+PC の窓で開くには、これだけです。記録は `~/seed/` に出来ます。
+
+```bash
+.venv/bin/seed app
+```
+
+Flet で立ち上げると、コードを直したその場で画面が変わります（試す時はこちら）。`--web` を付けるとブラウザで開きます。
+
+```bash
+.venv/bin/flet run src/seed_mobile.py
+```
+
+スマートフォンで試すには、PC とスマートフォンを同じ Wi-Fi に置き、Google Play か App Store の「Flet」アプリを入れて、端末に出る QR を読みます（iPhone は `--ios`）。APK を作らずに、PC の seed がそのまま開きます。
+
+```bash
+.venv/bin/flet run --android src/seed_mobile.py
+```
+
+テストは pytest です（553 本、15 秒ほど）。
+
+```bash
+.venv/bin/pip install -e ".[dev]" && .venv/bin/pytest -q
+```
+
+### アプリにする
+
+Flutter の SDK（https://flutter.dev）が要ります。Android は Android Studio（Android SDK）も。iPhone と Mac 版は macOS と Xcode の上で、Windows 版は Windows の上で作ります。
+
+Android（作者が Linux で作った物。2 分ほど、64 MB。出来た APK をスマートフォンに入れます）:
+
+```bash
+.venv/bin/flet build apk --arch arm64-v8a
+```
+
+出来る場所は `build/apk/seed-farm.apk`。PC 版は同じ形で `flet build linux`、`flet build windows`、`flet build macos`（`build/<os>/` に出来ます）。iPhone は [docs/iPhone 版.md](docs/iPhone%20版.md)。アプリの名と入口は `pyproject.toml` の `[tool.flet]` と `src/seed_mobile.py` です。
+
+作者が確かめたのは、Linux での `seed app`、`flet run`、`flet build apk` です。Play の「Flet」アプリが Flet 1.1 の seed を開くか、Windows と Mac のビルドは、まだ確かめていません。
 
 アプリ（`seed app`。PC 版とスマートフォン）の画面は二つです。**話す**は Claude Code の画面のようなやり取りで、写真を送ると Claude が今日の一枚を大きく出し、見つけた事を言い、一つ問い返し、次に撮るとよい物を言います。一番上には、座標から引いたこの土地の成り立ち（地形、土、水と災害の区域、歴史、昔の地図と空中写真）が並びます。違う所や細かい頼み事は、下の一行に言葉で書きます。PC では手元の Claude Code が直します。Claude Code が無い PC とスマートフォンでも、自分の Claude の鍵（Anthropic の API の鍵。費用は自分）を設定から入れるか、招待コードでサーバーを通すと、同じ事がアプリの中でできます（Claude に記録のフォルダーの中だけに効く道具を渡し、アプリが端末の中で動かす。公開は全文を見て「出す」を押した時だけ送る）。何ができるかは「こういう事ができます」の例で出ます。**写真**は、この畑の写真を日ごとに見渡し、大きく開いて「この草の名前は？」「今日の一枚にする」「この写真を外す」ができます。
 
