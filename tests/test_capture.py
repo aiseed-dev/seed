@@ -71,7 +71,7 @@ def test_strings_exist_in_both_languages():
     from seed.app.strings import s
 
     for word in (
-        "capture_button", "capture_title", "capture_hint", "capture_open", "capture_shoot",
+        "capture_title", "capture_hint", "capture_open", "capture_shoot",
         "capture_waiting", "capture_position_plain", "capture_no_position", "capture_location_denied",
         "capture_no_camera", "capture_remove", "capture_retry_position", "capture_cancel",
     ):  # fmt: skip

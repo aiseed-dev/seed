@@ -38,6 +38,7 @@ COMMENTS = {
     "language": "本人の言葉の言語。無ければ OS の言語",
     "place_level": " / ".join(PLACE_LEVELS),
     "keep": " / ".join(KEEP_LEVELS) + "。どれだけ残すか（seed keep で変える）",
+    "read": "local / server。アプリで写真を読む所。空なら手元の Claude が在ればそれ、無ければサーバー",
     "bulk": "重い物（写真の元 originals/）を置く別の盤の道。空なら記録のフォルダーの中（seed keep --bulk で変える）",
 }
 
@@ -57,6 +58,7 @@ class Settings:
     place_level: str = "city"
     keep: str = "photos"
     bulk: str = ""
+    read: str = ""  # アプリの読み方（local / server）。空なら手元の Claude が在ればそれ
     token: str = ""
     invite: str = ""
     draw_token: str = ""

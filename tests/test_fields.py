@@ -7,9 +7,6 @@ import pytest
 
 from seed import cli
 from seed import fields as fields_mod
-from seed.app.records import row_texts
-from seed.app.strings import s
-from seed.records import Observation
 
 
 def test_missing_list_is_empty(fields_in_tmp):
@@ -124,15 +121,3 @@ def test_cli_without_list_keeps_default(seedfolder, monkeypatch, tmp_path):
     monkeypatch.setenv("SEED_FOLDER", str(seedfolder))
     assert cli.main(["init"]) == 0
     assert (seedfolder / "seed.toml").is_file()
-
-
-def test_records_row_marks_candidate():
-    t = lambda w, **kw: s(w, "ja", **kw)
-    own = Observation(date="2026-11-05", time="14:21:07")
-    cand = Observation(date="2026-11-05", time="15:00:00", kind="candidate")
-    title, _ = row_texts(t, own)
-    assert title == "2026-11-05 14:21:07"
-    title, sub = row_texts(t, cand)
-    assert title.startswith("◇ 候補") and title.endswith("2026-11-05 15:00:00")
-    assert s("candidate", "ja") in sub
-    assert row_texts(lambda w, **kw: s(w, "en", **kw), cand)[0].startswith("◇ candidate")

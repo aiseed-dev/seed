@@ -196,3 +196,17 @@ def test_identify_via_server_parses_plantnet():
 
     r = client(handler).identify([b"\xff\xd8one"])
     assert r.best.scientific == "Solidago altissima" and r.best.score == 0.6
+
+
+def test_lookup_asks_the_existing_route():
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"] = req.url
+        return httpx.Response(
+            200, json={"data": [{"key": "soil", "text": "褐色低地土（出典: 見本、確認日 2026-11-05）"}]}
+        )
+
+    c = Client("http://seed.test/", "tok", "ja", invite="inv-x", transport=httpx.MockTransport(handler))
+    assert c.lookup(34.05, 134.25) == [Line("soil", "褐色低地土（出典: 見本、確認日 2026-11-05）")]
+    assert seen["url"].path == "/api/lookup" and seen["url"].params["invite"] == "inv-x"

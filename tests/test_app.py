@@ -1,23 +1,37 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""画面の組み立ての確認。Flet の page は偽物で、view() が返す物の文を見る（押す操作は見ない）。"""
+"""画面の組み立ての確認。Flet の page は偽物で、view() が返す物の文を見る。
+
+話す（やり取りを記録から組む、送った時の分かれ道、「こういう事ができます」の例、返事の中の写真）、
+写真（大きく開いた所の三つの操作）、Form 形式を残さない事、管理。
+"""
 
 from __future__ import annotations
+
+import asyncio
+import dataclasses
 
 import flet as ft
 import pytest
 
-from seed import cli
-from seed.app import entry, find, observe, plan, publish, records
-from seed.app.main import SCREENS, App
-from seed.records import Observation, Plan
+from seed import album, cli, local
+from seed import highlights as H
+from seed.app import cards, gallery, photo, talk
+from seed.app.main import App
+from seed.records import Line, Observation, Plan, Public
 
 
 class FakePage:
     route = "/"
+    web = False
+    platform = None
+    width = None
+    height = None
 
     def __init__(self) -> None:
         self.views: list = []
         self.updated = 0
+        self.dialogs: list = []
+        self.tasks: list = []
 
     def update(self) -> None:
         self.updated += 1
@@ -26,43 +40,55 @@ class FakePage:
         self.route = route
 
     def show_dialog(self, d) -> None:
+        self.dialogs.append(d)
+
+    def pop_dialog(self) -> None:
         pass
 
     def run_task(self, fn, *args) -> None:  # 索引の読み込みなど。テストでは走らせない
-        self.tasks = [*getattr(self, "tasks", []), fn]
+        self.tasks.append(fn)
+
+
+def walk(control):
+    """部品の木を全部たどる（dataclass の欄にある部品と部品の並び）。"""
+    seen = set()
+    stack = [control]
+    while stack:
+        c = stack.pop()
+        if id(c) in seen:
+            continue
+        seen.add(id(c))
+        yield c
+        for f in dataclasses.fields(c):
+            if f.name.startswith("_") or f.name == "parent":
+                continue
+            v = getattr(c, f.name, None)
+            for x in v if isinstance(v, list) else [v]:
+                if isinstance(x, ft.BaseControl):
+                    stack.append(x)
 
 
 def texts(control) -> list[str]:
     """部品の木から、見える文を全部集める。"""
     out: list[str] = []
-    stack = [control]
-    while stack:
-        c = stack.pop()
-        if isinstance(c, ft.TextField) and c.value:
+    for c in walk(control):
+        if isinstance(c, (ft.Text, ft.Markdown)) and c.value:
             out.append(str(c.value))
         if isinstance(c, ft.Text):
-            if c.value:
-                out.append(str(c.value))
-            for sp in c.spans or []:
-                if getattr(sp, "text", None):
-                    out.append(str(sp.text))
-        for name in ("label", "hint_text", "title", "subtitle", "text"):
+            out += [str(sp.text) for sp in c.spans or [] if getattr(sp, "text", None)]
+        for name in ("content", "tooltip", "hint_text", "label"):
             v = getattr(c, name, None)
             if isinstance(v, str):
                 out.append(v)
-            elif isinstance(v, ft.Text) and v.value:
-                out.append(str(v.value))
-        for name in ("controls", "segments", "destinations", "options", "actions"):
-            kids = getattr(c, name, None)
-            if kids:
-                stack.extend(kids)
-        for name in ("content", "appbar", "navigation_bar", "leading"):
-            kid = getattr(c, name, None)
-            if isinstance(kid, str):
-                out.append(kid)  # 釦の文
-            elif kid is not None:
-                stack.append(kid)
     return out
+
+
+@pytest.fixture(autouse=True)
+def no_lookup(monkeypatch):
+    """土地の照会は網に出るので、テストでは呼ばない（使うテストは上書きする）。"""
+    from seed.server import lookup as L
+
+    monkeypatch.setattr(L, "available", lambda: False)
 
 
 @pytest.fixture
@@ -72,241 +98,537 @@ def app(seedfolder):
     return a
 
 
-def test_screens_build_without_records(app):
-    for sc in SCREENS:
-        v = sc.build(app)
-        assert isinstance(v, ft.View) and v.route == sc.route
-        words = texts(v)
-        assert any("seed — " in w for w in words), sc.route
-    assert "計画" in " ".join(texts(plan.view(app))) and "計画はまだありません。" in texts(plan.view(app))
-    assert "畑を観察する" in texts(observe.view(app))
-    assert any("知りたいこと" in w for w in texts(observe.view(app)))
-    assert "テスター募集中（11-08 まで）。畑の写真を一枚読ませて、合う／違うを付けてみてください。" in texts(
-        entry.view(app)
-    )
-    assert "観察はまだありません。" in texts(records.view(app)) or any(
-        "観察" in w for w in texts(records.view(app))
-    )
+def observe(seedfolder, tmp_path, reading=(), record=()):
+    """写真二枚（約 33 m 離れて撮った物）の観察を作る。名は 142107 と 142200。"""
+    from test_photos import make_jpeg
 
-
-def test_observe_and_records_show_observation(app, seedfolder, photo):
-    assert (
-        cli.main(
-            [
-                "observe",
-                "--folder",
-                str(seedfolder),
-                "--claude-code",
-                "--ask",
-                "grow",
-                str(photo),
-                "--say",
-                "did: 見ただけ",
-            ]
-        )
-        == 0
-    )
+    a = make_jpeg(tmp_path / "in" / "a.jpg", taken="2026:11:05 14:21:07")
+    b = make_jpeg(tmp_path / "in" / "b.jpg", lat=34.0515, taken="2026:11:05 14:22:00")
+    assert cli.main(["observe", "--folder", str(seedfolder), "--claude-code", str(a), str(b)]) == 0
     path = seedfolder / "observations" / "2026-11-05-142107.md"
     obs = Observation.read(path)
-    from seed.records import Line
-
-    obs.reading = [Line("overall", "草が大半", 0.8)]
-    obs.model = "claude-code"
+    obs.reading = list(reading)
+    obs.model = "claude-code" if reading else None
+    obs.record += list(record)
     obs.write(path)
-    app.state["obs"] = obs
-    words = texts(observe.view(app))
-    assert any("この土地で何が育つか" in w for w in words) and any("草が大半" in w for w in words)
-    assert "合う" in words and "違う" in words and any("見ただけ" in w for w in words)
-    words = texts(records.view(app))
-    assert any("2026-11-05 14:21:07" in w for w in words)
-    app.state["rec_open"] = "2026-11-05-142107"
-    assert any("草が大半" in w for w in texts(records.view(app)))
+    return path
 
 
-def test_plan_screen_shows_plan_lines(app, seedfolder):
-    from seed.records import Line
-
-    p = Plan.new("ja", "2026-27 冬", "2026-11-03")
-    p.reread([Line("sow", "北側に小麦", 0.7)], "claude-code")
-    p.say("decided", "南側は草のまま")
-    p.write(seedfolder / "plan.md")
-    words = texts(plan.view(app))
-    assert any("北側に小麦" in w for w in words) and any("南側は草のまま" in w for w in words)
-    assert "2026-27 冬" in words and any("書き始め 2026-11-03" in w for w in words)
-    assert "決めたこと" in words
-
-
-def test_publish_and_find_build(app, seedfolder, photo):
-    assert cli.main(["observe", "--folder", str(seedfolder), "--claude-code", str(photo)]) == 0
-    assert any("公開" in w for w in texts(publish.view(app)))
-    app.index = {"records": []}
-    assert any("探す" in w or "繋が" in w for w in texts(find.view(app)))
+A = "photos/2026-11-05/142107.jpg"
+B = "photos/2026-11-05/142200.jpg"
+NEW_READING = [
+    Line("overall", "今日の一枚: 142200。穂が出ていて、草の名が分かりやすい", 0.8),
+    Line("overall", "草が大半で、作物は見えない", 0.8),
+    Line("plants", "142107 の手前はススキが優占", 0.6),
+    Line("crops", "作物は見えない", 0.6),
+    Line("water", "水は見えない", 0.5),
+    Line("uncertain", "問い: 北側は雨の後に水が溜まりますか", 0.3),
+    Line("next_to_observe", "次の一枚: 株元を地面に近く", 0.5),
+]
 
 
-def test_publish_screen_is_guidance_and_list_on_every_version(app, seedfolder, monkeypatch):
-    """公開は Claude を使って行う。どの版でも画面は在り、作る部分は無く、案内と公開した記録の一覧が在る。"""
-    import flet as ft
+def run(coro):
+    return asyncio.run(coro)
 
-    from seed.records import Line, Public
 
+# ---------------------------------------------------------------- 画面は二つ（と管理）。どの版でも組める
+
+
+@pytest.mark.parametrize(
+    "web,platform",
+    [(False, None), (True, None), (False, ft.PagePlatform.IOS), (False, ft.PagePlatform.ANDROID)],
+)
+def test_screens_build_on_every_version(app, seedfolder, tmp_path, web, platform):
+    observe(seedfolder, tmp_path, NEW_READING)
+    app.page.web, app.page.platform = web, platform
+    assert [sc.route for sc in app.screens()] == ["/", "/photos"]
+    for path in ("/", "/photos"):
+        app.route_change(path=path)
+        v = app.page.views[-1]
+        assert v.route == path and any(w.startswith("seed — ") for w in texts(v))
+    # 古い道は「話す」へ
+    for old in ("/observe", "/records", "/plan", "/publish", "/find", "/settings", "/admin"):
+        app.route_change(path=old)
+        assert app.page.views[-1].route == "/"
+    words = " ".join(texts(app.page.views[-1]))
+    assert "入口" not in words
+
+
+FORMS = (ft.Dropdown, ft.Checkbox, ft.RadioGroup, ft.SegmentedButton, ft.Switch)
+
+
+def test_no_form_controls_on_talk_and_photos(app, seedfolder, tmp_path):
+    """話すと写真の画面には、選ぶ欄や印を付ける欄が無い。文字を打つ欄は一画面に一つまで。"""
+    observe(seedfolder, tmp_path, NEW_READING)
+    Plan.new("ja", "2026-27 冬", "2026-11-03").write(seedfolder / "plan.md")
+    app.index = {"records": [{"id": "x-1", "name": "見本", "word": "一言"}]}
+    for key in ("plan", "published", "plants", "others", "settings", "record:x-1"):
+        talk.add(app, card=key)
+    talk.add(app, who="claude", places=True)
+    talk.add(app, who="claude", text="並べました", examples=talk.examples(app, everything=True))
+    app.state["talk_to"] = "x-1"
+    for build in (talk.view, gallery.view):
+        v = build(app)
+        everything = list(walk(v))
+        assert not [c for c in everything if isinstance(c, FORMS)]
+        assert sum(isinstance(c, ft.TextField) for c in everything) <= 1
+
+
+# ---------------------------------------------------------------- やり取りを記録から組む
+
+
+def test_conversation_without_observations(app):
+    assert talk.turns(app.folder) == []
+    words = texts(talk.view(app))
+    assert app.t("talk_hello") in words and app.t("talk_first_photo") in words
+    assert talk.examples(app) == ["first"]  # 観察が無い時は「まず一枚、撮ってみます」だけ
+    assert "まず一枚、撮ってみます" in words
+
+
+def test_turn_from_old_reading(app, seedfolder, tmp_path):
+    """決まった書き出しの無い古い読みでも崩れない。今日の一枚は最初の写真、一言は最初の行。"""
+    observe(seedfolder, tmp_path, [Line("overall", "草が大半", 0.8), Line("water", "水は見えない", 0.5)])
+    (turn,) = talk.turns(app.folder)
+    assert turn.today == A and turn.today_words == "草が大半"
+    assert [f.line.text for f in turn.found] == ["水は見えない"]
+    assert turn.question is None and turn.next_shot is None
+    words = texts(talk.view(app))
+    assert "草が大半" in words and "水は見えない" in words
+    assert "2026-11-05 14:21" in words
+    # 候補地（kind: candidate）の観察は、日付に印を添える（記録の形 §19）
+    path = seedfolder / "observations" / "2026-11-05-142107.md"
+    obs = Observation.read(path)
+    obs.kind = "candidate"
+    obs.write(path)
+    assert "2026-11-05 14:21 · 自分の畑でない（候補地）" in texts(talk.view(app))
+
+
+def test_turn_from_new_reading(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING, [Line("said", "北側は湿っている")])
+    (turn,) = talk.turns(app.folder)
+    assert turn.today == B and turn.today_words.startswith("穂が出ていて")
+    assert turn.words == ["北側は湿っている"]
+    found = {f.line.text: f.photos for f in turn.found}
+    assert found["142107 の手前はススキが優占"] == [A]  # 行が名で指す写真を左に
+    assert turn.question == "北側は雨の後に水が溜まりますか" and turn.next_shot == "株元を地面に近く"
+    assert not any(H.marked(f.line) for f in turn.found)
+    words = texts(talk.view(app))
+    for w in ("問い", "北側は雨の後に水が溜まりますか", "次の一枚", "株元を地面に近く", "北側は湿っている"):
+        assert w in words, w
+    # 長い読みは頭の数行だけ。「続きを読む」で開く
+    assert "水は見えない" not in words and any(w.startswith("続きを読む") for w in words)
+    app.state["talk_open"] = {turn.name}
+    assert "水は見えない" in texts(talk.view(app))
+    # 本人が選び直した今日の一枚が先
+    path = seedfolder / "observations" / "2026-11-05-142107.md"
+    obs = Observation.read(path)
+    obs.record.append(H.chosen_line("142107", "ja"))
+    obs.write(path)
+    (turn,) = talk.turns(app.folder)
+    assert turn.today == A and turn.words == ["北側は湿っている"]
+
+
+# ---------------------------------------------------------------- 送った時の分かれ道
+
+
+def fake_read(seen):
+    def read(st, folder, obs):
+        seen.append(list(obs.record))
+        obs.reading = list(NEW_READING)
+        obs.model = "fake"
+
+    return read
+
+
+def test_send_photos_makes_observation_and_reads(app, seedfolder, tmp_path, monkeypatch):
+    from test_photos import make_jpeg
+
+    seen: list = []
+    monkeypatch.setattr(talk, "read_on_server", fake_read(seen))
+    monkeypatch.setattr(talk, "read_local", lambda *a: pytest.fail("手元の Claude は無い"))
+    app.settings.invite = "inv-test"
+    a = make_jpeg(tmp_path / "in" / "a.jpg", taken="2026:11:05 14:21:07")
+    b = make_jpeg(tmp_path / "in" / "b.jpg", taken="2026:11:05 14:22:00")
+    run(talk.send(app, "北の角", [a, b]))
+    obs = Observation.read(seedfolder / "observations" / "2026-11-05-142107.md")
+    assert obs.photos == [A, B] and obs.record == [Line("said", "北の角")] and obs.model == "fake"
+    assert obs.ask == ["soil", "history"]  # 土と歴史はいつも聞く
+    assert seen == [[Line("said", "北の角")]] and "pending" not in app.state
+    words = texts(talk.view(app))
+    assert "北の角" in words and "株元を地面に近く" in words
+
+
+def test_send_words_with_local_claude(app, seedfolder, tmp_path, monkeypatch):
+    """言葉だけ、手元の Claude あり → Claude Code に渡す。直した行を先に、返事の中の写真も出す。"""
+    path = observe(seedfolder, tmp_path, NEW_READING)
+    monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
+    calls = []
+
+    def fake_talk(folder, text, language, session=None):
+        calls.append((text, session))
+        obs = Observation.read(path)
+        obs.mark("plants", "wrong", "あれはオギ")
+        obs.reread(
+            [*obs.reading[:2], Line("plants", "142107 の手前はオギ（本人の言葉に拠る）", 0.7)], "claude-code"
+        )
+        obs.write(path)
+        return "直しました。\n![手前](photos/2026-11-05/142107.jpg)", "sess-1"
+
+    monkeypatch.setattr(local, "talk", fake_talk)
+    run(talk.send(app, "ススキではなくオギ"))
+    run(talk.send(app, "ありがとう"))
+    assert calls == [("ススキではなくオギ", None), ("ありがとう", "sess-1")]  # 会話を続ける
+    item = next(i for i in app.state["talk"] if i.get("reply"))
+    assert [l.text for l in item["fixed"]] == ["142107 の手前はオギ（本人の言葉に拠る）"]
+    v = talk.view(app)
+    words = texts(v)
+    assert "直した所" in words and "ススキではなくオギ" in words
+    assert words.index("142107 の手前はオギ（本人の言葉に拠る）") >= 0
+    # 返事の中の写真（![…](photos/…)）は、写真として出る
+    parts = talk.reply_parts(item["text"], app.folder, talk.photo_index(app.folder))
+    assert parts == [("text", "直しました。"), ("photos", [A])]
+
+
+def test_send_words_without_local_claude_only_notes(app, seedfolder, tmp_path, monkeypatch):
+    """言葉だけ、手元の Claude なし（電話）→ 一番新しい観察に本人の言葉として足すだけ。AI は呼ばない。"""
+    monkeypatch.setattr(talk, "read_on_server", lambda *a: pytest.fail("言葉だけでサーバーを呼ばない"))
+    run(talk.send(app, "あれはススキ"))
+    assert app.state["talk"][-1]["text"] == app.t("talk_first_photo")  # 観察がまだ無い
+    path = observe(seedfolder, tmp_path, NEW_READING)
+    run(talk.send(app, "雨の後だけ溜まる"))
+    obs = Observation.read(path)
+    assert obs.record[-1] == Line("said", "雨の後だけ溜まる（問い: 北側は雨の後に水が溜まりますか）")
+    assert H.answered(obs, "北側は雨の後に水が溜まりますか") == "雨の後だけ溜まる"
+    run(talk.send(app, "3 行目は違う。あれはオギ"))
+    assert Observation.read(path).record[-1] == Line("said", "3 行目は違う。あれはオギ")
+    assert app.state["talk"][-1]["text"] == app.t("talk_noted")
+    assert "雨の後だけ溜まる" in texts(talk.view(app))
+
+
+def test_invite_line_is_not_kept(app, seedfolder, tmp_path, monkeypatch, caplog):
+    from test_photos import make_jpeg
+
+    seen: list = []
+    monkeypatch.setattr(talk, "read_on_server", fake_read(seen))
+    code = "inv-secret-0042"
+    run(talk.send(app, "", [make_jpeg(tmp_path / "in" / "a.jpg")]))
+    assert app.state["await_invite"] and app.state["talk"][-1]["text"] == app.t("talk_invite_ask")
+    assert seen == []  # 招待コードが無いので、まだ読まない
+    v = talk.view(app)
+    assert app.t("talk_hint_invite") in texts(v)
+    run(talk.send(app, code))
+    assert app.settings.invite == code and not app.state["await_invite"]
+    assert len(seen) == 1  # 入ったら、待っていた観察を読む
+    assert app.state["talk"][-1]["text"] == "入りました。" or any(
+        i.get("text") == "入りました。" for i in app.state["talk"]
+    )
+    assert not any(code in str(i) for i in app.state["talk"])
+    assert not any(code in w for w in texts(talk.view(app)))
+    for p in (seedfolder / "observations").glob("*.md"):
+        assert code not in p.read_text(encoding="utf-8")
+    assert code not in (seedfolder / "seed.toml").read_text(encoding="utf-8")
+    assert code not in caplog.text
+
+
+# ---------------------------------------------------------------- 「こういう事ができます」の例
+
+
+def test_examples_answer_without_ai_or_point_to_pc(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING)
+    keys = talk.examples(app)
+    assert len(keys) == talk.EXAMPLES_SHOWN + 1 and keys[-1] == "more"
+    assert not any(
+        talk.EXAMPLES[k].needs_claude for k in keys[:-1]
+    )  # 手元の Claude が無い端末は AI 無しの物を先に
+    run(talk.run_example(app, "by_place"))
+    assert app.state["talk"][-2] == {
+        "who": "me",
+        "text": "写真を場所ごとに、時の順に並べて",
+        "after": "2026-11-05-142107",
+    }
+    words = texts(talk.view(app))
+    assert any(w.startswith("場所 1: 1 枚、中心から") for w in words) and "2026-11-05" in words
+    run(talk.run_example(app, "plan_make"))
+    reply = app.state["talk"][-1]["text"]
+    assert reply.startswith("これは PC の Claude Code でできます") and "できません" not in reply
+    # 打った言葉が例と同じなら、例として答える
+    run(talk.send(app, "設定を見せて"))
+    assert app.state["talk"][-1]["card"] == "settings"
+    assert "招待コード" in texts(talk.view(app))
+    run(talk.run_example(app, "more"))
+    assert "ほかの人の畑を見たい" in texts(talk.view(app))
+
+
+def test_examples_with_local_claude_go_to_claude_code(app, seedfolder, tmp_path, monkeypatch):
+    observe(seedfolder, tmp_path, NEW_READING)
+    monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(local, "talk", lambda folder, text, language, session=None: (f"受けた: {text}", "s"))
+    run(talk.run_example(app, "track"))
+    assert app.state["talk"][-1]["text"] == "受けた: 同じ物を日ごとに追って"
+
+
+def test_reply_parts_keep_photos_inside_the_folder(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING)
+    known = talk.photo_index(app.folder)
+    text = "## 場所 1\n![手前](photos/2026-11-05/142107.jpg)\n![外](../../etc/passwd) ![絶対](/etc/hosts) ![無い](photos/2026-11-05/000000.jpg)\n142200 は穂が出ている"
+    assert talk.reply_parts(text, app.folder, known) == [
+        ("text", "## 場所 1"),
+        ("photos", [A]),
+        ("text", "外 絶対 無い\n142200 は穂が出ている"),  # 出せない絵は一言だけ。道は Markdown に渡さない
+        ("photos", [B]),
+    ]
+
+
+# ---------------------------------------------------------------- この土地の成り立ち（AI 無し）
+
+PLACE = [
+    Line("place_name", "徳島県 見本市 見本町（出典: 見本の住所の資料、確認日 2026-11-05）"),
+    Line("elevation", "標高 6.9 m（出典: 見本の標高、確認日 2026-11-05）"),
+    Line("landform", "氾濫平野 34.05123, 134.25345 の辺り（出典: 見本の地形分類、確認日 2026-11-05）"),
+    Line("soil", "水田化褐色低地土（出典: 見本の土壌図、確認日 2026-11-05）"),
+    Line("geology", "後期更新世の段丘堆積物（出典: 見本の地質図、確認日 2026-11-05）"),
+    Line("hazard", "洪水の浸水想定区域の中（出典: 見本のハザード、確認日 2026-11-05）"),
+    Line("history", "見本の祠（出典: 見本の史跡、確認日 2026-11-05）"),
+]
+
+
+def fake_frames(folder, day="2026-11-05"):
+    from PIL import Image
+
+    d = folder / "origin" / day / "frames"
+    d.mkdir(parents=True)
+    names = ["std-z14", "photo-1961", "photo-1936", "soil", "photo-latest", "own"]
+    rows = []
+    for i, n in enumerate(names, 1):
+        f = f"{i:02d}-{n}.png"
+        Image.new("RGB", (64, 36), (40 * i, 90, 60)).save(d / f)
+        rows.append(f"| {i} | 題 {n} | [{f}](frames/{f}) | 字幕 | 出典 | |")
+    (d.parent / "captions.md").write_text(
+        "\n".join(["# 見本", "", "| 順 | 場面 |", "|---|---|", *rows]), encoding="utf-8"
+    )
+
+
+def no_ai(monkeypatch):
+    monkeypatch.setattr(talk, "read_on_server", lambda *a: pytest.fail("AI を呼ばない"))
+    monkeypatch.setattr(talk, "read_local", lambda *a: pytest.fail("AI を呼ばない"))
+    monkeypatch.setattr(local, "talk", lambda *a, **k: pytest.fail("AI を呼ばない"))
+
+
+def test_land_summary_in_four_groups_without_fine_coords(app, seedfolder):
+    from seed import land
+
+    cli.prepare(app.folder)
+    app.folder.add_place_data(PLACE)
+    groups = land.summary(app.folder, "ja")
+    assert [g.key for g in groups] == ["where", "soil", "water", "history"]
+    assert [f.key for f in groups[0].facts] == ["place_name", "elevation", "landform"]
+    assert [f.key for f in groups[1].facts] == ["soil", "geology"]
+    assert (
+        groups[0].facts[2].body == "氾濫平野 … の辺り"
+        and groups[0].facts[2].source == "見本の地形分類（2026-11-05）"
+    )
+    # やり取りの一番上に、まとめた形で（各組の頭の一行。「続きを読む」で全部）
+    words = texts(talk.view(app))
+    assert (
+        "この土地の成り立ち" in words
+        and "水田化褐色低地土" in words
+        and "後期更新世の段丘堆積物" not in words
+    )
+    assert not any("34.05123" in w for w in words)
+    app.state["talk_open"] = {"land"}
+    assert "後期更新世の段丘堆積物" in texts(talk.view(app))
+
+
+def test_land_is_on_top_before_the_first_observation(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING)
+    app.folder.add_place_data(PLACE)
+    conv = talk.conversation(app)
+    first, second = texts(conv[0]), texts(conv[1])
+    assert "この土地の成り立ち" in first and "2026-11-05 14:21" in second
+
+
+def test_origin_frames_old_to_new(app, seedfolder):
+    from seed import land
+
+    cli.prepare(app.folder)
+    fake_frames(seedfolder)
+    got = land.frames(app.folder)
+    assert [f.name for f in got] == [
+        "std-z14",
+        "soil",
+        "photo-1936",
+        "photo-1961",
+        "photo-latest",
+    ]  # 本人の写真は入れない
+    assert got[0].title == "題 std-z14"
+    words = texts(talk.view(app))
+    assert "題 photo-1936" in words and "題 own" not in words
+
+
+def test_land_examples_do_not_call_ai(app, seedfolder, tmp_path, monkeypatch):
+    from seed import land
+    from seed.server import lookup as L
+
+    observe(seedfolder, tmp_path, NEW_READING)
+    no_ai(monkeypatch)
+    asked = []
+    monkeypatch.setattr(L, "available", lambda: True)
+    monkeypatch.setattr(L, "data_lines", lambda lat, lon, lg: asked.append((round(lat), round(lon))) or PLACE)
+    run(talk.run_example(app, "landform"))
+    assert asked == [(34, 134)] and app.folder.place_data()  # 照会の結果が無ければ、照会する（AI 無し）
+    assert (
+        app.state["talk"][-2]["text"] == "この土地の成り立ちを教えて"
+        and app.state["talk"][-1]["land"] == "all"
+    )
+    run(talk.send(app, "土はどんな土？"))
+    assert app.state["talk"][-1]["land"] == "soil" and len(asked) == 1
+    made = []
+
+    def make(folder, language, fetch=None):
+        made.append(language)
+        fake_frames(seedfolder)
+        return land.frames(folder)
+
+    monkeypatch.setattr(land, "make_frames", make)
+    run(talk.run_example(app, "past"))
+    assert made == ["ja"] and app.state["talk"][-1]["land"] == "past"
+    run(talk.run_example(app, "past"))
+    assert made == ["ja"]  # もう在れば作らない
+    words = texts(talk.view(app))
+    assert "題 photo-1961" in words and "昔の地図と空中写真（地図を先に、空中写真は古い順）" in words
+
+
+def test_land_lines_are_shown_apart_from_photo_lines(app, seedfolder, tmp_path):
+    reading = [*NEW_READING, Line("basis", "土壌図では水田化褐色低地土", 0.6)]
+    observe(seedfolder, tmp_path, reading)
+    (turn,) = talk.turns(app.folder)
+    assert [f.line.text for f in turn.found if talk.is_land_line(f)] == ["土壌図では水田化褐色低地土"]
+    words = texts(talk.view(app))
+    assert "土地の資料から分かる事" in words and "土壌図では水田化褐色低地土" in words
+
+
+# ---------------------------------------------------------------- 写真を場所ごとに、時の順に
+
+
+def test_by_place_groups_near_photos_without_fine_coords(app, seedfolder, tmp_path, capsys):
+    from test_photos import make_jpeg
+
+    observe(seedfolder, tmp_path, NEW_READING)
+    c = make_jpeg(tmp_path / "in2" / "c.jpg", lat=None, lon=None, taken="2026:11:06 09:00:00")
+    d = make_jpeg(tmp_path / "in2" / "d.jpg", lat=34.05121, taken="2026:11:06 09:05:00")
+    assert cli.main(["observe", "--folder", str(seedfolder), "--claude-code", str(c), str(d)]) == 0
+    spots = album.by_place(app.folder)
+    assert [(sp.number, [s.rel for s in sp.shots]) for sp in spots] == [
+        (1, [A, "photos/2026-11-06/090500.jpg"]),
+        (2, [B]),
+        (0, ["photos/2026-11-06/090000.jpg"]),
+    ]
+    text = album.render_places(spots, "ja")
+    assert (
+        "場所 1: 2 枚、中心から" in text and "場所 2: 1 枚、中心から北へ" in text and "位置なし: 1 枚" in text
+    )
+    assert "  2026-11-05: photos/2026-11-05/142107.jpg" in text
+    assert "34.05" not in text and "134.25" not in text  # 細かい座標は出さない
+    assert cli.main(["photos", "--folder", str(seedfolder), "--by-place"]) == 0
+    assert "場所 1: 2 枚" in capsys.readouterr().out
+    assert cli.main(["photos", "--folder", str(seedfolder)]) == 1
+
+
+# ---------------------------------------------------------------- 写真の画面と、大きく開いた所の三つの操作
+
+
+def buttons(dialog) -> dict[str, ft.Control]:
+    return {c.content: c for c in walk(dialog) if isinstance(c, ft.TextButton) and isinstance(c.content, str)}
+
+
+def test_photos_screen_and_viewer_actions(app, seedfolder, tmp_path):
+    path = observe(seedfolder, tmp_path, NEW_READING)
+    v = gallery.view(app)
+    assert "2026-11-05" in texts(v)
+    shots = gallery.all_shots(app)
+    assert [s.rel for s in shots] == [A, B]
+    photo.open_viewer(app, shots, 0)
+    dialog = app.page.dialogs[-1]
+    got = buttons(dialog)
+    assert set(got) == {"この草の名前は？", "今日の一枚にする", "この写真を外す", "閉じる"}
+    # 今日の一枚を選び直す: 本人の行に残り、Claude が選んだ物より先
+    got["今日の一枚にする"].on_click(None)
+    obs = Observation.read(path)
+    assert obs.record[-1] == H.chosen_line("142107", "ja") and H.today(obs)[0] == A
+    # 外す: 二度押し。消さずに photos/removed/ へ移す。「戻す」で戻る
+    got["この写真を外す"].on_click(None)
+    assert (seedfolder / A).exists()
+    buttons(dialog)["本当に外す"].on_click(None)
+    assert not (seedfolder / A).exists() and (seedfolder / "photos/removed/2026-11-05/142107.jpg").exists()
+    assert Observation.read(path).photos == [B]
+    snack = app.page.dialogs[-1]
+    assert isinstance(snack, ft.SnackBar) and snack.action.label == "戻す"
+    snack.action.on_click(None)
+    assert (seedfolder / A).exists() and Observation.read(path).photos == [A, B]
+
+
+def test_published_card_withdraws_on_second_press(app, seedfolder):
     pub = Public(
         id="my-field", place="徳島県", since="2026-11-05", name="見本", word="見本の一言", language="ja"
     )
     pub.days["2026-11-05"] = [Line("overall", "草が大半", 0.8)]
-    (seedfolder / "public").mkdir(exist_ok=True)
+    (seedfolder / "public").mkdir(parents=True, exist_ok=True)
     pub.write(seedfolder / "public" / "my-field.md")
-    guide = app.t("publish_by_claude")
-    assert guide.startswith("公開は、Claude を使って行います。PC で") and "できません" not in guide
-    for web, platform in (
-        (False, None),
-        (True, None),
-        (False, ft.PagePlatform.IOS),
-        (False, ft.PagePlatform.ANDROID),
-    ):
-        app.page.web, app.page.platform = web, platform
-        assert "/publish" in [sc.route for sc in app.screens()]
-        app.route_change(path="/publish")
-        view = app.page.views[-1]
-        seen = texts(view)
-        assert view.route == "/publish" and guide in seen
-        assert "my-field · 2026-11-05" in seen
-
-        # 作る部分（観察を選ぶ、行のチェック、粗さ、欄、送るボタン）は無い
-        def walk(c):
-            yield c
-            for name in ("controls", "content", "title", "subtitle", "trailing"):
-                v = getattr(c, name, None)
-                for x in v if isinstance(v, list) else [v] if v is not None else []:
-                    if isinstance(x, ft.Control):
-                        yield from walk(x)
-
-        everything = list(walk(view))
-        assert any(isinstance(c, ft.TextButton) and c.content == "取り下げる" for c in everything)
-        kinds = {type(c) for c in everything}
-        assert not kinds & {ft.Checkbox, ft.TextField, ft.Dropdown, ft.Chip, ft.FilledButton}
-
-
-# ---------------------------------------------------------------- Web 版（設計書 §6.2）
-
-
-def test_web_user_folder_and_login_view(tmp_path, monkeypatch, seedfolder):
-    from seed.app import main as M
-
-    inv = tmp_path / "invites.toml"
-    inv.write_text('[codes]\n"inv-web-1" = "てすと"\n', encoding="utf-8")
-    monkeypatch.setenv(M.ENV_INVITES, str(inv))
-    monkeypatch.setenv(M.ENV_USERS_DIR, str(tmp_path / "users"))
-    monkeypatch.setenv(M.ENV_UPLOAD_DIR, str(tmp_path / "uploads"))
-    assert M.web_user_for("nope") is None and M.web_user_for("") is None
-    user = M.web_user_for("inv-web-1")
-    assert user is not None and user.name == "てすと" and len(user.slug) == 16 and "inv" not in user.slug
-    folder = M.user_folder(user)
-    assert folder.parent == tmp_path / "users"
-
-    page = FakePage()
-    page.web = True
-    app = M.App(page, str(folder), web_user=user)
-    assert app.web and app.settings.invite == "inv-web-1" and app.settings.name == "てすと"
-    # 招待コードは箱の中の credentials.toml（600）に。seed.toml には書かない（設計書 §5.1）
-    assert "inv-web-1" not in (folder / "seed.toml").read_text(encoding="utf-8")
-    cred = folder / "credentials.toml"
-    assert 'invite = "inv-web-1"' in cred.read_text(encoding="utf-8")
-    assert cred.stat().st_mode & 0o777 == 0o600
-    words = texts(entry.view(app))
-    assert any("ログイン中: てすと" in w for w in words) and "このブラウザから出る" in words
-    # 持ち帰りと消去の釦（設計書 §5.3）。入口の文は「準備中」と言わない
-    assert "持ち帰る（zip）" in words and "全部消す" in words
-    assert not any("準備中" in w for w in words)
-    assert not any("招待コードを入れる" in w for w in words)
-    words = texts(observe.view(app))
-    assert "手元の Claude で読む" not in words and "自分の Claude で読む" not in words  # Web 版はサーバーだけ
-
-    async def noop(code):
-        return None
-
-    v = M.login_view(page, "ja", noop)
-    assert v.route == "/login" and "招待コード" in texts(v) and "入る" in texts(v)
-    assert "その招待コードは一覧にありません。" in texts(M.login_view(page, "ja", noop, bad=True))
-
-
-def test_pc_entry_shows_invite_field(app):
-    words = texts(entry.view(app))
-    assert "招待コード" in words and "入れる" in words
-    assert not app.web
-    assert "持ち帰る（zip）" not in words and "全部消す" not in words  # PC 版の記録は手元にある
-
-
-def _walk(control):
-    stack = [control]
-    while stack:
-        c = stack.pop()
-        yield c
-        for name in ("controls", "actions"):
-            stack.extend(getattr(c, name, None) or [])
-        for name in ("content",):
-            kid = getattr(c, name, None)
-            if kid is not None and not isinstance(kid, str):
-                stack.append(kid)
-
-
-def test_web_delete_asks_once_before_deleting(tmp_path, monkeypatch, seedfolder):
-    import asyncio
-
-    from seed.app import main as M
-
-    inv = tmp_path / "invites.toml"
-    inv.write_text('[codes]\n"inv-web-2" = "てすと"\n', encoding="utf-8")
-    monkeypatch.setenv(M.ENV_INVITES, str(inv))
-    monkeypatch.setenv(M.ENV_USERS_DIR, str(tmp_path / "users"))
-    user = M.web_user_for("inv-web-2")
-    page = FakePage()
-    page.web = True
-    shown, popped, calls = [], [], []
-    page.show_dialog = shown.append
-    page.pop_dialog = lambda: popped.append(1)
-    app = M.App(page, str(M.user_folder(user)), web_user=user)
+    calls = []
 
     async def call(method, *args):
-        calls.append(method)
-        return {"deleted": True, "withdrawn": []}
-
-    async def launch_url(url):
-        calls.append(("launch", url))
-
-    class Prefs:
-        async def remove(self, key):
-            calls.append(("forget", key))
+        calls.append((method, *args))
 
     app.call = call
-    page.launch_url = launch_url
-    page.shared_preferences = Prefs()
-    v = entry.view(app)
-    delete = next(c for c in _walk(v) if isinstance(c, ft.TextButton) and c.content == "全部消す")
-    delete.on_click(None)
-    assert calls == [] and len(shown) == 1  # まず確かめるだけ
-    dialog = shown[0]
-    assert isinstance(dialog, ft.AlertDialog) and "元には戻せません" in dialog.content.value
-    cancel, yes = dialog.actions
-    cancel.on_click(None)
-    assert calls == [] and popped == [1]
-    asyncio.run(yes.on_click(None))
-    assert calls[0] == "delete_me" and ("launch", "/") in calls
+    talk.add(app, card="published")
+    v = talk.view(app)
+    words = texts(v)
+    assert "my-field · 2026-11-05" in words and app.t("talk_publish_pc") in words
+    run(next(c for c in walk(v) if isinstance(c, ft.TextButton) and c.content == "取り下げる").on_click(None))
+    assert calls == []
+    v = talk.view(app)
+    run(
+        next(
+            c for c in walk(v) if isinstance(c, ft.FilledButton) and c.content == "本当に取り下げる"
+        ).on_click(None)
+    )
+    assert calls == [("unpublish", "my-field")] and not (seedfolder / "public" / "my-field.md").exists()
 
 
-def test_field_picker_only_with_two_fields(app, seedfolder, tmp_path):
+def test_settings_card_switches_field(app, seedfolder, tmp_path):
     from seed import fields as fields_mod
 
-    assert app.field_picker() is None  # 一覧が無い
     fl = fields_mod.Fields()
     fl.add("自分の畑", str(seedfolder))
-    fields_mod.save_fields(fl)
-    assert app.field_picker() is None  # 一つだけ
     fl.add("知人の田", str(tmp_path / "other"))
     fields_mod.save_fields(fl)
-    picker = app.field_picker()
-    assert picker is not None and picker.value == "自分の畑"
-    assert [o.key for o in picker.options] == ["自分の畑", "知人の田"]
-    assert len(records.view(app).appbar.actions) == 1
+    words = " ".join(texts(cards.frame(app, "settings", cards.settings_card(app))))
+    assert "知人の田 に変える" in words and "自分の畑" in words and "サーバーで" in words
+
+
+def test_local_talk_command(seedfolder, monkeypatch):
+    from seed.records import Folder
+
+    folder = Folder(seedfolder)
+    cli.prepare(folder)
+    seen = {}
+
+    def fake_run(cmd, cwd, timeout, env=None):
+        seen.update(cmd=cmd, cwd=cwd, env=env)
+        return {"result": "はい", "session_id": "s-2"}
+
+    monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(local, "_run", fake_run)
+    assert local.talk(folder, "計画を立てたい", "ja", session="s-1") == ("はい", "s-2")
+    cmd = seen["cmd"]
+    assert cmd[:3] == ["/usr/bin/claude", "-p", "計画を立てたい"]
+    assert cmd[cmd.index("--resume") + 1] == "s-1" and "--restricted" in cmd
+    allowed = cmd[cmd.index("--allowedTools") + 1 :]
+    assert "Bash(seed mark *)" in allowed and "Bash(seed photos *)" in allowed
+    assert not any("token" in a or "prune" in a or "invite" in a for a in allowed)
+    system = cmd[cmd.index("--system-prompt") + 1]
+    assert "![一言](photos/…)" in system and "seed mark --folder" in system and "直した行を先に" in system
+    assert seen["env"]["SEED_FOLDER"] == str(seedfolder) and seen["cwd"] == folder.root
 
 
 # ---- 管理の画面（動かす人）

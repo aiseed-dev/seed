@@ -11,12 +11,14 @@ from __future__ import annotations
 import base64
 import functools
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import anthropic
 import yaml
 
+from .. import highlights as H
 from .. import records as R
 from . import clean_text
 
@@ -114,7 +116,10 @@ def system_blocks(skill_dir: Path, language: str) -> list[dict]:
     return [
         # 毎回同じ文。ここまでがキャッシュされる
         {"type": "text", "text": skill_text(skill_dir) + "\n" + TASK, "cache_control": {"type": "ephemeral"}},
-        {"type": "text", "text": f"text と basis は本人の言語（BCP 47: {language}）で書く。"},
+        {
+            "type": "text",
+            "text": f"text と basis は本人の言語（BCP 47: {language}）で書く。\n\n{H.prompt_rules(language)}",
+        },
     ]
 
 
@@ -133,8 +138,13 @@ def previous_text(previous: str | None) -> str | None:
     return (f"date: {when}\n" if when else "") + body
 
 
+CORRECTION_RULE = (
+    "<record> と、<previous> の ## Record は本人の言葉で、本人が直した事（前の読みへの「それは違う」など）を含む。"
+    "写真より先に読み、写真の読みや前の読みと食い違う所は本人の言葉を取る。本人の言葉に拠って書いた行は、そう分かる文にする。"
+)
+
 ASK_RULE = (
-    "本人が知りたいこと（ask）に関わる行を厚く書き、overall の先頭でそれに答える。写真と資料から答えられない所は、"
+    "本人が知りたいこと（ask）に関わる行を厚く書き、今日の一枚の行の次の overall でそれに答える。写真と資料から答えられない所は、"
     "uncertain に、どこで確かめるとよいかを添えて書く。key は手引きの順のままで、判定の行は書かない。"
 )
 
@@ -147,29 +157,51 @@ def user_content(
     previous: str | None = None,
     ask: list[str] = (),
     language: str = "en",
+    names: list[str] | None = None,
 ) -> list[dict]:
-    content: list[dict] = [
-        {
-            "type": "image",
-            "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(p).decode()},
-        }
-        for p in photos
-    ]
+    names = photo_names(names, len(photos))
+    content: list[dict] = []
+    for name, p in zip(names, photos, strict=True):
+        content.append({"type": "text", "text": f"写真 {name}"})
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": base64.b64encode(p).decode(),
+                },
+            }
+        )
     facts = [line.render() for line in [*data, *place_data]]
-    text = f"写真 {len(photos)} 枚（撮った順）。\n\n<data>\n" + ("\n".join(facts) or R.EMPTY) + "\n</data>\n"
+    text = f"写真 {len(photos)} 枚（撮った順。各写真の前の「写真 <名>」が、行の中で指す名）。\n"
+    if record and record.strip():  # 本人の言葉（直した事を含む）を先に
+        text += f"\n<record>\n{record.strip()}\n</record>\n{CORRECTION_RULE}\n"
+    text += "\n<data>\n" + ("\n".join(facts) or R.EMPTY) + "\n</data>\n"
     prev = previous_text(previous)
     if prev:
         text += f"\n<previous>\n{prev}\n</previous>\n"
+        if not (record and record.strip()):
+            text += CORRECTION_RULE + "\n"
     else:
         text += "\n同じ場所の前の観察は無い。change は書かない。\n"
-    if record and record.strip():
-        text += f"\n<record>\n{record.strip()}\n</record>\n"
     if ask:
         words = "\n".join(f"- {a}: {R.ask_word(a, language)}" for a in ask)
         text += f"\n<ask>\n{words}\n</ask>\n{ASK_RULE}\n"
     text += "\nこの畑の読みを lines に。"
     content.append({"type": "text", "text": text})
     return content
+
+
+NAME_RE = re.compile(r"[0-9A-Za-z_-]{1,32}")
+
+
+def photo_names(names: list[str] | None, n: int) -> list[str]:
+    """写真の名（ファイルの名の幹）。形の違う物、足りない物は 1, 2, … の番号にする。"""
+    given = list(names or [])[:n]
+    given += [""] * (n - len(given))
+    out = [x if NAME_RE.fullmatch(x or "") else str(i + 1) for i, x in enumerate(given)]
+    return [x if out.count(x) == 1 else str(i + 1) for i, x in enumerate(out)]
 
 
 async def call(client: anthropic.AsyncAnthropic, **kwargs):
@@ -218,6 +250,7 @@ async def read(
     record: str | None = None,
     language: str = "en",
     ask: list[str] = (),
+    names: list[str] | None = None,
 ) -> Reading:
     try:
         msg = await call(
@@ -231,7 +264,7 @@ async def read(
                 {
                     "role": "user",
                     "content": user_content(
-                        photos, list(data), list(place_data), record, previous, list(ask), language
+                        photos, list(data), list(place_data), record, previous, list(ask), language, names
                     ),
                 }
             ],

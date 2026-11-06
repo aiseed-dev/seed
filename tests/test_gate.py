@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 
 from kagi import audit
 from seed import cli
-from seed.app import main as app_main
 from seed.records import Line, Public
 from seed.server import gate
 from seed.server import lookup as L
@@ -241,18 +240,7 @@ def test_journal_error_is_visible_and_does_not_stop_requests(tmp_path, ledger, k
     assert c.get("/health").json()["audit"] == "error"
 
 
-# ---- Web 版の入口と命令
-
-
-def test_web_login_takes_member_tokens_only(ledger, monkeypatch):
-    member = gate.add(ledger, "仲間", ["member"], 90)
-    buyer = gate.add(ledger, "買い手", ["buyer"], 30)
-    monkeypatch.delenv("SEED_INVITES", raising=False)
-    monkeypatch.setenv("SEED_TOKENS", str(ledger))
-    assert app_main.web_user_for(member).name == "仲間"
-    assert app_main.web_user_for(buyer) is None and app_main.web_user_for("nope") is None
-    gate.revoke(ledger, "仲間")
-    assert app_main.web_user_for(member) is None
+# ---- 命令
 
 
 def test_cli_token(ledger, capsys, tmp_path):

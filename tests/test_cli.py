@@ -335,15 +335,7 @@ def test_app_screens_import():
     # 画面は import できることだけ確かめる（動かすのは flet run で）
     from seed.app import main
 
-    assert [sc.route for sc in main.SCREENS] == [
-        "/",
-        "/observe",
-        "/records",
-        "/plan",
-        "/publish",
-        "/find",
-        "/admin",
-    ]
+    assert [sc.route for sc in main.SCREENS] == ["/", "/photos", "/admin"]
     assert callable(main.main) and callable(main.run)
 
 
@@ -351,7 +343,7 @@ def test_strings_have_same_words():
     from seed.app.strings import STRINGS, error_text, key_label, s
 
     assert set(STRINGS["ja"]) == set(STRINGS["en"])
-    assert s("observe_button", "ja") == "畑を観察する"
+    assert s("nav_talk", "ja") == "話す" and s("nav_photos", "en") == "Photos"
     assert s("right", "ja") == "合う" and s("wrong", "sw") == "wrong"
     assert key_label("change", "ja") == "変化" and key_label("change", "en") == "Change"
     assert key_label("geology", "ja") == "geology"
@@ -386,13 +378,6 @@ def test_observe_candidate_and_owner_warning(seedfolder, photo, capsys):
     args = ["publish", "--folder", f, "2026-11-05-142107", "--id", "c-1", "--place", "x", "--word", "y"]
     assert cli.main([*args, "--name", "n", "--local"]) == 0
     assert "所有者の名前・住所は公開しない" in capsys.readouterr().err
-
-
-def test_next_words_include_land():
-    from seed.app.strings import next_words
-
-    assert next_words("ja")[-3:] == ["貸す", "借りる", "手伝う"]
-    assert len(next_words("en")) == 7
 
 
 def test_missing_app_extra_is_one_sentence(seedfolder, monkeypatch, capsys):

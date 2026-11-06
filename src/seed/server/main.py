@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import anthropic
 from fastapi import FastAPI, Request
@@ -279,6 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 record=record,
                 language=language,
                 ask=ask,
+                names=[Path(f.filename or "").stem for f in uploads],
             )
         except RD.ReadError as e:
             limits.spend(e.usage)

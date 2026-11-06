@@ -159,7 +159,10 @@ def test_read_shape_and_request(settings, calls):
     assert "判定の行" in kw["system"][0]["text"]  # skill/ が無いので組み込みの決まり
     assert "ja" in kw["system"][1]["text"]
     content = kw["messages"][0]["content"]
-    assert [b["type"] for b in content] == ["image", "image", "text"]
+    # 写真ごとに「写真 <名>」の札、その後に写真。名は送ったファイルの名の幹（行の中で写真を指す名）
+    assert [b["type"] for b in content] == ["text", "image", "text", "image", "text"]
+    assert [content[0]["text"], content[2]["text"]] == ["写真 0", "写真 1"]
+    assert "今日の一枚: <写真の名>" in kw["system"][1]["text"] and "問い: " in kw["system"][1]["text"]
     assert "<record>\n今日は見ただけ\n</record>" in content[-1]["text"]
     assert "- soil: 褐色低地土" in content[-1]["text"]
 
@@ -197,7 +200,9 @@ def test_read_with_previous(settings, calls):
     assert "- change: 北側の草が低くなった [0.70]" in body["markdown"]
     text = calls.kwargs[0]["messages"][0]["content"][-1]["text"]
     assert "<previous>\ndate: 2026-11-01 09:10:00\n## Reading" in text and "- did: 北側を刈った" in text
-    assert text.index("</data>") < text.index("<previous>") < text.index("<record>")
+    # 本人の言葉（直した事を含む）を先に読ませる
+    assert text.index("\n<record>\n") < text.index("</data>") < text.index("\n<previous>\n")
+    assert "食い違う所は本人の言葉を取る" in text
     assert "34.0512" not in text and "091000.jpg" not in text  # 前書きの座標と写真の道は渡さない
     assert "change は書かない" not in text
     assert "- change: 前の観察からの変化" in calls.kwargs[0]["system"][0]["text"]
@@ -208,7 +213,7 @@ def test_read_with_ask_adds_block(settings, calls):
     assert post_read(c, ask="grow, soil", language="ja").status_code == 200
     text = calls.kwargs[-1]["messages"][0]["content"][-1]["text"]
     assert "<ask>" in text and "- grow: この土地で何が育つか" in text and "- soil: 土と地質と水はけ" in text
-    assert "overall の先頭でそれに答える" in text
+    assert "今日の一枚の行の次の overall でそれに答える" in text
     assert post_read(c, language="ja").status_code == 200
     assert "<ask>" not in calls.kwargs[-1]["messages"][0]["content"][-1]["text"]
 

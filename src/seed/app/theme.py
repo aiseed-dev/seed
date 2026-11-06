@@ -44,7 +44,7 @@ def error(text: str) -> ft.Text:
 
 
 def note(text: str) -> ft.Container:
-    """目立たせたい一文（Web 版の「この記録は残りません」など）。"""
+    """目立たせたい一文（「話す」の、細かい作業は Claude に頼むの一行など）。"""
     return ft.Container(
         content=ft.Text(text, size=BODY_SIZE, color=ft.Colors.ON_TERTIARY_CONTAINER),
         bgcolor=ft.Colors.TERTIARY_CONTAINER,

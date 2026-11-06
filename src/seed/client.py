@@ -134,11 +134,19 @@ class Client:
         record: str | list[Line] | None = None,
         previous: str | None = None,
         ask: list[str] | None = None,
+        names: list[str] | None = None,
     ) -> Reading:
-        """写真（縮小済みの JPEG）を送り、読みを受ける。previous は同じ場所の前の観察の Markdown。ask は ASKS の語。"""
+        """写真（縮小済みの JPEG）を送り、読みを受ける。previous は同じ場所の前の観察の Markdown。ask は ASKS の語。
+
+        names は写真の名（ファイルの名の幹）。送るファイルの名にし、読みの行はこの名で写真を指す。
+        """
         if not photos:
             raise ClientError("no_photos", "no photos to read")
-        files = [("photos", (f"{i + 1}.jpg", b, "image/jpeg")) for i, b in enumerate(photos)]
+        names = list(names or [])
+        files = [
+            ("photos", (f"{names[i] if i < len(names) else i + 1}.jpg", b, "image/jpeg"))
+            for i, b in enumerate(photos)
+        ]
         form = {"language": self.language, "token": self.token}
         if self.invite:
             form["invite"] = self.invite
@@ -164,6 +172,18 @@ class Client:
             usage=data.get("usage") or {},
             markdown=str(data.get("markdown") or ""),
         )
+
+    def lookup(self, lat: float, lon: float) -> list[Line]:
+        """座標から土地の資料の行（出典付きの data 行）を引く（GET /api/lookup。AI は使わない）。"""
+        params = {"lat": lat, "lon": lon, "language": self.language}
+        if self.invite:
+            params["invite"] = self.invite
+        data = self._json(self._call("GET", "/api/lookup", params=params))
+        return [
+            Line(str(x["key"]), str(x["text"]))
+            for x in data.get("data") or []
+            if x.get("key") and x.get("text")
+        ]
 
     def identify(self, photos: list[bytes]):
         """写真（縮小済みの JPEG、同じ株、5 枚まで）をサーバー経由で Pl@ntNet に。identify.Identification を返す。"""

@@ -186,6 +186,7 @@ def read_on_server(st: Settings, folder: Folder, obs: Observation) -> None:
             [*folder.place_record(), *obs.record],  # 場所について本人が確かめたことも、本人の言葉として渡す
             previous=prev.render() if prev else None,
             ask=obs.ask,
+            names=[Path(r).stem for r in obs.photos],
         )
     client.apply_reading(obs, reading)
     keep_model_lines(obs, before)
@@ -748,6 +749,18 @@ def cmd_plan(st: Settings, args) -> int:
         _out("")
         _out(plan_steps(lg, folder))
     return code
+
+
+def cmd_photos(st: Settings, args) -> int:
+    """写真を撮った場所ごとに、時の順に並べて出す（AI は使わない。細かい座標は出さない）。"""
+    from . import album
+
+    if not args.by_place:
+        _err(s("photos_needs_by_place", st.language))
+        return 1
+    text = album.render_places(album.by_place(st.records), st.language)
+    _out(text or s("photos_none_cli", st.language))
+    return 0
 
 
 def cmd_app(st: Settings | None, args) -> int:
@@ -1495,12 +1508,18 @@ def parser() -> argparse.ArgumentParser:
     u.add_argument("--contact")
     u.add_argument("--local", action="store_true", help="サーバーへ送らず public/ に書くだけ")
 
-    a = sub.add_parser("app", parents=[common], help="アプリを開く")
-    a.add_argument("--web", action="store_true", help="ブラウザで開く（開発中の確認用）")
-    a.add_argument(
-        "--serve",
+    ph = sub.add_parser("photos", parents=[common], help="写真を撮った場所ごとに、時の順に並べて出す")
+    ph.add_argument(
+        "--by-place",
         action="store_true",
-        help="Web 版をサーバーとして動かす（deb2。招待コードでログイン。SEED_USERS_DIR, SEED_UPLOAD_DIR, SEED_INVITES）",
+        help="座標の近い物（20 m ほど）を一つの場所にまとめ、場所ごとに時の順",
+    )
+    ph.set_defaults(readonly=True)
+
+    a = sub.add_parser("app", parents=[common], help="アプリを開く")
+    a.add_argument("--web", action="store_true", help="この PC のブラウザで開く（画面の確かめ用、一人用）")
+    a.add_argument(
+        "--serve", action="store_true", help="やめた（人ごとに記録を置く Web 版）。一行知らせて終わる"
     )
     a.add_argument("--port", type=int, default=0)
 
@@ -1635,6 +1654,7 @@ COMMANDS = {
     "identify": cmd_identify,
     "publish": cmd_publish,
     "app": cmd_app,
+    "photos": cmd_photos,
     "skill-path": cmd_skill_path,
     "keep": cmd_keep,
     "invite": cmd_invite,

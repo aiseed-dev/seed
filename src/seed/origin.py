@@ -990,8 +990,9 @@ def run(
     seconds: float = SECONDS,
     fps: int = FPS,
     day: str | None = None,
+    video: bool = True,
 ) -> Result:
-    """場面を作り、静止画、captions.md、動画（mp4 か GIF）を out に書く。"""
+    """場面を作り、静止画、captions.md、動画（mp4 か GIF）を out に書く。video が False なら動画は作らない（アプリ）。"""
     day = day or dt.date.today().isoformat()
     frames, skipped = build(plan, tiles, fonts)
     out.mkdir(parents=True, exist_ok=True)
@@ -1001,7 +1002,7 @@ def run(
     cap.write_text(captions_md(frames, skipped, plan.language, day), encoding="utf-8")
     mp4 = ffmpeg_module() is not None
     video = out / ("origin.mp4" if mp4 else "origin.gif")
-    if images:
+    if images and video:
         if mp4:
             write_mp4(images, video, seconds, fps)
         else:

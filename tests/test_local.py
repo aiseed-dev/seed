@@ -110,7 +110,11 @@ def test_prompt_carries_asks(folder):
     text = local.prompt(folder, o, None)
     assert "- ask: grow, access" in text
     assert "- grow: この土地で何が育つか" in text and "- access: 借りられるか" in text
-    assert "- ask: 果樹は向くか" in text and "overall` の先頭でそれに答えます" in text
+    assert (
+        "- ask: 果樹は向くか" in text
+        and "今日の一枚の行の次の `overall` でそれに答えます" in text
+        and "問い: " in text
+    )
 
 
 def test_prompt_carries_previous_observation(folder):
