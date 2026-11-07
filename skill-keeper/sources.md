@@ -1,8 +1,8 @@
 # 出典
 
-**ここに無い資料を根拠に書きません。** URL は repo の文書（`docs/kagi 設計書.md`、`docs/kagi 配線図.md`、
-`docs/鍵の管理の仕組み.md`）に在る物だけです。確認日はその文書の日付（2026-11-06）です。資料を足す時は、
-読んでから番号を付けて足します。
+**ここに無い資料を根拠に書きません。** 1〜6 の URL は repo の文書（`docs/kagi 設計書.md`、`docs/kagi 配線図.md`、
+`docs/鍵の管理の仕組み.md`）に在る物で、確認日はその文書の日付（2026-11-06）です。7 からは、頁を読んで足した物で、
+確認日を添えます。資料を足す時は、読んでから番号を付けて足します。
 
 ## 1. 作者の連載「Claude と一緒に育てる Debian サーバー」
 
@@ -53,11 +53,18 @@ LAN 分割、管理の口を絞る命令、口ごとのフィルター、ファ�
 
 - https://www.nsa.gov/Press-Room/Press-Releases-Statements/Press-Release-View/Article/3304674/nsa-releases-best-practices-for-securing-your-home-network/
 
+## 7. 作者の連載「AI ネイティブなソフトウェア開発」2-02「AI に PC を一台渡す」
+
+- https://aiseed.dev/ai-native-software/ai-pc/ （確認 2026-11-07）
+
 ## repo の中の材料
 
 - `docs/鍵の管理の仕組み.md` §2（K-01〜15）、§3（機械の形）、§5（できることから）
 - `docs/kagi 設計書.md` §3.4、§3.4b、§3.5、`docs/kagi 手引き.md`、`docs/kagi 計画書.md` §10、`docs/kagi 配線図.md`
 - `docs/deb2 の配備.md` §0、`deploy/deb2/手順.md`、`deploy/deb2/*.toml`
 - `docs/設計書.md` §5.9、§5.10、`docs/利用マニュアル.md` §11c、`docs/iPhone 版.md`
-- コード: `src/kagi/cli.py`、`src/kagi/machine.py`、`src/kagi/install.py`、`src/seed/cli.py`（`seed token`）、
-  `src/seed/server/gate.py`、`src/kagi/admin.py`
+- `docs/設計書.md` §5.13、`docs/利用マニュアル.md` §11b（`seed home`）、`docs/基本計画.md` §5（連載の担当との議論、八つ、
+  機械の持ち方の想定）
+- コード: `src/kagi/cli.py`、`src/kagi/machine.py`、`src/kagi/install.py`、`src/kagi/ports.py`、`src/seed/cli.py`（`seed token`、
+  `seed home`）、`src/seed/server/gate.py`、`src/seed/server/home.py`、`src/seed/server/main.py`、`src/seed/discover.py`、
+  `src/seed/local.py`、`src/kagi/admin.py`

@@ -8,3 +8,5 @@ dist/
 *.egg-info/
 private/
 .claude/launch.json
+.claude/skills/seed-video/
+.claude/worktrees/
