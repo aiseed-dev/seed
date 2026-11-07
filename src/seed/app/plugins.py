@@ -58,8 +58,14 @@ def shipped() -> list[Plugin]:
     return out
 
 
+def plugins_dir(folder) -> Path:
+    """本人のプラグインの置き場。畑に plugins/ が在ればそれ、無ければプロジェクトの根の物（設計書 §5.12）。"""
+    shared = getattr(folder, "shared", None)
+    return shared("plugins") if shared else Path(folder.root) / "plugins"
+
+
 def own(folder) -> list[Plugin]:
-    d = Path(folder.root) / "plugins"
+    d = plugins_dir(folder)
     out = []
     for path in sorted(d.glob("*.py")) if d.is_dir() else []:
         if path.stem.startswith("_"):
@@ -86,7 +92,7 @@ def load(folder) -> list[Plugin]:
 
 def stamp(folder) -> frozenset[tuple[str, int]]:
     """本人のプラグインの今の姿（名と更新の時）。前と違えば読み直す。"""
-    d = Path(folder.root) / "plugins"
+    d = plugins_dir(folder)
     if not d.is_dir():
         return frozenset()
     return frozenset((p.name, p.stat().st_mtime_ns) for p in d.glob("*.py"))

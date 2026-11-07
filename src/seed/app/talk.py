@@ -272,9 +272,10 @@ async def send_words(app: App, text: str) -> None:
     via = route(app)
     if via == "local":
         before = readings(app.folder)
+        extra = {"fields": [f.root.name for f in app.fields]} if app.whole else {}  # 根で、畑の並びを添えて
         try:
             reply, session = await asyncio.to_thread(
-                local.talk, app.folder, text, app.lang, app.state.get("claude_session")
+                local.talk, app.folder, text, app.lang, app.state.get("claude_session"), **extra
             )
         except ClientError as ex:
             say(app, error_text(ex, app.lang))
@@ -283,7 +284,8 @@ async def send_words(app: App, text: str) -> None:
         add_reply(app, before, reply or app.t("talk_done"))
         return
     if via in ("key", "server"):
-        await talk_direct(app, text, via)
+        # プロジェクト全体では、今は一つ目の畑で（talk_whole_pick の一文を入力の上に出す）
+        await talk_direct(app.for_field(app.fields[0]) if app.whole else app, text, via)
         return
     if note_words(app, text):
         say(app, app.t("talk_noted") + app.t("talk_noted_how"))
@@ -435,7 +437,13 @@ async def take_invite(app: App, code: str) -> None:
 
 
 async def add_photos(app: App, text: str) -> None:
-    """写真を足す: スマートフォンは撮る画面（画面の確かめ用のブラウザでも）、PC は写真を選ぶ。"""
+    """写真を足す: スマートフォンは撮る画面（画面の確かめ用のブラウザでも）、PC は写真を選ぶ。
+
+    プロジェクト全体の時は、畑を選ぶ板を出す（写真は畑に入れる）。
+    """
+    if app.whole:
+        app.show_projects()
+        return
     if capture.available(app.page):
         app.state["capture"] = capture.Session()
         app.state["capture_text"] = text
@@ -720,6 +728,8 @@ def conversation(app: App) -> list[ft.Control]:
     items = talk_state(app)
     hide = {i["text"] for i in items if i.get("who") == "me" and i.get("text")}
     out: list[ft.Control] = []
+    if app.whole:
+        return whole_conversation(app, items, hide)
     all_turns = turns(app.folder)
     if not all_turns:
         out.append(claude_side([words_text(t("talk_hello")), words_text(first_photo_text(app))]))
@@ -731,6 +741,27 @@ def conversation(app: App) -> list[ft.Control]:
         for it in items:
             if it.get("after") == turn.name:
                 out += item_controls(app, it)
+    pending = app.state.get("pending")
+    if pending:
+        out += pending_controls(app, pending)
+    return out
+
+
+def whole_conversation(app: App, items: list[dict], hide: set[str]) -> list[ft.Control]:
+    """プロジェクト全体: 畑ごとの見出しとその畑のやり取り、その後にこの窓で話した物（設計書 §5.12）。"""
+    out: list[ft.Control] = []
+    for f in app.fields:
+        fa = app.for_field(f)
+        field_turns = turns(f)
+        if not field_turns:
+            continue
+        out.append(theme.subheading(f.root.name))
+        for turn in field_turns:
+            out += turn_controls(fa, turn, hide)
+    if not out:
+        out.append(claude_side([words_text(app.t("talk_hello")), words_text(first_photo_text(app))]))
+    for it in items:
+        out += item_controls(app, it)
     pending = app.state.get("pending")
     if pending:
         out += pending_controls(app, pending)
@@ -1087,7 +1118,10 @@ def composer(app: App) -> ft.Control:
             app.refresh()
 
         row.insert(1, ft.IconButton(ft.Icons.CLOSE, tooltip=t("talk_to_cancel"), on_click=cancel_to))
-    return ft.Row(row, spacing=4, vertical_alignment=ft.CrossAxisAlignment.END)
+    bar = ft.Row(row, spacing=4, vertical_alignment=ft.CrossAxisAlignment.END)
+    if app.whole:  # プロジェクト全体: 写真と公開は畑を選んでから
+        return ft.Column([theme.muted(t("talk_whole_pick")), bar], spacing=4, tight=True)
+    return bar
 
 
 def view(app: App) -> ft.View:

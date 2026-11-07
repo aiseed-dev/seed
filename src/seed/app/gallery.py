@@ -64,8 +64,22 @@ def tag_chips(app: App, tags: list[tuple[str, int]]) -> ft.Control:
     return ft.Row(chips, wrap=True, spacing=6, run_spacing=6)
 
 
+def day_rows(app: App, shown: list[photo.Shot], size: float) -> list[ft.Control]:
+    """日の見出しと、観察ごとの写真の並び。"""
+    out: list[ft.Control] = []
+    for date, by_obs in groups(shown):
+        out.append(theme.subheading(date))
+        for idx in by_obs:
+            tiles = [x for x in (photo.tile(app, shown, i, size) for i in idx) if x is not None]
+            out.append(ft.Row(tiles, wrap=True, spacing=8, run_spacing=8))
+    return out
+
+
 def view(app: App) -> ft.View:
-    observed = _observed(app)
+    # プロジェクト全体の時は畑ごと（設計書 §5.12）。部品は畑一つ分の app で作る（写真の道が畑の中なので）
+    parts = [(f.root.name, app.for_field(f)) for f in app.fields] if app.whole else [(None, app)]
+    observed_by = [(name, a, _observed(a)) for name, a in parts]
+    observed = [x for _, _, obs in observed_by for x in obs]
     shots = [s for _, group in observed for s in group]
     tags = H.all_tags([(o.filename, o) for o, _ in observed])
     chosen = app.state.get("photo_tag")
@@ -76,11 +90,14 @@ def view(app: App) -> ft.View:
     if tags:
         controls.append(tag_chips(app, tags))
     shown = [s for s in shots if chosen in s.tags] if chosen else shots
-    for date, by_obs in groups(shown):
-        controls.append(theme.subheading(date))
-        for idx in by_obs:
-            tiles = [x for x in (photo.tile(app, shown, i, size) for i in idx) if x is not None]
-            controls.append(ft.Row(tiles, wrap=True, spacing=8, run_spacing=8))
+    for name, a, obs in observed_by:
+        mine = [s for _, group in obs for s in group]
+        mine = [s for s in mine if chosen in s.tags] if chosen else mine
+        if name is not None:
+            if not mine:
+                continue
+            controls.append(theme.subheading(name))
+        controls += day_rows(a, mine, size)
     if not shots:
         controls.append(theme.body(app.t("photos_none")))
     elif not shown:

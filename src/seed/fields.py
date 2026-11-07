@@ -7,6 +7,9 @@
 フォルダーを決める順: --folder > 今いるフォルダー（seed.toml がある時。Claude Code と同じ）
 > --field > current > SEED_FOLDER > 既定。
 書くのは tomllib が読める素の形だけ（current = "..." と [[field]] の並び）。
+
+11-07 から（設計書 §5.12）: この一覧はプロジェクトの一覧（seed project）。一つのプロジェクトの中の畑は
+fields/<名>/ で、今の畑は seed.toml の field。--field は、プロジェクトに fields/<名> が在ればその畑、無ければ一覧の名。
 """
 
 from __future__ import annotations
@@ -139,10 +142,63 @@ def chosen(field: str | None = None, folder: str | None = None, path: Path | str
     return str(cur.path) if cur else None
 
 
+def split_field(folder: Path | str) -> tuple[Path, str | None]:
+    """畑のフォルダー <プロジェクト>/fields/<名>（その中に seed.toml が無く、プロジェクトに在る）なら (プロジェクト, 名)。
+
+    それ以外は (folder, None)。
+    """
+    p = Path(folder).expanduser()
+    if (
+        not (p / settings_mod.FILENAME).is_file()
+        and p.parent.name == settings_mod.FIELDS_DIR
+        and (p.parent.parent / settings_mod.FILENAME).is_file()
+    ):
+        return p.parent.parent, p.name
+    return p, None
+
+
+def _has_field(project: Path, name: str) -> bool:
+    return (project / settings_mod.FIELDS_DIR / name).is_dir()
+
+
+def locate(
+    field: str | None = None, folder: str | None = None, path: Path | str | None = None
+) -> tuple[str | None, str | None]:
+    """(プロジェクトフォルダー, この回の畑の名)。プロジェクトが None なら settings の既定。
+
+    プロジェクトの順は chosen と同じ。畑のフォルダーを指す --folder や今いるフォルダーは、そのプロジェクトとその畑。
+    --field は、プロジェクトに fields/<名> が在ればその畑、無ければ前の意味（一覧の名。一覧にも無ければ UnknownField）。
+    """
+    if folder:
+        project, name = split_field(folder)
+        if name is None and field and _has_field(project, field):
+            name = field
+        return (str(project) if name else folder), name
+    here = Path.cwd()
+    if not (here / settings_mod.FILENAME).is_file():
+        project, name = split_field(here)
+        if name is not None:
+            return str(project), (field if field and _has_field(project, field) else name)
+    base = chosen(None, None, path)
+    project, name = split_field(Path(base) if base else settings_mod.default_folder())
+    if field and _has_field(project, field):
+        return (str(project) if base or name else None), field
+    if name is not None and not field:  # 既定（SEED_FOLDER）が畑のフォルダー
+        return str(project), name
+    got = chosen(field, None, path)
+    return got, None
+
+
 def resolve(field: str | None = None, folder: str | None = None, path: Path | str | None = None) -> Path:
-    """プロジェクトフォルダー。--folder > 今いるフォルダー（seed.toml がある）> --field > current > SEED_FOLDER > 既定 ~/seed。"""
-    got = chosen(field, folder, path)
-    return Path(got).expanduser() if got else settings_mod.default_folder()
+    """記録のフォルダー。プロジェクトは --folder > 今いるフォルダー（seed.toml がある）> --field > current
+    > SEED_FOLDER > 既定 ~/seed。プロジェクトに fields/ があり、畑（--field か seed.toml の field）が在ればその畑の
+    フォルダー。field が空ならプロジェクト全体で、プロジェクトフォルダー。"""
+    got, name = locate(field, folder, path)
+    project = Path(got).expanduser() if got else settings_mod.default_folder()
+    name = name or settings_mod.read_field(project)
+    if name and _has_field(project, name):
+        return project / settings_mod.FIELDS_DIR / name
+    return project
 
 
 def switch_field(name: str, path: Path | str | None = None) -> Path:
@@ -163,6 +219,18 @@ def selected_name(fl: Fields, root: Path) -> str | None:
         except OSError:
             continue
     return fl.current if fl.get(fl.current) else None
+
+
+def name_of(fl: Fields, root: Path) -> str | None:
+    """root と同じフォルダーの畑の名。無ければ None（current には倒れない。上の端に出す名はこれ）。"""
+    root = Path(root).expanduser()
+    for f in fl.fields:
+        try:
+            if f.path.resolve() == root.resolve():
+                return f.name
+        except OSError:
+            continue
+    return None
 
 
 def _home_form(folder: Path) -> str:

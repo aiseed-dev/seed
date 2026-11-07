@@ -824,11 +824,22 @@ class Folder:
     bulk: Path | None = (
         None  # 重い物（originals/）を置く別の盤。無ければ root の中（keep.py、seed.toml の bulk）
     )
+    project: Path | None = None  # fields/<名>/ の畑の時、プロジェクトの根（設計書 §5.12）。それ以外は None
+    whole: bool = False  # 畑が幾つもあるプロジェクトの全体（root は根）。根そのものの観察は持たない
 
     def __post_init__(self) -> None:
         self.root = Path(self.root).expanduser()
         if self.bulk is not None:
             self.bulk = Path(self.bulk).expanduser()
+        if self.project is not None:
+            self.project = Path(self.project).expanduser()
+
+    def shared(self, name: str) -> Path:
+        """共有の物（skill、plugins、CLAUDE.md）の道。畑に在ればそれ、無ければプロジェクトの根の物。"""
+        own = self.root / name
+        if self.project is None or own.exists():
+            return own
+        return self.project / name
 
     @property
     def photos(self) -> Path:
@@ -874,8 +885,8 @@ class Folder:
 
     @property
     def skill(self) -> Path:
-        """手引きの写し。本人が直す物（記録の形 §9）。写すのは cli の seed init。"""
-        return self.root / "skill"
+        """手引きの写し。本人が直す物（記録の形 §9）。写すのは cli の seed init。畑に無ければプロジェクトの根の物。"""
+        return self.shared("skill")
 
     def init(self) -> None:
         for d in (self.photos, self.observations, self.public):
@@ -893,6 +904,8 @@ class Folder:
         return self.observations / obs.filename
 
     def list_observations(self) -> list[Path]:
+        if self.whole:
+            return []
         return sorted(self.observations.glob("*.md")) if self.observations.exists() else []
 
     def previous_observation(self, before: Observation, within_m: float = 100.0) -> Observation | None:

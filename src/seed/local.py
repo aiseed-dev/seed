@@ -643,12 +643,23 @@ TALK_COMMANDS = (
     "ledger",
     "weather",
     "procedure",
+    "field",  # 畑を作る・選ぶ・一覧（seed field new/use/list。11-07）
 )
 
 
-def talk_rules(folder: Folder, latest: str | None, language: str) -> str:
-    """話す時の決まり（手引きの後ろに足す）。"""
+def talk_rules(folder: Folder, latest: str | None, language: str, fields: list[str] | None = None) -> str:
+    """話す時の決まり（手引きの後ろに足す）。fields はプロジェクト全体の時の畑の名（設計書 §5.12）。"""
     root = folder.root
+    whole = (
+        [
+            "このプロジェクトには畑が幾つもあります: "
+            + "、".join(f"fields/{n}/" for n in fields)
+            + "。それぞれに観察があります。畑の名を言われたらその畑のフォルダーで seed の命令を使います"
+            + f"（--folder {root}/fields/<名>）。畑を作るのは `seed field new <名>`、選ぶのは `seed field use <名>` です。",
+        ]
+        if fields
+        else []
+    )
     return "\n".join(
         [
             "# アプリの「話す」で",
@@ -661,6 +672,7 @@ def talk_rules(folder: Folder, latest: str | None, language: str) -> str:
             f"一番新しい観察は `{latest}` です。本人が観察を言わない時は、これの事です。"
             if latest
             else "観察はまだありません。",
+            *whole,
             "",
             "## 読みの間違いを言われた時",
             '1. 違うと言われた行に `seed mark --folder … <観察> <key> wrong --reason "<本人の言葉>" --text "<行の一部>"` で印を付けます。',
@@ -764,6 +776,7 @@ def talk(
     session: str | None = None,
     model: str | None = None,
     timeout: float = TALK_TIMEOUT_S,
+    fields: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """言葉を手元の claude（Claude Code）に渡し、(返事, 会話の id) を返す。次はその id で続ける。"""
     exe = available()
@@ -771,7 +784,7 @@ def talk(
         raise LocalError("local_missing", "claude not found")
     paths = folder.list_observations()
     latest = paths[-1].stem if paths else None
-    system = system_prompt(folder) + "\n\n---\n\n" + talk_rules(folder, latest, language)
+    system = system_prompt(folder) + "\n\n---\n\n" + talk_rules(folder, latest, language, fields)
     cmd = talk_command(exe, text, system, session, model)
     data = _run(cmd, folder.root, timeout, talk_env(folder))
     _check(data)

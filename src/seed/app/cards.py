@@ -497,7 +497,7 @@ def settings_card(app: App) -> list[ft.Control]:
     # 畑を二つ以上持っていれば、切り替え
     fl = fields_mod.load_fields()
     if len(fl.fields) >= 2:
-        now = fields_mod.selected_name(fl, app.folder.root)
+        now = fields_mod.selected_name(fl, app.project)
 
         def switch(name: str):
             async def h(e) -> None:
@@ -543,7 +543,10 @@ def settings_card(app: App) -> list[ft.Control]:
 
 
 def project_sheet(app: App) -> ft.BottomSheet:
-    """プロジェクトフォルダーを選ぶ下の板。今のフォルダー、畑の一覧（今のは印をつけて押せない）、PC なら別のフォルダーを開く。"""
+    """プロジェクトフォルダーを選ぶ下の板。今のフォルダー、畑の一覧（今のは印をつけて押せない）、PC なら別のフォルダーを開く。
+
+    畑が幾つもあるプロジェクトでは、上に「プロジェクト全体」と畑の並び（設計書 §5.12）、細い線の下に別のプロジェクト。
+    """
     t = app.t
     fl = fields_mod.load_fields()
     now = app.project_name
@@ -562,10 +565,25 @@ def project_sheet(app: App) -> ft.BottomSheet:
         close()
         await app.pick_folder()
 
+    def choose(name: str):
+        async def h(e) -> None:
+            close()
+            await app.choose_field(name)
+
+        return h
+
     rows: list[ft.Control] = [
         ft.Text(t("project_current"), weight=ft.FontWeight.BOLD),
         theme.muted(app.folder_label),
     ]
+    if app.fields:
+        here = app.field_name
+        for name, label in [("", t("project_whole")), *((f.root.name, f.root.name) for f in app.fields)]:
+            on = name == (here or "")
+            rows.append(
+                ft.TextButton(label, icon=ft.Icons.CHECK if on else None, disabled=on, on_click=choose(name))
+            )
+        rows.append(ft.Divider(height=1, thickness=1))
     for n in fl.names:
         here = n == now
         rows.append(

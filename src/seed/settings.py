@@ -15,7 +15,8 @@ import os
 import secrets
 import sys
 import tomllib
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
+from dataclasses import field as _field  # 欄の名 field（今の畑）と重ならないように
 from pathlib import Path
 
 from . import lang
@@ -41,6 +42,7 @@ COMMENTS = {
     "keep": " / ".join(KEEP_LEVELS) + "。どれだけ残すか（seed keep で変える）",
     "read": "local / key / server。アプリで Claude を呼ぶ所（読み取りと話す）。空なら手元の Claude、自分の鍵、サーバーの順",
     "claude_model": "自分の鍵で呼ぶモデル。空なら claude-opus-5-5。費用は本人に掛かる（claude-sonnet-5-5、claude-haiku-5-5 は安い）",
+    "field": "今の畑（fields/ の下のフォルダーの名）。空ならプロジェクト全体（seed field use で変える）",
     "bulk": "重い物（写真の元 originals/）を置く別の盤の道。空なら記録のフォルダーの中（seed keep --bulk で変える）",
 }
 
@@ -61,23 +63,60 @@ class Settings:
     place_level: str = "city"
     keep: str = "photos"
     bulk: str = ""
+    field: str = ""  # 今の畑（設計書 §5.12）。fields/ が無いプロジェクトでは使わない
     read: str = ""  # Claude を呼ぶ所（local / key / server）。空なら在る物を ROUTES の順に
     claude_model: str = ""  # 自分の鍵で呼ぶモデル。空なら DEFAULT_CLAUDE_MODEL
     token: str = ""
     invite: str = ""
     draw_token: str = ""
-    anthropic_key: str = field(default="", repr=False)  # 値を repr（例外の文、ログ）に出さない
-    extra: dict = field(default_factory=dict)  # 知らない鍵。消さずに書き戻す
-    path: Path | None = field(default=None, compare=False)
-    override_url: str | None = field(default=None, compare=False)  # この回だけのサーバー。書かない
-    credentials: Path | None = field(default=None, compare=False)  # 秘密の置き場
-    cred_extra: dict = field(default_factory=dict, compare=False)  # credentials の知らない鍵
+    anthropic_key: str = _field(default="", repr=False)  # 値を repr（例外の文、ログ）に出さない
+    extra: dict = _field(default_factory=dict)  # 知らない鍵。消さずに書き戻す
+    path: Path | None = _field(default=None, compare=False)
+    override_url: str | None = _field(default=None, compare=False)  # この回だけのサーバー。書かない
+    credentials: Path | None = _field(default=None, compare=False)  # 秘密の置き場
+    cred_extra: dict = _field(default_factory=dict, compare=False)  # credentials の知らない鍵
     # credentials に別の値があって移せなかった秘密。seed.toml に残して書き戻す（消すと失う）
-    kept_inline: set = field(default_factory=set, compare=False)
+    kept_inline: set = _field(default_factory=set, compare=False)
+    # この回だけの畑（--field、畑のフォルダーを指す --folder）。書かない
+    pick: str | None = _field(default=None, compare=False)
+
+    @property
+    def project(self) -> Path:
+        """プロジェクトフォルダー（seed.toml の在る所）。"""
+        return Path(self.folder).expanduser()
+
+    @property
+    def field_names(self) -> list[str]:
+        """プロジェクトの畑（fields/ の下のフォルダー）の名、名の順。fields/ が無いか空なら []。"""
+        return field_names(self.project)
+
+    @property
+    def current_field(self) -> str | None:
+        """選んでいる畑の名。畑が一つ（fields/ が無い）か、プロジェクト全体なら None。"""
+        name = self.pick if self.pick is not None else self.field
+        return name if name and name in self.field_names else None
+
+    @property
+    def whole(self) -> bool:
+        """畑が幾つもあるプロジェクトの全体を見ている。"""
+        return bool(self.field_names) and self.current_field is None
 
     @property
     def records(self) -> Folder:
-        return Folder(Path(self.folder), bulk=Path(self.bulk).expanduser() if self.bulk else None)
+        bulk = Path(self.bulk).expanduser() if self.bulk else None
+        name = self.current_field
+        if name is not None:
+            return self.field_folder(name)
+        return Folder(self.project, bulk=bulk, whole=self.whole)
+
+    def field_folder(self, name: str) -> Folder:
+        """プロジェクトの畑一つの Folder（全体の時に畑ごとに見る）。"""
+        bulk = Path(self.bulk).expanduser() if self.bulk else None
+        return Folder(
+            self.project / FIELDS_DIR / name,
+            bulk=bulk / FIELDS_DIR / name if bulk else None,
+            project=self.project,
+        )
 
     @property
     def model(self) -> str:
@@ -96,6 +135,8 @@ class Settings:
             if f.name in NOT_WRITTEN:
                 continue
             if f.name in SECRETS and f.name not in self.kept_inline:
+                continue
+            if f.name == "field" and not self.field:  # 畑が一つのプロジェクトには書かない
                 continue
             line = f"{f.name} = {_toml_str(getattr(self, f.name))}"
             if f.name in COMMENTS:
@@ -150,7 +191,33 @@ class Settings:
         return s
 
 
-NOT_WRITTEN = frozenset({"extra", "path", "override_url", "credentials", "cred_extra", "kept_inline"})
+NOT_WRITTEN = frozenset({"extra", "path", "override_url", "credentials", "cred_extra", "kept_inline", "pick"})
+FIELDS_DIR = "fields"  # プロジェクトの中の畑の置き場（設計書 §5.12）
+
+
+def field_names(project: Path | str) -> list[str]:
+    """プロジェクトの畑の名（fields/ の下のフォルダー。. で始まる物は除く）。"""
+    d = Path(project).expanduser() / FIELDS_DIR
+    if not d.is_dir():
+        return []
+    return sorted(p.name for p in d.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+
+def read_field(project: Path | str) -> str:
+    """seed.toml の field を読むだけ（作らない、秘密を読まない）。無いか読めなければ空。"""
+    try:
+        data = tomllib.loads(settings_path(project).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return ""
+    return str(data.get("field") or "")
+
+
+def write_field(project: Path | str, name: str) -> Settings:
+    """seed.toml の field を name（空ならプロジェクト全体）にして書く。"""
+    st = load(project)
+    st.field = name
+    st.save()
+    return st
 
 
 def write_secret(path: Path, text: str) -> None:

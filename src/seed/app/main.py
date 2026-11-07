@@ -27,6 +27,7 @@ from seed.app import gallery, plugins, talk, theme
 from seed.app.strings import s
 from seed.cli import prepare
 from seed.client import Client
+from seed.records import Folder
 
 log = logging.getLogger("seed.app")
 
@@ -60,12 +61,36 @@ SCREENS = [
 ]
 
 
+class FieldApp:
+    """プロジェクト全体の時に、畑一つ分として部品を作るための app。folder だけ替え、ほかは元の app の物。"""
+
+    def __init__(self, app: App, folder: Folder) -> None:
+        object.__setattr__(self, "_app", app)
+        object.__setattr__(self, "folder", folder)
+
+    whole = False  # 畑一つ分
+
+    @property
+    def field_name(self) -> str:
+        return self.folder.root.name
+
+    def __getattr__(self, name: str):
+        return getattr(self._app, name)
+
+    def __setattr__(self, name: str, value) -> None:
+        setattr(self._app, name, value)
+
+
 class App:
     """一つの窓の状態。"""
 
     def __init__(self, page: ft.Page, folder: str | None = None) -> None:
         self.page = page
-        folder = fields_mod.chosen(None, folder)  # 畑の一覧の current も見る（記録の形 §19）
+        got, pick = fields_mod.locate(None, folder)  # 畑の一覧の current も見る（記録の形 §19）
+        if pick is not None:  # 畑のフォルダー（今いる所か、渡された物）
+            base = Path(got).expanduser() if got else settings_mod.default_folder()
+            got = str(base / settings_mod.FIELDS_DIR / pick)
+        folder = got
         self.index: dict | None = None
         self.picker = ft.FilePicker()  # 参照を持っておく（無いと外される）
         self.open_folder(folder)
@@ -75,7 +100,12 @@ class App:
         old = getattr(self, "state", {}).get("remote")
         if old is not None:  # 前の畑のリモートコントロールは止める
             old.stop()
-        self.settings = settings_mod.load(folder)
+        project, pick = fields_mod.split_field(folder) if folder else (None, None)
+        self.settings = settings_mod.load(str(project) if project else None)
+        self.settings.pick = pick  # 畑のフォルダーを開いた時は、その畑（seed.toml の field は変えない）
+        self.project: Path = self.settings.project
+        self.fields: list[Folder] = [self.settings.field_folder(n) for n in self.settings.field_names]
+        self.field_name: str | None = self.settings.current_field  # None はプロジェクト全体か、畑が一つ
         self.folder = self.settings.records
         prepare(self.folder, self.settings.language)  # 手引きの写しと CLAUDE.md も（もうあれば触らない）
         self.lang = self.settings.language
@@ -88,6 +118,20 @@ class App:
         """畑を切り替える: current を書き、設定とフォルダーを読み直して、今の画面を描き直す。"""
         folder = fields_mod.switch_field(name)
         self.open_folder(str(folder))
+        await self.go(urlparse(self.page.route or "/").path or "/")
+
+    @property
+    def whole(self) -> bool:
+        """畑が幾つもあるプロジェクトの全体を見ている（設計書 §5.12）。"""
+        return bool(self.fields) and self.field_name is None
+
+    def for_field(self, folder: Folder) -> FieldApp:
+        return FieldApp(self, folder)
+
+    async def choose_field(self, name: str) -> None:
+        """プロジェクトの中の畑（空ならプロジェクト全体）を選ぶ: seed.toml の field を書き、開き直して描き直す。"""
+        settings_mod.write_field(self.project, name)
+        self.open_folder(str(self.project))
         await self.go(urlparse(self.page.route or "/").path or "/")
 
     async def open_other_folder(self, folder: str) -> None:
@@ -110,7 +154,7 @@ class App:
         old = self.state.pop("remote", None)
         if old is not None:
             old.stop()
-        name = fields_mod.selected_name(fields_mod.load_fields(), self.folder.root) or self.folder.root.name
+        name = self.place_name
         self.state["remote_name"] = name
         self.state["remote"] = await asyncio.to_thread(remote.Remote.start, self.folder.root, name)
         self.refresh()
@@ -151,8 +195,15 @@ class App:
     @property
     def project_name(self) -> str:
         """プロジェクトフォルダーの名: 一覧にある畑の名、無ければフォルダーの名。"""
-        name = fields_mod.selected_name(fields_mod.load_fields(), self.folder.root)
-        return name or self.folder.root.name
+        name = fields_mod.name_of(fields_mod.load_fields(), self.project)  # 一覧に無ければ current に倒れない
+        return name or self.project.name
+
+    @property
+    def place_name(self) -> str:
+        """上の端の名: 畑を選んでいれば「<プロジェクト> / <畑>」、それ以外は「<プロジェクト>」。"""
+        if self.fields and self.field_name:
+            return f"{self.project_name} / {self.field_name}"
+        return self.project_name
 
     def show_projects(self, e=None) -> None:
         from seed.app import cards  # cards は main を読むので、使う時に取る
@@ -202,7 +253,7 @@ class App:
         return ft.View(
             route=route,
             appbar=ft.AppBar(
-                title=ft.Text(f"{self.project_name} — {self.screen_name(screens[idx])}"),
+                title=ft.Text(f"{self.place_name} — {self.screen_name(screens[idx])}"),
                 actions=[
                     ft.IconButton(
                         ft.Icons.FOLDER_OPEN_OUTLINED,

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""seed コマンド。init / observe / identify / mark / marks / say / plan / publish / app / skill-path / keep / prune / invite / origin / grow / lot / ledger / weather / procedure。
+"""seed コマンド。init / observe / identify / mark / marks / say / plan / publish / app / skill-path / keep / prune / invite / origin / grow / lot / ledger / weather / procedure / field / project。
 
 行を対話で選ぶのはアプリに任せ、publish は判定の付いた読みの行と data と record を全部入れる。
 文は本人の言語（seed.toml の language）で出す。
@@ -70,7 +70,7 @@ def package_skill() -> Path | None:
 
 
 def copy_skill(folder: Folder) -> str:
-    """共通の手引きを ~/seed/skill/ に写す（記録の形 §9）。あれば触らない。
+    """共通の手引きを ~/seed/skill/ に写す（記録の形 §9）。あれば触らない。畑は、畑にもプロジェクトの根にも無ければ根に写す。
 
     'copied'、'kept'（もうある。本人の物なので上書きしない）、'missing'（共通の手引きが無い）。
     """
@@ -86,11 +86,13 @@ def copy_skill(folder: Folder) -> str:
 def prepare(folder: Folder, language: str | None = None) -> str:
     """フォルダーを作り、手引きを写す。seed init とアプリの始まり。
 
-    language を渡すと CLAUDE.md も置く（もうあれば触らない）。
+    language を渡すと CLAUDE.md も置く（もうあれば触らない）。CLAUDE.md と手引きはプロジェクトの根に一つ。
+    プロジェクト全体（畑が幾つも）の時は、記録の中身は作らない（畑ごとに在る）。
     """
-    folder.init()
+    if not folder.whole:
+        folder.init()
     if language is not None:
-        claude_md.write(folder.root, language)
+        claude_md.write(folder.project or folder.root, language)
     return copy_skill(folder)
 
 
@@ -491,7 +493,7 @@ def cmd_init(st: Settings, args) -> int:
         _err(s("skill_missing", st.language))
     else:
         _out(s(f"skill_{got}", st.language, path=st.records.skill))
-    _out(s(f"claude_md_{claude_md.write(st.records.root, st.language)}", st.language))
+    _out(s(f"claude_md_{claude_md.write(st.records.project or st.records.root, st.language)}", st.language))
     if not _set_keep(st, getattr(args, "keep", None), getattr(args, "bulk", None)):
         return 1
     _keep_status(st)
@@ -1430,33 +1432,127 @@ def cmd_procedure(st: Settings, args) -> int:
     return 0
 
 
-# ---------------------------------------------------------------- seed field（畑の一覧。記録の形 §19）
+# ---------------------------------------------------------------- seed project（プロジェクトの一覧。記録の形 §19）
 
 
-def cmd_field(st: Settings | None, args) -> int:
-    """畑の一覧を足す・見る・切り替える。seed.toml は読まない・作らない。"""
+def cmd_project(st: Settings | None, args) -> int:
+    """プロジェクトの一覧（fields.toml）を足す・見る・切り替える。seed.toml は読まない・作らない。"""
     lg = lang.default_language(None)
     fl = fields_mod.load_fields()
     path = fields_mod.fields_path()
     if args.act == "add":
         fl.add(args.name, args.path)
         fields_mod.save_fields(fl)
-        _out(s("field_added", lg, name=args.name, folder=args.path, path=path))
+        _out(s("project_added", lg, name=args.name, folder=args.path, path=path))
         return 0
     if args.act == "use":
         try:
             f = fl.use(args.name)
         except fields_mod.UnknownField:
-            _err(s("field_unknown", lg, name=args.name, path=path))
+            _err(s("project_unknown", lg, name=args.name, path=path))
             return 1
         fields_mod.save_fields(fl)
-        _out(s("field_used", lg, name=f.name, folder=f.folder))
+        _out(s("project_used", lg, name=f.name, folder=f.folder))
         return 0
     if not fl.fields:
-        _out(s("field_none", lg, path=path))
+        _out(s("project_none", lg, path=path))
         return 0
     for f in fl.fields:
         _out(f"{'*' if f.name == fl.current else ' '} {f.name}\t{f.folder}")
+    return 0
+
+
+# ---------------------------------------------------------------- seed field（プロジェクトの中の畑 fields/<名>/。設計書 §5.12）
+
+
+def _field_project(args) -> Path:
+    """畑の命令のプロジェクト。--folder > 今いるフォルダー > current > SEED_FOLDER > 既定（--field は見ない）。"""
+    got, _ = fields_mod.locate(None, getattr(args, "folder", None))
+    return Path(got).expanduser() if got else fields_mod.split_field(settings_mod.default_folder())[0]
+
+
+# 畑一つ分の記録（根に記録を置いていたプロジェクトが初めて畑を作る時、その畑へ移す物）。共有の物は根に残す
+ROOT_RECORDS = (
+    "observations", "photos", "originals", "place.md", "plan.md", "next.md", "connections.md", "public",
+    "lots.md", "ledger.md", "weather", "procedures", "origin", "grow",
+)  # fmt: skip
+
+
+def move_root_records(st: Settings, folder: Folder) -> list[str]:
+    """根に記録（observations/ か photos/）があれば、畑 folder へ移す。移した物の名を返す（無ければ []）。"""
+    root = st.project
+    if not ((root / "observations").exists() or (root / "photos").exists()):
+        return []
+    folder.root.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for n in ROOT_RECORDS:
+        src = root / n
+        if src.exists() and not (folder.root / n).exists():
+            shutil.move(str(src), str(folder.root / n))
+            moved.append(n)
+    bulk = Path(st.bulk).expanduser() if st.bulk else None
+    if bulk is not None and (bulk / "originals").exists() and folder.bulk is not None:
+        folder.bulk.mkdir(parents=True, exist_ok=True)
+        if not (folder.bulk / "originals").exists():
+            shutil.move(str(bulk / "originals"), str(folder.bulk / "originals"))
+            moved.append(str(bulk / "originals"))
+    return moved
+
+
+def cmd_field(st: Settings | None, args) -> int:
+    """プロジェクトの中の畑を作る・選ぶ・見る。前の seed field add は seed project add に回す。"""
+    lg = lang.default_language(None)
+    if args.act == "add":  # 前の名（プロジェクトの一覧に足す）
+        _err(s("field_add_alias", lg))
+        return cmd_project(st, args)
+    project = _field_project(args)
+    names = settings_mod.field_names(project)
+    if args.act == "new":
+        name = args.name
+        if not name or "/" in name or "\\" in name or name.startswith("."):
+            _err(s("field_new_bad", lg, name=name))
+            return 1
+        st = settings_mod.load(project)
+        lg = st.language
+        folder = st.field_folder(name)
+        existed = folder.root.exists()
+        moved = move_root_records(st, folder) if not names else []
+        if moved:
+            _out(s("field_new_moved", lg, name=name, items="、".join(moved)))
+        prepare(folder, st.language)
+        settings_mod.write_field(project, name)  # 作った人は次にそこで記録する
+        _out(
+            s(
+                "field_new_kept" if existed and not moved else "field_new_done",
+                lg,
+                name=name,
+                folder=folder.root,
+            )
+        )
+        return 0
+    if args.act == "use":
+        if args.name in ("all", ""):
+            settings_mod.write_field(project, "")
+            _out(s("field_set_whole", lg, project=project))
+            return 0
+        if args.name in names:
+            settings_mod.write_field(project, args.name)
+            _out(s("field_set", lg, name=args.name, project=project))
+            return 0
+        if fields_mod.load_fields().get(args.name) is not None:  # 前の意味: プロジェクトの一覧の名
+            _err(s("field_use_project", lg, name=args.name))
+            return cmd_project(st, args)
+        _err(s("field_unknown", lg, name=args.name, project=project, path=fields_mod.fields_path()))
+        return 1
+    if not names:  # 畑が一つのプロジェクト: 前と同じくプロジェクトの一覧を出す
+        if (project / settings_mod.FILENAME).is_file():
+            _err(s("field_none_here", lg, project=project))
+        return cmd_project(st, args)
+    now = settings_mod.read_field(project)
+    now = now if now in names else ""
+    _out(f"{'*' if not now else ' '} {s('field_whole_mark', lg)}")
+    for n in names:
+        _out(f"{'*' if n == now else ' '} {n}\t{project / settings_mod.FIELDS_DIR / n}")
     return 0
 
 
@@ -1469,7 +1565,7 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument(
         "--field",
         default=argparse.SUPPRESS,
-        help="畑の名（seed field add で足した物。--folder があればそちら）",
+        help="畑の名（プロジェクトの fields/ の下の物。無ければ seed project add で足したプロジェクトの名。--folder があればそちら）",
     )
     common.add_argument("--server-url", default=argparse.SUPPRESS, help="この回だけ使うサーバーの URL")
 
@@ -1741,15 +1837,32 @@ def parser() -> argparse.ArgumentParser:
     pc.add_argument("slug", choices=("nochi-3jo",), help="nochi-3jo（農地法 3 条）")
 
     fd = sub.add_parser(
-        "field", parents=[common], help="畑の一覧 ~/.config/seed/fields.toml（畑ごとに記録を分ける）"
+        "field", parents=[common], help="プロジェクトの中の畑 fields/<名>/（畑ごとに記録を分ける）"
     )
     fdsub = fd.add_subparsers(dest="act", required=True)
-    fda = fdsub.add_parser("add", parents=[common], help="畑を一覧に足す（同じ名ならフォルダーを書き換える）")
-    fda.add_argument("name", metavar="NAME", help="畑の名")
-    fda.add_argument("path", metavar="FOLDER", help="その畑の記録のフォルダー")
-    fdsub.add_parser("list", parents=[common], help="畑の一覧（今の畑に *）")
-    fdu = fdsub.add_parser("use", parents=[common], help="今の畑（current）を変える")
-    fdu.add_argument("name", metavar="NAME", help="畑の名")
+    fdn = fdsub.add_parser(
+        "new", parents=[common], help="畑 fields/<名>/ を作る（記録の中身だけ。手引きは根に一つ）"
+    )
+    fdn.add_argument("name", metavar="NAME", help="畑の名")
+    fdsub.add_parser("list", parents=[common], help="このプロジェクトの畑（今の畑に *）")
+    fdu = fdsub.add_parser(
+        "use", parents=[common], help="今の畑（seed.toml の field）を変える。all でプロジェクト全体"
+    )
+    fdu.add_argument("name", metavar="NAME", help="畑の名か all")
+    fda = fdsub.add_parser("add", parents=[common], help="seed project add の前の名")
+    fda.add_argument("name", metavar="NAME", help="プロジェクトの名")
+    fda.add_argument("path", metavar="FOLDER", help="そのプロジェクトのフォルダー")
+
+    pj = sub.add_parser("project", parents=[common], help="プロジェクトの一覧 ~/.config/seed/fields.toml")
+    pjsub = pj.add_subparsers(dest="act", required=True)
+    pja = pjsub.add_parser(
+        "add", parents=[common], help="プロジェクトを一覧に足す（同じ名ならフォルダーを書き換える）"
+    )
+    pja.add_argument("name", metavar="NAME", help="プロジェクトの名")
+    pja.add_argument("path", metavar="FOLDER", help="そのプロジェクトのフォルダー")
+    pjsub.add_parser("list", parents=[common], help="プロジェクトの一覧（今の物に *）")
+    pju = pjsub.add_parser("use", parents=[common], help="今のプロジェクト（current）を変える")
+    pju.add_argument("name", metavar="NAME", help="プロジェクトの名")
 
     sub.add_parser("skill-path", parents=[common], help="手引き skill/ の道を出す")
     return p
@@ -1778,24 +1891,40 @@ COMMANDS = {
     "weather": cmd_weather,
     "procedure": cmd_procedure,
     "field": cmd_field,
+    "project": cmd_project,
 }
+# プロジェクト全体（畑が幾つも）では使えない命令。記録は畑ごとに在る
+FIELD_ONLY = frozenset(
+    {
+        "observe", "identify", "mark", "marks", "say", "plan", "publish", "photos", "prune",
+        "origin", "grow", "lot", "ledger", "weather", "procedure",
+    }
+)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    if args.command == "field":
-        return cmd_field(None, args)
+    if args.command in ("field", "project"):
+        return COMMANDS[args.command](None, args)
     try:
-        args.folder = fields_mod.chosen(getattr(args, "field", None), getattr(args, "folder", None))
+        args.folder, pick = fields_mod.locate(getattr(args, "field", None), getattr(args, "folder", None))
     except fields_mod.UnknownField as e:
-        _err(s("field_unknown", lang.default_language(None), name=e.name, path=fields_mod.fields_path()))
+        _err(s("project_unknown", lang.default_language(None), name=e.name, path=fields_mod.fields_path()))
         return 1
     if args.command == "app":
+        if pick is not None:  # プロジェクトの畑を指した: アプリはその畑で開く
+            base = Path(args.folder).expanduser() if args.folder else settings_mod.default_folder()
+            args.folder = str(base / settings_mod.FIELDS_DIR / pick)
         return cmd_app(None, args)
     readonly = getattr(args, "list", False) or getattr(args, "readonly", False)
-    if args.command in ("skill-path", "marks", "origin", "grow") or readonly:
-        return COMMANDS[args.command](settings_mod.load(args.folder, create=False), args)  # 何も作らない
-    st = settings_mod.load(args.folder)
+    quiet = args.command in ("skill-path", "marks", "origin", "grow") or readonly
+    st = settings_mod.load(args.folder, create=not quiet)  # quiet は何も作らない
+    st.pick = pick
+    if args.command in FIELD_ONLY and st.whole:
+        _err(s("field_need", st.language, names=", ".join(st.field_names)))
+        return 1
+    if quiet:
+        return COMMANDS[args.command](st, args)
     st.override_url = getattr(args, "server_url", None)
     try:
         return COMMANDS[args.command](st, args)
