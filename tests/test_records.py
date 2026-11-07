@@ -335,6 +335,25 @@ def test_previous_observation_same_place(tmp_path: Path):
     assert f.skill == f.root / "skill" and f.plan == f.root / "plan.md"
 
 
+def test_previous_observation_same_kind(tmp_path: Path):
+    """候補地の観察の前の観察に、自分の畑の観察を渡さない（その逆も）。"""
+    f = Folder(tmp_path / "seed")
+    f.init()
+    own = Observation.parse(EXAMPLE)  # 11-05 14:21、自分の畑
+    cand = Observation.parse(EXAMPLE.replace("time: '14:21:07'", "time: '15:00:00'"))
+    cand.kind = "candidate"  # 同じ場所（100 m 以内）の候補地
+    own2 = Observation.parse(EXAMPLE.replace("date: '2026-11-05'", "date: '2026-11-06'"))
+    cand2 = Observation.parse(EXAMPLE.replace("date: '2026-11-05'", "date: '2026-11-07'"))
+    cand2.kind = "candidate"
+    for o in (own, cand, own2, cand2):
+        o.write(f.observation_path(o))
+    assert f.previous_observation(cand) is None  # 前にあるのは自分の畑の物だけ
+    prev = f.previous_observation(own2)
+    assert prev is not None and prev.date == "2026-11-05" and prev.kind == "own"  # 間の候補地は飛ばす
+    prev = f.previous_observation(cand2)
+    assert prev is not None and prev.time == "15:00:00" and prev.kind == "candidate"
+
+
 # ---- 言語
 
 

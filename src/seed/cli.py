@@ -734,12 +734,14 @@ def cmd_observe(st: Settings, args) -> int:
     _fill_weather(folder, lg)
     if obs.location:
         loc = obs.location
+        # 端末（会話の記録に残る）には小数 2 桁。ファイルの中は元の精度のまま
+        lat, lon = coarse_coord(loc["center"])
         _out(
             s(
                 "coord",
                 lg,
-                lat=loc["center"][0],
-                lon=loc["center"][1],
+                lat=lat,
+                lon=lon,
                 points=loc["points"],
                 extent=loc["extent_m"],
             )

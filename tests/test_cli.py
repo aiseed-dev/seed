@@ -74,6 +74,16 @@ def test_mark_unknown(seedfolder, capsys):
     assert "見つかりません" in capsys.readouterr().err
 
 
+def test_observe_prints_coarse_coord(seedfolder, photo, capsys):
+    """端末に出す座標は小数 2 桁。観察のファイルの中は元の精度のまま。"""
+    assert cli.main(["observe", "--folder", str(seedfolder), "--claude-code", str(photo)]) == 0
+    out = capsys.readouterr().out
+    assert "34.05" in out and "134.25" in out
+    assert "34.0512" not in out and "134.2534" not in out
+    obs = Observation.read(seedfolder / "observations" / "2026-11-05-142107.md")
+    assert [round(c, 4) for c in obs.location["center"]] == [34.0512, 134.2534]
+
+
 def test_observe_without_server_keeps_observation(seedfolder, photo, capsys):
     code = cli.main(
         ["observe", "--folder", str(seedfolder), "--server-url", "http://127.0.0.1:9", str(photo)]

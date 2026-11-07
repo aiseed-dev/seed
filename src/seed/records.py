@@ -1005,12 +1005,17 @@ class Folder:
         return sorted(self.observations.glob("*.md")) if self.observations.exists() else []
 
     def previous_observation(self, before: Observation, within_m: float = 100.0) -> Observation | None:
-        """同じ場所の、直前の観察。change を書くために読みに渡す。座標が無ければ直前の観察。"""
+        """同じ場所の、直前の観察。change を書くために読みに渡す。座標が無ければ直前の観察。
+
+        同じ kind（自分の畑か候補地か）の物だけから選ぶ。候補地の観察と自分の畑の観察を比べないため。
+        """
         cands = []
         for path in self.list_observations():
             if path.name >= before.filename:
                 continue
             obs = Observation.read(path)
+            if obs.kind != before.kind:
+                continue
             if (
                 before.location
                 and obs.location
