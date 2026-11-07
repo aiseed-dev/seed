@@ -22,12 +22,13 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
-from .. import __version__, index, lang
+from .. import __version__, index, lang, local
 from .. import lookup as L
 from .. import prompts as PR
 from .. import records as R
 from . import connect as C
 from . import gate, pages
+from . import home as H
 from . import publish as P
 from . import read as RD
 from . import talk as TK
@@ -38,6 +39,7 @@ log = logging.getLogger("seed.server")
 
 FIELD_MAX = 16 * 1024  # center、record、place_data、previous、language、token のそれぞれ
 BODY_MAX = PHOTOS_TOTAL_MAX + 6 * FIELD_MAX + 64 * 1024  # multipart の区切りの分の余り
+HOME_BODY_MAX = H.PHOTOS_TOTAL_MAX + 7 * FIELD_MAX + 64 * 1024  # 家のサーバー（元のままの写真）
 # 話すの要求の全体（写真は base64 で 4/3 倍。文の上限と JSON の余り）
 TALK_BODY_MAX = PR.TALK_IMAGES_MAX * PR.TALK_PHOTO_MAX * 4 // 3 + PR.TALK_TOTAL_TEXT_MAX * 2 + 64 * 1024
 JPEG_MAGIC = b"\xff\xd8\xff"
@@ -192,6 +194,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.limits = limits
     app.state.client = client
+    app.state.home_sessions = {}  # 家のサーバーの話す: (呼び名, 畑の道) → Claude Code の会話の id（メモリだけ）
+    home = settings.home
+    body_max = HOME_BODY_MAX if home else BODY_MAX
+    photo_max = H.PHOTO_MAX if home else PHOTO_MAX
+    total_max = H.PHOTOS_TOTAL_MAX if home else PHOTOS_TOTAL_MAX
+    too_large = f"写真は合計 {total_max // (1024 * 1024)} MB まで"
+
+    def can_read() -> bool:
+        return app.state.client is not None or (home is not None and local.available() is not None)
 
     try:
         settings.public_dir.mkdir(parents=True, exist_ok=True)
@@ -201,35 +212,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {
+        out = {
             "version": __version__,
-            "read": app.state.client is not None,
-            "talk": app.state.client is not None
-            and settings.daily_talks > 0,  # 話す口（/api/talk）が使えるか
+            "read": can_read(),
+            "talk": can_read() and settings.daily_talks > 0,  # 話す口（/api/talk）が使えるか
             "lookup": L.available(),
             "model": settings.model,
             "remaining": limits.remaining(),
             "audit": settings.journal.state,  # on | off | error（誰が何をしたかの記録。設計書 §5.9）
             "paused": settings.paused(),  # 受け付けを止めているか（設計書 §5.10）
         }
+        if home is not None:
+            out["home"] = True  # 家のサーバー（設計書 §5.13）。アプリは写真を縮めずに送る
+        return out
 
     async def _multipart(request: Request):
         """写真付きの form をメモリ上で読む（設計書 §9）。(form, None) か (None, 誤りの答え)。"""
-        if int(request.headers.get("content-length") or 0) > BODY_MAX:
-            return None, _error(413, "too_large", detail="写真は合計 8 MB まで")
+        if int(request.headers.get("content-length") or 0) > body_max:
+            return None, _error(413, "too_large", detail=too_large)
         if not request.headers.get("content-type", "").startswith("multipart/form-data"):
             return None, _error(400, "multipart_required")
         parser = MemoryMultiPartParser(
             request.headers,
-            _counted(request.stream(), BODY_MAX),
+            _counted(request.stream(), body_max),
             max_files=PHOTOS_MAX + 1,
             max_fields=10,
             max_part_size=FIELD_MAX,
         )
+        parser.spool_max_size = body_max
         try:
             return await parser.parse(), None
         except TooLarge:
-            return None, _error(413, "too_large", detail="写真は合計 8 MB まで")
+            return None, _error(413, "too_large", detail=too_large)
         except MultiPartException as e:
             return None, _error(400, "bad_form", detail=e.message)
 
@@ -237,7 +251,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_read(request: Request):
         if (closed := _paused(settings)) is not None:
             return closed
-        if app.state.client is None:
+        if not can_read():
             return _error(503, "read_unavailable", detail="このサーバーには API キーが無い")
         form, err = await _multipart(request)
         if err is not None:
@@ -263,10 +277,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not 1 <= len(uploads) <= PHOTOS_MAX:
             return _error(400, "photos", detail=f"写真は 1〜{PHOTOS_MAX} 枚")
         photos = [await f.read() for f in uploads]
-        if any(len(p) > PHOTO_MAX for p in photos):
-            return _error(413, "photo_too_large", detail="写真は 1 枚 2 MB まで（縮小してから送る）")
-        if sum(map(len, photos)) > PHOTOS_TOTAL_MAX:
-            return _error(413, "too_large", detail="写真は合計 8 MB まで")
+        if any(len(p) > photo_max for p in photos):
+            mb = photo_max // (1024 * 1024)
+            return _error(413, "photo_too_large", detail=f"写真は 1 枚 {mb} MB まで（縮小してから送る）")
+        if sum(map(len, photos)) > total_max:
+            return _error(413, "too_large", detail=too_large)
         if not all(p.startswith(JPEG_MAGIC) for p in photos):
             return _error(415, "jpeg_only")
         try:
@@ -287,6 +302,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except LimitReached as e:
             return _error(429, "limit", kind=e.kind, detail="今日はここまで")
 
+        if home is not None:
+            field = str(form.get("field") or "")
+            return await _read_home(photos, center, record, ask, language, field)
         data = await run_in_threadpool(L.data_lines, *center, language) if center else []
         try:
             reading = await RD.read(
@@ -322,6 +340,101 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out.update(refused=True, category=reading.category)
         return out
 
+    async def _read_home(photos, center, record, ask, language, field) -> JSONResponse | dict:
+        """家のサーバーの読み（設計書 §5.13）。写真と観察を畑に置き、PC の Claude Code（無ければ鍵）で読む。"""
+        from .. import cli
+        from .. import client as CL
+        from .. import photos as PH
+
+        st = await run_in_threadpool(H.project, home)
+        folder = H.folder_for(st, field)
+        try:
+            obs = await run_in_threadpool(
+                H.store, st, folder, photos, R.parse_lines(record or ""), ask
+            )
+        except PH.PhotoError:
+            return _error(415, "jpeg_only")
+        path = folder.observation_path(obs)
+        if obs.location:
+            center = tuple(obs.location["center"])
+        data = await run_in_threadpool(L.data_lines, *center, language) if center else []
+        before = list(obs.reading)
+        if local.available() is not None:
+            try:
+                got = await run_in_threadpool(cli.read_local, st, folder, obs)
+            except CL.ClientError as e:
+                log.warning("家のサーバーの読み: Claude Code が読めなかった（%s）", e.word)
+                return _error(502, "read_failed", kind=e.word)
+            model, usage = got.model, got.usage
+        else:
+            prev = folder.previous_observation(obs)
+            try:
+                reading = await RD.read(
+                    app.state.client,
+                    model=settings.model,
+                    skill_dir=settings.skill_dir,
+                    photos=await run_in_threadpool(PH.shrunk, folder, obs),
+                    data=data,
+                    place_data=folder.place_data(),
+                    previous=prev.render() if prev else None,
+                    record=R.render_lines([*folder.place_record(), *obs.record]) or None,
+                    language=language,
+                    ask=list(obs.ask),
+                    names=[Path(r).stem for r in obs.photos],
+                )
+            except RD.ReadError as e:
+                limits.spend(e.usage)
+                return _error(e.status, "read_failed", kind=e.kind)
+            limits.spend(reading.usage)
+            if reading.refused:
+                return {"lines": [], "data": [], "model": reading.model, "usage": reading.usage,
+                        "markdown": "", "refused": True, "category": reading.category}  # fmt: skip
+            CL.apply_reading(obs, CL.Reading(reading.lines, [], reading.model, reading.usage))
+            cli.keep_model_lines(obs, before)
+            model, usage = reading.model, reading.usage
+        H.add_data(folder, obs, data)
+        await run_in_threadpool(obs.write, path)
+        log.info("read home photos=%d model=%s", len(photos), model)
+        lines = list(obs.reading)
+        return {
+            "lines": [{"key": x.key, "text": x.text, "confidence": x.confidence} for x in lines],
+            "data": [{"key": x.key, "text": x.text} for x in data],
+            "model": model,
+            "usage": usage or {},
+            "markdown": RD.markdown(model, lines, data),
+        }
+
+    async def _talk_home(body: dict, who: str, code: str | None) -> JSONResponse | dict:
+        """家のサーバーの話す。最後の本人の言葉を、その畑のフォルダーで PC の Claude Code に渡す。"""
+        from .. import client as CL
+
+        actor = who or "?"
+        text = H.last_user_text(body.get("messages"))
+        if text is None:
+            settings.journal.record(actor, "talk", "断った: bad_talk")
+            return _error(400, "bad_talk", detail=["本人の言葉が無い"])
+        if len(text) > PR.TALK_TOTAL_TEXT_MAX:
+            settings.journal.record(actor, "talk", "断った: too_large")
+            return _error(413, "too_large", detail=["言葉が長すぎる"])
+        language = lang.normalize(str(body.get("language") or "")) or lang.FALLBACK
+        st = await run_in_threadpool(H.project, home)
+        folder = H.folder_for(st, str(body.get("field") or ""))
+        try:
+            limits.take_talk((code or "").strip() or "home")
+        except LimitReached as e:
+            settings.journal.record(actor, "talk", f"断った: limit {e.kind}")
+            return _error(429, "limit", kind=e.kind, detail=["今日はここまで"])
+        settings.journal.record(actor, "talk", "通した")
+        key = (who, str(folder.root))
+        sessions = app.state.home_sessions
+        try:
+            said, session = await run_in_threadpool(local.talk, folder, text, language, sessions.get(key))
+        except CL.ClientError as e:
+            return _error(502, "talk_failed", kind=e.word)
+        if session:
+            sessions[key] = session
+        return H.reply(said)
+
     @app.post("/api/talk")
     async def api_talk(request: Request):
         """話す（設計書 §7.6）。やり取りを受け、サーバーの system と道具の形とサーバーの鍵で Claude を一回呼ぶ。
@@ -330,7 +443,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if (closed := _paused(settings)) is not None:
             return closed
-        if app.state.client is None:
+        talk_home = home is not None and local.available() is not None
+        if app.state.client is None and not talk_home:
             return _error(503, "talk_unavailable", detail=["このサーバーには Claude の鍵が無い"])
         if settings.daily_talks <= 0:
             return _error(503, "talk_closed", detail=["このサーバーは今、話す口を閉じている"])
@@ -353,6 +467,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         who = _invite(settings, code, "talk", note=False)
         if not isinstance(who, str):
             return who
+        if talk_home:
+            return await _talk_home(body, who, code)
         actor = who or "?"
         try:
             messages = PR.clean_messages(body.get("messages"))

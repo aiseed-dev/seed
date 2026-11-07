@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""seed コマンド。init / observe / identify / mark / marks / say / plan / publish / app / skill-path / keep / prune / invite / origin / grow / lot / ledger / weather / procedure / field / project。
+"""seed コマンド。init / home / observe / identify / mark / marks / say / plan / publish / app / skill-path / keep / prune / invite / origin / grow / lot / ledger / weather / procedure / field / project。
 
 行を対話で選ぶのはアプリに任せ、publish は判定の付いた読みの行と data と record を全部入れる。
 文は本人の言語（seed.toml の language）で出す。
@@ -240,22 +240,40 @@ def keep_model_lines(obs: Observation, before: list[Line]) -> None:
         obs.reading = sort_reading([*obs.reading, *kept])
 
 
-def read_on_server(st: Settings, folder: Folder, obs: Observation) -> None:
-    """サーバーで読み、観察に入れる。失敗は ClientError のまま上げる。"""
+def home_photos(folder: Folder, obs: Observation, sources: list[Path | str] | None = None) -> list[bytes]:
+    """家のサーバーへ送る写真（縮めず、座標の入った元のまま）。sources（撮った元の JPEG）があればそれ。"""
+    if sources:
+        got = [Path(p).read_bytes() for p in sources]
+        if all(b.startswith(b"\xff\xd8\xff") for b in got):
+            return got
+    return [(folder.root / r).read_bytes() for r in obs.photos]
+
+
+def read_on_server(
+    st: Settings, folder: Folder, obs: Observation, sources: list[Path | str] | None = None
+) -> None:
+    """サーバーで読み、観察に入れる。失敗は ClientError のまま上げる。
+
+    家のサーバー（seed home。設計書 §5.13）には、写真を縮めずに（sources があれば撮った元を）送り、
+    畑の名を添える。写真と観察の本物は PC に置かれる。
+    """
     from . import client, photos
 
     center = obs.location["center"] if obs.location else None
     prev = folder.previous_observation(obs)  # 同じ場所の直前の観察。あれば読みに change が付く
     before = list(obs.reading)
+    home = client.is_home(st.server)
     with client.Client(st.server, st.token, st.language, invite=st.invite) as c:
         reading = c.read(
-            photos.shrunk(folder, obs),
+            home_photos(folder, obs, sources) if home else photos.shrunk(folder, obs),
             center,
             folder.place_data(),
-            [*folder.place_record(), *obs.record],  # 場所について本人が確かめたことも、本人の言葉として渡す
+            # 場所について本人が確かめたことも、本人の言葉として渡す。家のサーバーは観察に書くので観察の行だけ
+            obs.record if home else [*folder.place_record(), *obs.record],
             previous=prev.render() if prev else None,
             ask=obs.ask,
             names=[Path(r).stem for r in obs.photos],
+            field=(folder.root.name if folder.project is not None else "") if home else None,
         )
     client.apply_reading(obs, reading)
     keep_model_lines(obs, before)
@@ -338,6 +356,18 @@ def read_with_key(st: Settings, folder: Folder, obs: Observation):
     client.apply_reading(obs, reading)
     keep_model_lines(obs, before)
     return reading
+
+
+def ingest(folder: Folder, paths: list[Path | str], keep: str, language: str) -> Observation:
+    """写真を記録のフォルダーに取り込み、観察の骨を作る（seed observe と家のサーバーの /api/read で同じ道）。
+
+    photos/<日>/<時刻>.jpg（EXIF は残す。keep の通り）。観察はまだ書かない。PhotoError はそのまま上げる。
+    """
+    from . import photos
+
+    prepare(folder)
+    rel = photos.import_photos(folder, paths, keep=keep)
+    return photos.observation_for(folder, rel, language)
 
 
 def how_to_read(args) -> str:
@@ -485,6 +515,103 @@ def cmd_token(st: Settings, args) -> int:
     return 0
 
 
+HOME_PORT = 8800
+HOME_NAME = "home"  # home.toml の招待コードの呼び名
+# 家のサーバーの一日の上限（招待コードは一つ、使うのは本人だけなので緩く。環境変数があればそれ）
+HOME_LIMITS = {
+    "SEED_DAILY_READS": "1000",
+    "SEED_PER_TOKEN_READS": "500",
+    "SEED_PER_IP_READS": "500",
+    "SEED_DAILY_TALKS": "1000",
+    "SEED_PER_TOKEN_TALKS": "500",
+}
+
+
+def home_invite(project: Path) -> tuple[Path, str]:
+    """<プロジェクト>/home.toml の招待コード（一つ）。無ければ作る（600）。在ればそのまま使う。"""
+    import secrets
+
+    from .server.home import HOME_FILE
+    from .server.settings import load_invites
+
+    path = Path(project).expanduser() / HOME_FILE
+    codes = load_invites(path) if path.exists() else {}
+    if codes:
+        return path, next(iter(codes))
+    code = secrets.token_urlsafe(12)
+    settings_mod.write_secret(
+        path,
+        "# seed home の招待コード（秘密。公開しない。消せば次の seed home で作り直す）\n"
+        f'[codes]\n"{code}" = "{HOME_NAME}"\n',
+    )
+    return path, code
+
+
+def lan_ip() -> str:
+    """家の網の中のこの PC の番地。外へは何も送らない（UDP の口を向けるだけ）。分からなければ名。"""
+    import socket
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))  # 文書用の番地。繋ぎに行かず、出る口の番地だけを決める
+        ip = s.getsockname()[0]
+    except OSError:
+        ip = ""
+    finally:
+        s.close()
+    if not ip or ip.startswith("127."):
+        return socket.gethostname()
+    return ip
+
+
+def home_env(project: Path, invites: Path) -> dict[str, str]:
+    """家のサーバーに渡す環境変数（設計書 §5.13）。"""
+    from .server.home import PUBLIC_DIR
+
+    project = Path(project).expanduser()
+    env = {
+        "SEED_HOME": str(project),
+        "SEED_INVITES": str(invites),
+        "SEED_PUBLIC_DIR": str(project / PUBLIC_DIR),
+    }
+    skill = project / "skill"
+    if (skill / "SKILL.md").is_file():
+        env["SEED_SKILL_DIR"] = str(skill)
+    return env
+
+
+def cmd_home(st: Settings, args) -> int:
+    """家のサーバー（設計書 §5.13）。スマートフォン → この PC のプロジェクトフォルダー、一方通行。"""
+    import os
+
+    from . import local
+
+    lg = st.language
+    try:
+        import uvicorn
+
+        from .server import main as server_main
+    except ModuleNotFoundError:
+        _err(s("home_need_server", lg))
+        return 1
+    project = st.project
+    invites, code = home_invite(project)
+    os.environ.update(home_env(project, invites))
+    os.environ.pop("SEED_OPEN", None)
+    for k, v in HOME_LIMITS.items():
+        os.environ.setdefault(k, v)
+    hosts = [lan_ip()] if args.host in ("0.0.0.0", "::") else [args.host]
+    _out(s("home_start", lg, project=project))
+    for h in hosts:
+        _out(s("home_url", lg, url=f"http://{h}:{args.port}"))
+    _out(s("home_code", lg, code=code))
+    _out(s("home_how", lg))
+    if local.available() is None:
+        _err(s("home_no_claude", lg))
+    uvicorn.run(server_main.create_app(), host=args.host, port=args.port, log_level="warning")
+    return 0
+
+
 def cmd_init(st: Settings, args) -> int:
     got = prepare(st.records)
     _set_invite(st, getattr(args, "invite", None))
@@ -538,10 +665,8 @@ def cmd_observe(st: Settings, args) -> int:
     from .client import ClientError
 
     folder, lg = st.records, st.language
-    prepare(folder)
     try:
-        rel = photos.import_photos(folder, args.photos, keep=st.keep)
-        obs = photos.observation_for(folder, rel, lg)
+        obs = ingest(folder, args.photos, st.keep, lg)
     except photos.PhotoError as e:
         _err(error_text(e, lg))
         return 1
@@ -1865,6 +1990,14 @@ def parser() -> argparse.ArgumentParser:
     pju.add_argument("name", metavar="NAME", help="プロジェクトの名")
 
     sub.add_parser("skill-path", parents=[common], help="手引き skill/ の道を出す")
+
+    hm = sub.add_parser(
+        "home",
+        parents=[common],
+        help="家の網にサーバーを立てる（スマートフォン → この PC のプロジェクトフォルダー、一方通行）",
+    )
+    hm.add_argument("--host", default="0.0.0.0", help="待つ番地（既定 0.0.0.0）")
+    hm.add_argument("--port", type=int, default=HOME_PORT, help=f"待つ口（既定 {HOME_PORT}）")
     return p
 
 
@@ -1892,6 +2025,7 @@ COMMANDS = {
     "procedure": cmd_procedure,
     "field": cmd_field,
     "project": cmd_project,
+    "home": cmd_home,
 }
 # プロジェクト全体（畑が幾つも）では使えない命令。記録は畑ごとに在る
 FIELD_ONLY = frozenset(

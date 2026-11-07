@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import logging
 import math
+import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +26,36 @@ MAX_SIDE = 1568  # Claude の画像の長辺の目安
 QUALITY = 85
 HEIC_SUFFIXES = (".heic", ".heif")
 EARTH_R = 6_371_000.0
+log = logging.getLogger("seed.photos")
+
+
+def device_pictures_dir() -> Path | None:
+    """撮った写真をスマートフォンの共有の Pictures に残す場所。Android だけ（11 以降は許しが要らない）。
+
+    iPhone は写真ライブラリーに入れる部品が要るので、今は None。環境変数 SEED_DEVICE_PICTURES があれば
+    どの端末でもそれを使う（テスト用）。
+    """
+    env = os.environ.get("SEED_DEVICE_PICTURES")
+    if env:
+        return Path(env)
+    if sys.platform == "android":
+        return Path("/storage/emulated/0/Pictures/seed")
+    return None
+
+
+def keep_on_device(data: bytes, name: str, day: str) -> Path | None:
+    """写真を <Pictures/seed>/<day>/<name> に書く。置き場が無い、書けない時は None（例外は出さない）。"""
+    base = device_pictures_dir()
+    if base is None:
+        return None
+    try:
+        path = base / day / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    except OSError as ex:
+        log.warning("could not keep %s in %s: %s", name, base, ex)
+        return None
+    return path
 
 
 class PhotoError(Exception):

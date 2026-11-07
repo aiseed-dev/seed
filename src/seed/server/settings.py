@@ -83,6 +83,8 @@ class Settings:
     plantnet_key: str | None = field(
         default=None, repr=False
     )  # Pl@ntNet の鍵（無ければ環境変数 PLANTNET_API_KEY）
+    # SEED_HOME。家のサーバー（seed home。設計書 §5.13）のプロジェクトフォルダー。在れば写真と観察をそこに置く
+    home: Path | None = None
     _book: InviteBook = field(init=False, repr=False, compare=False)
     _tokens: gate.TokenBook = field(init=False, repr=False, compare=False)
     journal: gate.Journal = field(init=False, repr=False, compare=False)
@@ -123,6 +125,7 @@ class Settings:
             daily_talks=_int("SEED_DAILY_TALKS", 300),
             per_token_talks=_int("SEED_PER_TOKEN_TALKS", 60),
             plantnet_key=credential(CRED_PLANTNET, "PLANTNET_API_KEY"),
+            home=Path(h).expanduser() if (h := os.environ.get("SEED_HOME", "").strip()) else None,
         )
 
     @property

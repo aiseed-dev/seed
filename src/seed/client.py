@@ -17,6 +17,8 @@ import httpx
 from .records import Line, Observation, render_lines
 
 TIMEOUT = httpx.Timeout(180.0, connect=10.0)  # 読みは Claude を待つので長め
+HEALTH_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+_HOME: dict[str, bool] = {}  # サーバーの URL → 家のサーバーか（/health の home。設計書 §5.13）。一度だけ聞く
 
 
 class ClientError(Exception):
@@ -139,10 +141,12 @@ class Client:
         previous: str | None = None,
         ask: list[str] | None = None,
         names: list[str] | None = None,
+        field: str | None = None,
     ) -> Reading:
         """写真（縮小済みの JPEG）を送り、読みを受ける。previous は同じ場所の前の観察の Markdown。ask は ASKS の語。
 
         names は写真の名（ファイルの名の幹）。送るファイルの名にし、読みの行はこの名で写真を指す。
+        field は家のサーバー（設計書 §5.13）で、写真と観察を置く畑の名。
         """
         if not photos:
             raise ClientError("no_photos", "no photos to read")
@@ -161,6 +165,7 @@ class Client:
             ("record", _as_text(record)),
             ("previous", previous),
             ("ask", ",".join(ask) if ask else None),
+            ("field", field),
         ):
             if v:
                 form[k] = v
@@ -221,13 +226,19 @@ class Client:
         )
         return int(data.get("count") or 0)
 
-    def talk(self, messages: list[dict]) -> dict:
+    def talk(self, messages: list[dict], field: str | None = None) -> dict:
         """話す（POST /api/talk）。やり取り（Messages API の形）を送り、{content, stop_reason, usage, model} を受ける。
 
-        system と道具の形はサーバーが持つ物を使う（ここからは送らない）。
+        system と道具の形はサーバーが持つ物を使う（ここからは送らない）。field は家のサーバーで話す畑の名。
         """
         body = {"messages": messages, "language": self.language, **self._inv()}
+        if field:
+            body["field"] = field
         return self._json(self._call("POST", "/api/talk", json=body))
+
+    def health(self) -> dict:
+        """/health。"""
+        return self._json(self._call("GET", "/health", timeout=HEALTH_TIMEOUT))
 
     def index(self) -> dict:
         """index.json（記録の形 §8）。"""
@@ -239,6 +250,25 @@ class Client:
     def public(self, public_id: str) -> str:
         """公開ファイルそのまま。"""
         return self._call("GET", f"/public/{public_id}.md").text
+
+
+def is_home(server_url: str, transport: httpx.BaseTransport | None = None) -> bool:
+    """家のサーバー（seed home。/health が home: true）か。URL ごとに一度だけ聞く。届かなければ False（覚えない）。"""
+    base = server_url.rstrip("/")
+    if base in _HOME:
+        return _HOME[base]
+    try:
+        with Client(base, "", transport=transport) as c:
+            home = bool(c.health().get("home"))
+    except ClientError:
+        return False
+    _HOME[base] = home
+    return home
+
+
+def known_home(server_url: str) -> bool:
+    """もう聞いてあって家のサーバーだったか（画面から。網には出ない）。"""
+    return _HOME.get(server_url.rstrip("/"), False)
 
 
 def _detail(r: httpx.Response) -> str | None:

@@ -85,3 +85,32 @@ def test_page_column_fits_a_phone():
     assert theme.fit_width(None) == theme.MAX_WIDTH and theme.fit_width(1280) == theme.MAX_WIDTH
     assert theme.fit_width(390) == 390  # スマートフォンの幅では、窓の幅に合わせる（右が切れない）
     assert theme.page_column([], 390).width == 390
+
+
+def test_keep_on_device(tmp_path, monkeypatch):
+    out = tmp_path / "pics"
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(out))
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    now = dt.datetime(2026, 11, 7, 9, 30, 0)
+    shot = sess.add(jpeg(), {"lat": 34.05, "lon": 134.25}, now)
+    assert shot.kept == out / "2026-11-07" / "20261107-093000-1.jpg"
+    assert shot.kept.read_bytes() == shot.path.read_bytes()
+    sess.remove(shot)
+    assert not shot.path.exists() and shot.kept.exists()
+
+
+def test_keep_on_device_failure(tmp_path, monkeypatch):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(blocker))
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    assert sess.add(jpeg(), {"lat": 34.05, "lon": 134.25}).kept is None
+
+
+def test_keep_on_device_none_on_linux(tmp_path, monkeypatch):
+    monkeypatch.delenv("SEED_DEVICE_PICTURES", raising=False)
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    assert sess.add(jpeg(), {"lat": 34.05, "lon": 134.25}).kept is None

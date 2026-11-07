@@ -76,6 +76,7 @@ def position_fields(pos) -> dict | None:
 class Shot:
     path: Path
     accuracy: float | None
+    kept: Path | None = None  # スマートフォンの Pictures に残した写真。外しても消さない
 
 
 @dataclass
@@ -100,8 +101,9 @@ class Session:
         )
         path = self.dir / f"{now.strftime('%Y%m%d-%H%M%S')}-{len(self.shots) + 1}.jpg"
         path.write_bytes(data)
+        kept = photos.keep_on_device(data, path.name, now.strftime("%Y-%m-%d"))
         self.position = pos
-        shot = Shot(path, pos.get("accuracy"))
+        shot = Shot(path, pos.get("accuracy"), kept)
         self.shots.append(shot)
         return shot
 
@@ -145,6 +147,8 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
     shutter = ft.FilledButton(t("capture_shoot"), icon=ft.Icons.CAMERA, disabled=True)
     done = ft.FilledButton(t("capture_done", n=0), icon=ft.Icons.CHECK, disabled=True)
     opener = ft.FilledButton(t("capture_open"), icon=ft.Icons.PHOTO_CAMERA_OUTLINED)
+    kept_note = theme.muted("")
+    kept_note.visible = False
 
     def say(text: str | None) -> None:
         problem.value, problem.visible = text or "", bool(text)
@@ -168,6 +172,12 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             )
             for s in sess.shots
         ]
+        if sess.shots and sess.shots[-1].kept:
+            kept_note.value, kept_note.visible = t("capture_kept"), True
+        elif sess.shots and getattr(app.page, "platform", None) in MOBILE and photos.device_pictures_dir():
+            kept_note.value, kept_note.visible = t("capture_not_kept"), True
+        else:
+            kept_note.visible = False
         done.content, done.disabled = t("capture_done", n=n), n == 0
         shutter.disabled = not sess.ready or sess.position is None or n >= MAX_SHOTS
         status.value = accuracy_text(app, sess.position) if sess.ready else ""
@@ -264,5 +274,6 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
         ),
         problem,
         thumbs,
+        kept_note,
         done,
     ]
