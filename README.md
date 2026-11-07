@@ -34,7 +34,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[app]"
 
 アプリの画面が開きます。写真を送ると Claude が読みます。記録は `~/seed/` に出来ます。Windows では `.venv\Scripts\` の下の物を使います。
 
-PC に Claude Code が入っていてログインしていれば（Claude の契約は Pro 以上）、鍵は要りません。手元に畑の写真が無ければ、`sample/` の三枚（作者の畑。座標は小数 2 桁に丸めてあります）を左下のボタンで選んでください。
+PC に Claude Code が入っていてログインしていれば（Claude の契約は Pro 以上）、鍵は要りません。手元に畑の写真が無ければ、`sample/` の三枚（作者の畑。撮った場所の座標がそのまま入っていて、この土地の資料も引けます）を左下のボタンで選んでください。
 
 フォークして自分の物にしてください。直した物は戻せます。いいアプリが出来たら PyPI に上げます（例: 同じ作者の [fieldnotes-farm](https://pypi.org/project/fieldnotes-farm/)）。
 
