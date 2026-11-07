@@ -76,15 +76,25 @@ Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHu
 
 ### スマートフォンで試す
 
-USB で繋いだ Android に、その場で入れて動かします（Flet 1.1 の開発の道。Flutter と Android Studio、スマートフォンの開発者モードが要ります）。`flet devices` で出る ID を渡します。初回は数分、二回目からは速く、Python を直したら端末で `R` を押すと入れ直ります。
+USB で繋いだ Android に、その場で入れて動かします（Flet 1.1 の開発の道）。
+
+要る物: PC に Flutter と Android Studio（Android SDK）、スマートフォンの「開発者向けオプション」で USB デバッグを on。USB で繋ぐと、スマートフォンに「USB デバッグを許可しますか」と出るので許可します。
+
+1. 繋がっているか見ます。表に ID（英数字）が出ます。
 
 ```bash
 .venv/bin/flet devices
 ```
 
+2. その ID で入れて動かします。初回は Flutter のビルドで数分、二回目からは一分ほどです。端末に「Flutter run key commands」と出たら、スマートフォンに seed の画面が出ています。
+
 ```bash
 .venv/bin/flet debug android --device-id <ID> --arch arm64-v8a
 ```
+
+3. 端末を開いたまま使います。Python を直したら端末で `R`（入れ直し）、終わるときは `q`（アプリも止まる）、端末だけ離れてアプリを残すなら `d`。アプリの Python のエラーは、この端末に出ます。
+
+スマートフォンで撮った写真は、アプリの記録（アプリの入れ物の中）と、スマートフォンの `Pictures/seed/<日>/` の両方に残ります（Android。消すのは本人。iPhone の写真アプリは後で）。読みは、スマートフォンに Claude Code が無いので、自分の鍵か、招待コード（サーバーか、PC の `seed home`）で動きます。
 
 iPhone は Mac で `flet debug ios`（[docs/iPhone 版.md](docs/iPhone%20版.md)）。
 
