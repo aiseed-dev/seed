@@ -451,10 +451,34 @@ async def take_server(app: App, text: str) -> None:
     say(app, app.t("server_url_set", url=url))
 
 
+async def find_home(app: App) -> None:
+    """同じ Wi-Fi の PC（seed home）を探す。見つかれば URL を保存し、6 桁の招待コードを待つ。"""
+    from seed import discover
+
+    url = await asyncio.to_thread(discover.find_home)
+    if not url:
+        say(app, app.t("home_not_found"))
+        app.refresh()
+        return
+    app.state.pop("await_server", None)
+    app.state.pop("await_key", None)
+    app.settings.server_url = url.rstrip("/")
+    app.settings.read = "server"
+    app.settings.save()
+    client.forget_home(app.settings.server)
+    app.state.pop("home_asked", None)
+    app.state.pop("direct_messages", None)
+    app.state["await_invite"] = True
+    app.state["invite_digits"] = True
+    say(app, app.t("home_found", url=app.settings.server))
+    app.refresh()
+
+
 async def take_invite(app: App, code: str) -> None:
     """招待コードを保存する。その一行はやり取りに残さない。まだ読めていない観察があれば読む。"""
     app.state["await_invite"] = False
-    app.settings.invite = code.strip()
+    app.state.pop("invite_digits", None)
+    app.settings.invite = "".join(code.split())
     app.settings.save()
     say(app, app.t("talk_invite_set"))
     name = last_name(app)
@@ -1132,7 +1156,7 @@ def composer(app: App) -> ft.Control:
     elif app.state.get("await_server"):
         hint = t("talk_hint_server")
     elif app.state.get("await_invite"):
-        hint = t("talk_hint_invite")
+        hint = t("talk_hint_code") if app.state.get("invite_digits") else t("talk_hint_invite")
     elif to:
         hint = t("talk_hint_to", to=to)
     else:
@@ -1142,6 +1166,7 @@ def composer(app: App) -> ft.Control:
         expand=True,
         border_radius=24,
         dense=True,
+        keyboard_type=ft.KeyboardType.NUMBER if app.state.get("invite_digits") else ft.KeyboardType.TEXT,
         autocorrect=not (app.state.get("await_invite") or app.state.get("await_server") or secret),
         password=secret,  # 鍵は画面に出さない
         shift_enter=not secret,

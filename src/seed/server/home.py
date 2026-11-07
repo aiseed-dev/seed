@@ -10,7 +10,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import socket
 import tempfile
+import threading
 from pathlib import Path
 
 from .. import settings as settings_mod
@@ -114,3 +116,28 @@ def reply(text: str) -> dict:
         "usage": dict(ZERO_USAGE),
         "model": TALK_MODEL,
     }
+
+
+DISCOVERY_PORT = 8801
+
+
+def answer_discovery(url: str, port: int = DISCOVERY_PORT, stop: threading.Event | None = None) -> None:
+    """同じ網のスマートフォンの「seed?」に、この PC の URL を返す（UDP）。stop が立つまで続く。"""
+    stop = stop or threading.Event()
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.bind(("0.0.0.0", port))
+        sock.settimeout(0.5)
+        while not stop.is_set():
+            try:
+                data, addr = sock.recvfrom(1024)
+            except TimeoutError:
+                continue
+            if data.startswith(b"seed?"):
+                sock.sendto(b"seed-home " + url.encode(), addr)
+    except OSError:
+        pass  # 口が使えなくても、家のサーバー自体は動かす
+    finally:
+        sock.close()

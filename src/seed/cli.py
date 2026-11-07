@@ -538,7 +538,9 @@ def home_invite(project: Path) -> tuple[Path, str]:
     codes = load_invites(path) if path.exists() else {}
     if codes:
         return path, next(iter(codes))
-    code = secrets.token_urlsafe(12)
+    code = (
+        f"{secrets.randbelow(1_000_000):06d}"  # 手で打てる 6 桁（家の網の中だけ。試す回数はゲートが抑える）
+    )
     settings_mod.write_secret(
         path,
         "# seed home の招待コード（秘密。公開しない。消せば次の seed home で作り直す）\n"
@@ -609,6 +611,15 @@ def cmd_home(st: Settings, args) -> int:
         _out(s("home_url", lg, url=f"http://{h}:{args.port}"))
     _out(s("home_code", lg, code=code))
     _out(s("home_how", lg))
+    if args.host in ("0.0.0.0", "::"):
+        import threading
+
+        from .server.home import answer_discovery
+
+        threading.Thread(
+            target=answer_discovery, args=(f"http://{hosts[0]}:{args.port}",), daemon=True
+        ).start()
+        _out(s("home_find", lg))
     if local.available() is None:
         _err(s("home_no_claude", lg))
     sys.stdout.flush()  # uvicorn は戻らないので、ここまでの案内を先に出す（端末でない時も）

@@ -550,6 +550,12 @@ def settings_card(app: App) -> list[ft.Control]:
         ask_server(app)
         app.refresh()
 
+    def find_pc(e) -> None:
+        from seed.app.talk import find_home
+
+        app.page.run_task(find_home, app)
+
+    out.append(ft.TextButton(t("set_find_home"), on_click=find_pc))
     out.append(ft.TextButton(t("set_server_change"), on_click=change_server))
     out.append(
         ft.Row(

@@ -232,7 +232,7 @@ def test_talk_shape_is_a_final_answer_for_the_app(tmp_path, claude):
 def test_home_invite_is_written_once_and_kept(tmp_path):
     proj = single(tmp_path)
     path, code = cli.home_invite(proj)
-    assert path == proj / "home.toml" and len(code) >= 16
+    assert path == proj / "home.toml" and len(code) == 6
     assert load_invites(path) == {code: "home"}
     assert os.stat(path).st_mode & 0o777 == 0o600
     again_path, again = cli.home_invite(proj)
@@ -408,3 +408,114 @@ def test_change_server_url_from_the_settings_card(seedfolder, monkeypatch):
     # その後の言葉は、ふだんの言葉
     asyncio.run(talk.send(app, "http://example.test"))
     assert settings_mod.load(seedfolder).server_url == "http://192.168.1.5:8800"
+
+
+# ---------------------------------------------------------------- 6 桁と、PC を探す
+
+
+def test_home_invite_is_six_digits(tmp_path):
+    proj = single(tmp_path)
+    path, code = cli.home_invite(proj)
+    assert len(code) == 6 and code.isdigit()
+    assert load_invites(path) == {code: "home"}
+    path.write_text('[codes]\n"old-long-code-0123456789" = "home"\n', encoding="utf-8")
+    assert cli.home_invite(proj)[1] == "old-long-code-0123456789"  # 在る物はそのまま
+
+
+def test_answer_discovery_replies_with_the_url():
+    import socket
+    import threading
+
+    from seed.server.home import answer_discovery
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    stop = threading.Event()
+    th = threading.Thread(target=answer_discovery, args=("http://192.168.1.5:8800", port, stop), daemon=True)
+    th.start()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as c:
+            c.settimeout(3)
+            import time
+
+            for _ in range(20):  # 口が開くまで
+                c.sendto(b"other", ("127.0.0.1", port))
+                c.sendto(b"seed?", ("127.0.0.1", port))
+                try:
+                    data, _ = c.recvfrom(1024)
+                    break
+                except TimeoutError:
+                    time.sleep(0.1)
+            assert data == b"seed-home http://192.168.1.5:8800"
+    finally:
+        stop.set()
+        th.join(2)
+
+
+class FakeSock:
+    def __init__(self, reply=None):
+        self.reply, self.sent = reply, []
+
+    def setsockopt(self, *a):
+        pass
+
+    def settimeout(self, t):
+        self.timeout = t
+
+    def sendto(self, data, addr):
+        self.sent.append((data, addr))
+
+    def recvfrom(self, n):
+        if self.reply is None:
+            raise TimeoutError
+        r, self.reply = self.reply, None
+        return r, ("192.168.1.5", 8801)
+
+    def close(self):
+        pass
+
+
+def test_find_home_with_a_fake_socket():
+    from seed import discover
+
+    s = FakeSock(b"seed-home http://192.168.1.5:8800")
+    assert discover.find_home(sock=s) == "http://192.168.1.5:8800"
+    assert s.sent[0] == (b"seed?", ("255.255.255.255", 8801))
+    assert discover.find_home(sock=FakeSock(None)) is None
+    assert discover.find_home(sock=FakeSock(b"junk")) is None
+
+
+def test_find_pc_button_saves_url_and_waits_for_the_code(seedfolder, monkeypatch):
+    from seed import discover
+    from seed.app import cards, talk
+
+    monkeypatch.delenv("SEED_SERVER_URL", raising=False)
+    app = phone_app(seedfolder)
+    button = next(
+        c
+        for c in cards.settings_card(app)
+        if getattr(c, "content", None) == "PC を探す" or getattr(c, "text", None) == "PC を探す"
+    )
+    button.on_click(None)  # 探すのは別の仕事（run_task）。ここでは押せる事だけ
+    monkeypatch.setattr(discover, "find_home", lambda *a, **k: "http://192.168.1.5:8800")
+    asyncio.run(talk.find_home(app))
+    assert app.settings.server == "http://192.168.1.5:8800"
+    assert settings_mod.load(seedfolder).server_url == "http://192.168.1.5:8800"
+    assert app.state["await_invite"] and app.settings.read == "server"
+    assert app.state["talk"][-1]["text"] == app.t("home_found", url="http://192.168.1.5:8800")
+    assert app.t("talk_hint_code") in __import__("test_app").texts(talk.view(app))
+    asyncio.run(talk.send(app, " 483 271 "))
+    assert app.settings.invite == "483271" and not app.state["await_invite"]
+
+
+def test_find_pc_not_found_says_so(seedfolder, monkeypatch):
+    from seed import discover
+    from seed.app import talk
+
+    app = phone_app(seedfolder)
+    before = app.settings.server
+    monkeypatch.setattr(discover, "find_home", lambda *a, **k: None)
+    asyncio.run(talk.find_home(app))
+    assert app.state["talk"][-1]["text"] == app.t("home_not_found")
+    assert not app.state.get("await_invite") and app.settings.server == before
