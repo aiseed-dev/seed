@@ -33,10 +33,13 @@ kagi scan /etc/seed ~/farm/seed deploy
 署名の鍵を一つ作って置く。kagi は作らない（人の手）。
 
 ```bash
+install -d -m 700 ~/.config/kagi
 head -c 32 /dev/urandom > ~/.config/kagi/log-key
 chmod 600 ~/.config/kagi/log-key
 export KAGI_LOG_KEY_FILE=~/.config/kagi/log-key
 ```
+
+`export` は打ったターミナルにだけ効く。kagi は環境変数だけを見るので、もう動いている Claude Code や別のターミナルには届かない。毎回効かせるなら `~/.bashrc` に同じ一行を足し、Claude Code を開き直す。
 
 この鍵も在庫表に一件書く（置き場 `pc:~/.config/kagi/log-key`、役「kagi の記録の署名」）。
 
@@ -132,7 +135,7 @@ kagi key list
 - **外す（人が辞めた、機械を無くした）。** その人の鍵の id を全部の機械の `keys` から外し、`users` と `admins` からも外す → `kagi machine check`（全部の機械）で、どの機械に残っているかが「表に無い鍵」「表に無いアカウント」として出る → `fix` の手で一台ずつ。
 - どれも、終わったら `kagi log add --action key.add`（`key.rotate`、`key.remove`）を一行。
 
-アプリの門に入る token（seed のサーバーが相手ごとに出す物）は別の台帳で、`kagi check tokens`（サーバーの台帳なら `--file /var/lib/seed/gate/tokens.json`）。誰に、範囲、期限が出る。期限切れのまま取り消していない物は「直す」。出す・取り消すは `seed token`（利用マニュアル §11c）。机の画面では「鍵」の下に並ぶ。
+アプリの門に入る token（seed のサーバーが相手ごとに出す物）は別の台帳で、`kagi check tokens`（サーバーの台帳なら `gate/` が seed の 700 なので `sudo -u seed /opt/seed/.venv/bin/kagi check tokens --file /var/lib/seed/gate/tokens.json`。打つのは人）。誰に、範囲、期限が出る。期限切れのまま取り消していない物は「直す」。出す・取り消すは `seed token`（利用マニュアル §11c）。机の画面では「鍵」の下に並ぶ。
 
 ## 4f. 週の定例（連載 第 11 章の「週 15 分」）
 

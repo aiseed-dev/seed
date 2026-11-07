@@ -628,7 +628,7 @@ def grow_check(
 
 TALK_TIMEOUT_S = 900
 TALK_TOOLS = ("Read", "Write", "Edit", "Glob", "Grep", "Bash")
-# 細かい作業に要る seed の命令だけ（ほかに mkdir、mv、ls が使える。rm など消す物は入れない）。token、invite、prune、keep、init、field、app は入れない
+# 細かい作業に要る seed の命令だけ（ほかに mkdir、mv、ls が使える。rm など消す物は入れない）。token、invite、prune、keep、init、app は入れない
 TALK_COMMANDS = (
     "photos",
     "mark",
@@ -647,9 +647,20 @@ TALK_COMMANDS = (
 )
 
 
-def talk_rules(folder: Folder, latest: str | None, language: str, fields: list[str] | None = None) -> str:
-    """話す時の決まり（手引きの後ろに足す）。fields はプロジェクト全体の時の畑の名（設計書 §5.12）。"""
+def talk_rules(
+    folder: Folder, latest: str | None, language: str, fields: list[str] | None = None, home: bool = False
+) -> str:
+    """話す時の決まり（手引きの後ろに足す）。fields はプロジェクト全体の時の畑の名（設計書 §5.12）。
+
+    home は家のサーバー（seed home）を通ってスマートフォンから来た話す。足した画面はスマートフォンには出ないので、
+    PC のアプリに出ると伝えさせる。
+    """
     root = folder.root
+    shown = (
+        "書いたら、PC のアプリの上の端に印が増えると伝えます（スマートフォンのアプリには出ません）。"
+        if home
+        else "書いたら、上の端に印が増えると伝えます。"
+    )
     whole = (
         [
             "このプロジェクトには畑が幾つもあります: "
@@ -686,7 +697,9 @@ def talk_rules(folder: Folder, latest: str | None, language: str, fields: list[s
             "- 土地の成り立ち、土、水の区域、歴史を聞かれたら、place.md の `## Data` の出典付きの行から答え、出典の無い事は足しません。資料の行が無ければ、位置の入った写真を一枚送ると調べられると言います。昔の地図と空中写真は、上の端の「この土地」の画面にあります。",
             "",
             "## 機能を足す",
-            "- 本人が「これからは〜して」「〜ができるようにして」と言ったら、本人の手引き（記録のフォルダーの skill/ の章。無ければ SKILL.md の末尾）に短く書き足し、何処に何を書いたかを返します。次の読みと話すから、それに従います。画面が要る物（表、絵、一覧）は、記録のフォルダーの plugins/<名>.py に書きます: モジュールの変数 TITLE（{'ja': 画面の名, 'en': name}）、ICON（ft.Icons の名）、関数 build(app) が flet の Control の並びを返す（見本は seed のパッケージの seed/plugins/land.py。app.folder が記録のフォルダー、app.lang が言語）。書いたら、上の端に印が増えると伝えます。アプリの芯（撮る、位置、話すと写真の画面）を変える物だけ、GitHub の seed をフォークして自分の Claude Code に頼む道を案内します。",
+            "- 本人が「これからは〜して」「〜ができるようにして」と言ったら、本人の手引き（記録のフォルダーの skill/ の章。無ければ SKILL.md の末尾）に短く書き足し、何処に何を書いたかを返します。次の読みと話すから、それに従います。画面が要る物（表、絵、一覧）は、記録のフォルダーの plugins/<名>.py に書きます: モジュールの変数 TITLE（{'ja': 画面の名, 'en': name}）、ICON（ft.Icons の名）、関数 build(app) が flet の Control の並びを返す（見本は seed のパッケージの seed/plugins/land.py。app.folder が記録のフォルダー、app.lang が言語）。"
+            + shown
+            + "アプリの芯（撮る、位置、話すと写真の画面）を変える物だけ、GitHub の seed をフォークして自分の Claude Code に頼む道を案内します。",
             "",
             "## 写真を見せる",
             (
@@ -777,14 +790,18 @@ def talk(
     model: str | None = None,
     timeout: float = TALK_TIMEOUT_S,
     fields: list[str] | None = None,
+    home: bool = False,
 ) -> tuple[str, str | None]:
-    """言葉を手元の claude（Claude Code）に渡し、(返事, 会話の id) を返す。次はその id で続ける。"""
+    """言葉を手元の claude（Claude Code）に渡し、(返事, 会話の id) を返す。次はその id で続ける。
+
+    home は家のサーバーから来た話す（talk_rules に渡す）。
+    """
     exe = available()
     if exe is None:
         raise LocalError("local_missing", "claude not found")
     paths = folder.list_observations()
     latest = paths[-1].stem if paths else None
-    system = system_prompt(folder) + "\n\n---\n\n" + talk_rules(folder, latest, language, fields)
+    system = system_prompt(folder) + "\n\n---\n\n" + talk_rules(folder, latest, language, fields, home)
     cmd = talk_command(exe, text, system, session, model)
     data = _run(cmd, folder.root, timeout, talk_env(folder))
     _check(data)

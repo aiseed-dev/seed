@@ -103,12 +103,12 @@ def build(app) -> list[ft.Control]:
     if c is None:
         return [ft.Text(t("weather_need_photo"), size=theme.BODY_SIZE)]
     key = (*c, today().isoformat())
-    cached = st.get("forecast")
-    failed = st.get("forecast_failed")
+    cached = st.get("weather_forecast")
+    failed = st.get("weather_forecast_failed")
 
     def refresh(e) -> None:
-        st.pop("forecast", None)
-        st.pop("forecast_failed", None)
+        st.pop("weather_forecast", None)
+        st.pop("weather_forecast_failed", None)
         app.refresh()
 
     button = ft.TextButton(t("weather_refresh"), icon=ft.Icons.REFRESH, on_click=refresh)
@@ -127,18 +127,18 @@ def build(app) -> list[ft.Control]:
         ]
     if failed and failed[0] == key:
         return [theme.error(t("weather_failed", detail=failed[1])), button]
-    if st.get("forecast_loading") != key:
-        st["forecast_loading"] = key
+    if st.get("weather_forecast_loading") != key:
+        st["weather_forecast_loading"] = key
 
         async def load() -> None:
             try:
                 got = await asyncio.to_thread(weather.fetch_week, *c)
-                st["forecast"] = (key, got)
+                st["weather_forecast"] = (key, got)
             except weather.WeatherError as ex:
-                st["forecast_failed"] = (key, ex.detail or ex.word)
+                st["weather_forecast_failed"] = (key, ex.detail or ex.word)
             except Exception as ex:  # noqa: BLE001
-                st["forecast_failed"] = (key, type(ex).__name__)
-            st.pop("forecast_loading", None)
+                st["weather_forecast_failed"] = (key, type(ex).__name__)
+            st.pop("weather_forecast_loading", None)
             app.refresh()
             if st.get("weather_filled") != key[2]:  # 実績の記録の穴埋めは、一日に一度
                 st["weather_filled"] = key[2]

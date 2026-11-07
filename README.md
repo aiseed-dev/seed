@@ -50,7 +50,7 @@ USB で繋いだ Android に入れて動かします。PC に Flutter と Androi
 .venv/bin/flet debug android --device-id <ID> --arch arm64-v8a
 ```
 
-端末に「Flutter run key commands」と出たら、スマートフォンに画面が出ています。Python を直したら `R`、終わるときは `q`。
+ターミナルに「Flutter run key commands」と出たら、スマートフォンに画面が出ています。Python を直したら `R`、終わるときは `q`。
 
 アプリにするには `.venv/bin/flet build apk --arch arm64-v8a`。出来た `build/apk/seed-farm.apk` を入れます。iPhone は Mac で作ります（[docs/iPhone 版.md](docs/iPhone%20版.md)）。
 
@@ -93,7 +93,7 @@ USB で繋いだ Android に入れて動かします。PC に Flutter と Androi
 ## 機能は自分で足す
 
 - **言葉で足す。** 「これからは収穫の量も記録して」と話すと、Claude が `skill/` の手引きに書き足します。
-- **画面を足す。** 「収穫の表の画面を作って」「週の天気を出して」と話すと、Claude が `plugins/収穫.py` や `plugins/天気.py` を書きます。ファイルは `TITLE`、`ICON`、`build(app)` の三つを持つだけです。見本は `src/seed/plugins/land.py`。
+- **画面を足す。** 「収穫の表の画面を作って」「水をやった日を一覧にして」と話すと、Claude が `plugins/収穫.py` や `plugins/水やり.py` を書きます。ファイルは `TITLE`、`ICON`、`build(app)` の三つを持つだけです。見本は `src/seed/plugins/land.py`。
 - **芯を変える。** 撮る、位置、話すと写真の画面そのものを変えるなら、フォークして自分の Claude Code に頼みます。
 - **部品を足す。** アプリに要る部品が Flet に無ければ、Flet の拡張として作り、[flet-tools](https://github.com/aiseed-dev/flet-tools) に置いて PyPI に出します。印刷（flet-printing）と GPU の地図（flet-gpumap）はそうして出来ました。天気のグラフで困った「SVG の字を描かない」は、字も描く SVG の部品の提案として flet-tools に置いてあります。seed の中で回り道をするより、部品にして Flet を使う人みんなの物にします。
 

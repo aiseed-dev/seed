@@ -109,7 +109,10 @@ def entry_html(idx: dict) -> str:
 <p><strong>一緒に使ってくれる人を探しています（11-08 まで）。</strong>
 <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で、気軽に声をかけてください。招待コードをお渡しします。分からない事も、そこで聞いてください。</p>
 <h2>PC で使う</h2>
-<pre>pip install "seed-farm[app]"</pre>
+<p>GitHub から取ってきて、そのフォルダーで入れます。</p>
+<pre>git clone https://github.com/aiseed-dev/seed.git
+cd seed
+pip install -e ".[app]"</pre>
 <p class="muted"><small>Windows、macOS、Linux で動きます。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> にあります。スマートフォンだけの人は、Discord で声をかけてください。</small></p>
 <h2>公開された記録 {int(total.get("records", 0))} 件 · 繋がり {int(total.get("connections", 0))} 件</h2>
 {listing}

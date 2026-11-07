@@ -395,13 +395,13 @@ def test_observe_candidate_and_owner_warning(seedfolder, photo, capsys):
 
 
 def test_missing_app_extra_is_one_sentence(seedfolder, monkeypatch, capsys):
-    # pip install seed-farm だけ（app extra 無し）で写真のコマンドを使ったとき
+    # clone して pip install -e . だけ（app extra 無し）で写真のコマンドを使ったとき
     def no_pil(st, args):
         raise ModuleNotFoundError("No module named 'PIL'", name="PIL")
 
     monkeypatch.setitem(cli.COMMANDS, "observe", no_pil)
     assert cli.main(["observe", "--folder", str(seedfolder), "x.jpg"]) == 1
-    assert "seed-farm[app]" in capsys.readouterr().err
+    assert ".[app]" in capsys.readouterr().err
 
 
 def test_init_shows_keep_and_free_space(seedfolder, capsys):

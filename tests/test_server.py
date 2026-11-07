@@ -104,7 +104,11 @@ def test_entry_page_empty(settings):
     r = client_for(settings).get("/")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
     assert "Claude と一緒に種を播く" in r.text
-    assert "https://discord.gg/Q8pwMH2uTA" in r.text and 'pip install "seed-farm[app]"' in r.text
+    assert (
+        "https://discord.gg/Q8pwMH2uTA" in r.text
+        and 'pip install -e ".[app]"' in r.text
+        and "git clone https://github.com/aiseed-dev/seed.git" in r.text
+    )
     assert "公開された記録 0 件" in r.text
     assert "default-src 'none'" in r.headers["content-security-policy"]
 

@@ -521,7 +521,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         key = (who, str(folder.root))
         sessions = app.state.home_sessions
         try:
-            said, session = await run_in_threadpool(local.talk, folder, text, language, sessions.get(key))
+            said, session = await run_in_threadpool(
+                local.talk, folder, text, language, sessions.get(key), home=True
+            )
         except CL.ClientError as e:
             return _error(502, "talk_failed", kind=e.word)
         if session:

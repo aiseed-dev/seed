@@ -45,7 +45,7 @@ from .records import (
 from .settings import Settings
 
 TAG_SPLIT_RE = re.compile(r"\s*[,、]\s*")
-APP_MODULES = ("PIL", "httpx", "flet")  # pip install "seed-farm[app]" で入る物
+APP_MODULES = ("PIL", "httpx", "flet")  # clone したフォルダーの pip install -e ".[app]" で入る物
 
 
 # ---------------------------------------------------------------- アプリと共有する手続き
@@ -1631,7 +1631,7 @@ def _field_project(args) -> Path:
 
 # 畑一つ分の記録（根に記録を置いていたプロジェクトが初めて畑を作る時、その畑へ移す物）。共有の物は根に残す
 ROOT_RECORDS = (
-    "observations", "photos", "originals", "place.md", "plan.md", "next.md", "connections.md", "public",
+    "observations", "photos", "originals", "videos", "place.md", "plan.md", "next.md", "connections.md", "public",
     "lots.md", "ledger.md", "weather", "procedures", "origin", "grow",
 )  # fmt: skip
 

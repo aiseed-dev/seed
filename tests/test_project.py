@@ -108,6 +108,21 @@ def test_field_new_moves_bulk_originals(seedfolder):
     assert not (bulk / "originals").exists()
 
 
+def test_field_new_moves_root_videos(seedfolder):
+    """動画は畑の記録（記録の形 §20。家のサーバーは <畑>/videos/ に置く）なので、写真と一緒に畑へ移す。"""
+    cli.prepare(Folder(seedfolder))
+    (seedfolder / "photos").mkdir(exist_ok=True)
+    day = seedfolder / "videos" / "2026-11-07"
+    day.mkdir(parents=True)
+    (day / "101500.mp4").write_bytes(b"x")
+    (day / "101500.json").write_text('{"taken": "2026-11-07T10:15:00"}', encoding="utf-8")
+    assert cli.main(["field", "new", "北", "--folder", str(seedfolder)]) == 0
+    north = seedfolder / "fields" / "北"
+    assert (north / "videos" / "2026-11-07" / "101500.mp4").is_file()
+    assert (north / "videos" / "2026-11-07" / "101500.json").is_file()
+    assert not (seedfolder / "videos").exists()
+
+
 def test_field_use_and_list(project, capsys):
     capsys.readouterr()
     assert cli.main(["field", "list", "--folder", str(project)]) == 0

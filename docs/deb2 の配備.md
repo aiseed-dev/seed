@@ -215,7 +215,7 @@ sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sudo sy
 grep -n 'trusted_proxies\|client_ip_headers\|CF-Connecting-IP' /etc/caddy/Caddyfile
 ```
 
-書いてあれば本当の客の IP で回数を数える。無ければ Cloudflare の IP で数える（11-06 はそのままでよい。直すのは 11-08 の後。Fable が 11-05 夜に `header_up X-Forwarded-For` の行を外した: 直に LAN から叩いたときに空の IP になる方が困るため）。
+書いてあれば本当の客の IP で回数を数える。無ければ Cloudflare の IP で数える。11-07 夜に門へ入れた「間違いを重ねた番地を止める」（設計書 §5.13、`limits.Tries`。10 分に 10 回の間違いで、その番地を 10 分 429。管理の token も止まる）は、この番地で数えるので、Cloudflare の IP のままだと、一人の間違いで同じ Cloudflare の番地を通る全員と管理の画面が 10 分止まる。だから seed を deb2 に置く前に、全体の設定に Cloudflare の範囲の `trusted_proxies` を書く（11-08 の点検で分かった。前は「直すのは 11-08 の後」としていた。Fable が 11-05 夜に `header_up X-Forwarded-For` の行を外した: 直に LAN から叩いたときに空の IP になる方が困るため）。
 
 ### 0-8. Claude が外から打つ確かめ（作者が「置いた」と言ったら）
 

@@ -268,3 +268,9 @@ def test_talk_rules_allow_move_but_not_delete(folder):
     rules = local.talk_rules(folder, None, "ja")
     assert "フォルダーを作る" in rules and "消す事はしません" in rules and "rm" in rules
     assert "移すことはしません" not in rules
+
+
+def test_talk_rules_from_home_say_the_screen_is_on_the_pc(folder):
+    """家のサーバーを通った話すで足した画面は、PC のアプリにだけ出る。"""
+    assert "PC のアプリの上の端" not in local.talk_rules(folder, None, "ja")
+    assert "PC のアプリの上の端に印が増える" in local.talk_rules(folder, None, "ja", home=True)

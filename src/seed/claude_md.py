@@ -14,7 +14,7 @@ JA = """# seed の記録のフォルダー
 
 ここは seed（畑の記録）のフォルダーです。手引きは `skill/SKILL.md` とその章です。先に読んでください。
 
-- 細かい作業は seed の命令でします（`seed photos`、`mark`、`say`、`plan`、`publish`、`identify`、`marks`、`origin`、`grow`、`lot`、`ledger`、`weather`、`procedure`。`--folder` はこのフォルダー）。
+- 細かい作業は seed の命令でします（`seed photos`、`mark`、`say`、`plan`、`publish`、`identify`、`marks`、`origin`、`grow`、`lot`、`ledger`、`weather`、`procedure`。`--folder` はこのフォルダー）。畑が幾つもあるプロジェクトの根（`fields/` がある所）では、`--field <畑の名>` を付けます。
 - 記録の行の形は手引きの通りです。判定の行（〜すべき）は書かず、出典の無い data の行は作りません。
 - 読みの間違いを言われたら、その行に印を付け（`seed mark`）、本人の言葉を残し（`seed say`）、読み直して、直した行を先に返します。
 - 土地の成り立ち、土、水の区域、歴史は `place.md` の `## Data` の出典付きの行から答えます。
@@ -28,7 +28,7 @@ EN = """# seed records folder
 
 This is a seed (farm records) folder. The guide is `skill/SKILL.md` and its chapters. Read it first.
 
-- Do the detailed work with seed commands (`seed photos`, `mark`, `say`, `plan`, `publish`, `identify`, `marks`, `origin`, `grow`, `lot`, `ledger`, `weather`, `procedure`; `--folder` is this folder).
+- Do the detailed work with seed commands (`seed photos`, `mark`, `say`, `plan`, `publish`, `identify`, `marks`, `origin`, `grow`, `lot`, `ledger`, `weather`, `procedure`; `--folder` is this folder). At the root of a project with several fields (where `fields/` exists), add `--field <field name>`.
 - Record lines take the form the guide gives. Do not write verdict lines (what should be done), and do not make data lines that have no source.
 - When told a reading is wrong, mark that line (`seed mark`), keep the person's words (`seed say`), re-read, and give the corrected lines first.
 - Answer about the land's origin, soil, water areas and history from the sourced lines in `## Data` of `place.md`.

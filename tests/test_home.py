@@ -39,7 +39,7 @@ def no_fieldnotes(monkeypatch):
 @pytest.fixture
 def claude(monkeypatch):
     """手元の Claude Code が在る事にし、読む・話すを差し替える。渡された物を残す。"""
-    seen = {"read": [], "talk": []}
+    seen = {"read": [], "talk": [], "talk_home": []}
     monkeypatch.setattr(local, "available", lambda: "/usr/bin/claude")
 
     def fake_read(folder, obs, model=None, raw_dir=None, **kw):
@@ -48,6 +48,7 @@ def claude(monkeypatch):
 
     def fake_talk(folder, text, language, session=None, **kw):
         seen["talk"].append((folder.root, text, session))
+        seen["talk_home"].append(kw.get("home"))
         return f"答え: {text}", "sess-1"
 
     monkeypatch.setattr(local, "read", fake_read)
@@ -235,6 +236,7 @@ def test_talk_passes_the_last_words_to_claude_code(tmp_path, claude):
         (proj / "fields" / "a", None),
         (proj / "fields" / "a", "sess-1"),
     ]
+    assert claude["talk_home"] == [True, True]  # 家のサーバーからと伝える（足した画面は PC のアプリに出る）
     r = c.post("/api/talk", json={"messages": [{"role": "assistant", "content": "x"}], "invite": code})
     assert r.status_code == 400
 

@@ -1,9 +1,11 @@
 ---
 name: seed-phone
-description: seed のアプリを USB で繋いだ Android の実機に入れて試す時、実機のアプリの中の記録や画面の録画を PC で見る時、APK を作る時に使う。
+description: seed のアプリを USB で繋いだ Android の実機で試す時に使う。実機に入れるのは作者の手順（flet debug android、adb install）で、Claude がするのは APK を作る事と、実機のアプリの中の記録や画面の録画を読む事（run-as の ls・cat、pull）。
 ---
 
 # Android の実機で試す
+
+実機に入れて動かすのは作者がする。Claude が adb でするのは読む事（`run-as … ls`、`run-as … cat`、`pull`）だけで、入れる、消す、設定を変える物は打たない。Claude が作るのは APK まで。
 
 コマンドは repo の根（`pyproject.toml` のある所）で打つ。`flet` は `pyproject.toml` の `[tool.flet.app]`（`path = "src"`、`module = "main.py"`）を読む。
 
@@ -15,24 +17,28 @@ ADB=~/Android/sdk/platform-tools/adb; [ -x "$ADB" ] || ADB=adb
 
 ## 始める前に見る
 
-- 作者が動かしている回: `pgrep -af "flet (debug|run)"`。在れば止めない。新しく `flet debug` を始めると同じアプリが入れ直され、作者の回が切れる。Python を直した後は、作者の端末で `R` を押すと読み直される。
+- 作者が動かしている回: `pgrep -af "flet (debug|run)"`。在れば止めない。新しく `flet debug` を始めると同じアプリが入れ直され、作者の回が切れる。Python を直した後は、作者のターミナルで `R` を押すと読み直される。
 - 繋がっている端末の番号: `$ADB devices`（`device` と出た行の一つ目の欄）か `.venv/bin/flet devices android`。番号はファイルにも報告にも写さない。
 
-## 入れて動かす
+## 入れて動かす（作者の手順）
+
+作者が自分のターミナルで打つ。Claude は打たず、直した物を試してほしい時はこの手順を作者に返す。
 
 ```bash
 .venv/bin/flet debug android --device-id <adb devices の番号> --arch arm64-v8a
 ```
 
-作るのに数分かかり、終わらずに走り続けるので後ろで動かす（Bash の `run_in_background`）。出力に「Flutter run key commands」と出たら、スマートフォンに画面が出ている。Python を直したら `R`、終わる時は `q`。起きた時に `Pictures/seed: ok` の一行が出る（`src/main.py`。写真をスマートフォンの共有の所に書けるかの確かめ）。
+作るのに数分かかり、終わらずに走り続ける。出力に「Flutter run key commands」と出たら、スマートフォンに画面が出ている。Python を直したら `R`、終わる時は `q`。起きた時に `Pictures/seed: ok` の一行が出る（`src/main.py`。写真をスマートフォンの共有の所に書けるかの確かめ）。
 
-## APK にする
+APK を入れ直す時は `$ADB -s <番号> install -r build/apk/seed-farm.apk`（`-r` はアプリの中の記録を残したまま差し替える）。
+
+## APK にする（Claude がしてよい）
 
 ```bash
 .venv/bin/flet build apk --arch arm64-v8a
 ```
 
-出来る物は `build/apk/seed-farm.apk`。入れ直しは `$ADB -s <番号> install -r build/apk/seed-farm.apk`（`-r` はアプリの中の記録を残したまま差し替える）。
+出来る物は `build/apk/seed-farm.apk`。実機には入れず、出来た道を作者に返す。
 
 ## アプリの中を見る（読むだけ）
 
@@ -62,11 +68,12 @@ FF=$(.venv/bin/python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg
 
 - スマートフォンの鍵を開けない。PIN を打たない。画面が消えていたら作者に開けてもらう。
 - `credentials.toml` を読まない。スマートフォンの中（`files/data/.config/seed/`）も PC の `~/.config/seed/` も。本人の鍵が入っている。
-- 写真や動画を消す前に、pull して一コマを見て、何の物かを確かめる。2026-11-07 に確かめずに消した動画が畑の動画で、戻せなかった。
+- 実機の写真や動画を消す話になったら、消すのは作者。その前に pull して一コマを見て、何の物かを作者に返す。2026-11-07 に確かめずに消した動画が畑の動画で、戻せなかった。
 - 作者が動かしている `flet debug` / `flet run` を止めない。
+- `flet debug android`、`adb install`、`adb push`、`adb shell` の書く命令（`rm`、`mv`、`pm`、`am`、`settings`）を打たない。実機に書くのは作者。
 - `adb uninstall` と `pm clear` を使わない。アプリの中の記録（`files/data/seed`）ごと消える。
 
 ## 確かめ方
 
-- `flet debug` の出力に「Flutter run key commands」と `Pictures/seed: ok`。Python の誤りもこの出力に出る。
-- 撮った後に `run-as` の `ls -R` で、新しい観察と写真が増えている。
+- 作者の `flet debug` の出力に「Flutter run key commands」と `Pictures/seed: ok`。Python の誤りもこの出力に出る（作者に見せてもらうか、ターミナルの画面を読む）。
+- 作者が撮った後に `run-as` の `ls -R` で、新しい観察と写真が増えている。

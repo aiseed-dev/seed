@@ -109,7 +109,7 @@ def _open(path: Path) -> Image.Image:
         raise PhotoError(
             "heic",
             path,
-            "HEIC needs pillow-heif (pip install 'seed-farm[heic]'), "
+            "HEIC needs pillow-heif (in the cloned folder, pip install -e '.[heic]'), "
             "or set the camera to JPEG ('Most Compatible').",
         )
     try:

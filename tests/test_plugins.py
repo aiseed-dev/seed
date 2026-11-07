@@ -206,7 +206,7 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     assert links == ["https://open-meteo.com/en/docs", "https://open-meteo.com/en/docs/ecmwf-api"]
     app.refresh()
     assert not app.page.tasks and len(calls) == 1  # 同じ日の開き直しは取り直さない
-    app.state.pop("forecast")  # 「取り直す」と同じ
+    app.state.pop("weather_forecast")  # 「取り直す」と同じ
     app.refresh()
     run_tasks(app)
     assert len(calls) == 2
@@ -255,7 +255,7 @@ def test_weather_plugin_fills_record_once_a_day(app, monkeypatch):
     app.route_change(path="/p/weather")
     run_tasks(app)
     assert len(calls) == 1
-    app.state.pop("forecast")  # 取り直しても、同じ日は埋め直さない
+    app.state.pop("weather_forecast")  # 取り直しても、同じ日は埋め直さない
     app.refresh()
     run_tasks(app)
     assert len(calls) == 1
