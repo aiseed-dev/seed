@@ -274,6 +274,9 @@ def read_on_server(
             ask=obs.ask,
             names=[Path(r).stem for r in obs.photos],
             field=(folder.root.name if folder.project is not None else "") if home else None,
+            date=obs.date,
+            time=obs.time,
+            kind=obs.kind,
         )
     client.apply_reading(obs, reading)
     keep_model_lines(obs, before)
@@ -538,9 +541,8 @@ def home_invite(project: Path) -> tuple[Path, str]:
     codes = load_invites(path) if path.exists() else {}
     if codes:
         return path, next(iter(codes))
-    code = (
-        f"{secrets.randbelow(1_000_000):06d}"  # 手で打てる 6 桁（家の網の中だけ。試す回数はゲートが抑える）
-    )
+    # 手で打てる 6 桁（家の網の中だけ）。間違いを重ねた番地は門が止める（10 分に 10 回で 10 分。limits.Tries）
+    code = f"{secrets.randbelow(1_000_000):06d}"
     settings_mod.write_secret(
         path,
         "# seed home の招待コード（秘密。公開しない。消せば次の seed home で作り直す）\n"

@@ -197,6 +197,44 @@ def render_lines(lines: list[Line]) -> str:
     return "\n".join(l.render() for l in lines) if lines else EMPTY
 
 
+def split_block(block: str) -> tuple[list[Line], str]:
+    """見出しの下の文を (行, 行の形でない文) に分ける。行でない文は元の順のまま、(none) と前後の空行は除く。"""
+    lines: list[Line] = []
+    rest: list[str] = []
+    for raw in block.splitlines():
+        line = Line.parse(raw)
+        if line:
+            lines.append(line)
+        elif raw.strip() != EMPTY:
+            rest.append(raw)
+    while rest and not rest[0].strip():
+        rest.pop(0)
+    while rest and not rest[-1].strip():
+        rest.pop()
+    return lines, "\n".join(rest)
+
+
+def join_text(a: str, b: str) -> str:
+    """残す文を二つ、空行一つを挟んで繋ぐ。片方が空ならもう片方。"""
+    return f"{a}\n\n{b}" if a and b else a or b
+
+
+def render_section(heading: str, lines: list[Line], text: str = "") -> str:
+    """見出し一つ。行の後に、本人が書き足した行でない文をそのまま置く。どちらも無ければ (none)。"""
+    if not text:
+        body = render_lines(lines)
+    elif lines:
+        body = f"{render_lines(lines)}\n\n{text}"  # 空行を挟まないと Markdown では最後の行の続きになる
+    else:
+        body = text
+    return f"## {heading}\n{body}\n"
+
+
+def render_kept_sections(sections: list[tuple[str, str]]) -> list[str]:
+    """知らない見出しを、題と中身をそのまま。"""
+    return [f"## {title}\n{block}\n" if block else f"## {title}\n" for title, block in sections]
+
+
 def demote_directives(lines: list[Line]) -> list[Line]:
     """判定の形の文を uncertain に落とす（設計書 §10）。本人の行には触らない。"""
     out = []
@@ -274,6 +312,12 @@ def split_sections(body: str) -> list[tuple[str, str]]:
     return out
 
 
+def preface(body: str) -> str:
+    """最初の見出しより前の文（前書きと最初の見出しの間に本人が書いた物）。前後の空行は除く。"""
+    m = HEADING_RE.search(body)
+    return (body[: m.start()] if m else body).strip("\n")
+
+
 def heading_arg(title: str) -> tuple[str, str | None]:
     """'読み (claude-opus-5-5)' → ('読み', 'claude-opus-5-5')。"""
     m = MODEL_IN_HEADING_RE.match(title)
@@ -291,6 +335,7 @@ NEXT_HEADINGS = ("Sell", "Process", "Host or teach", "Paperwork")
 MODEL_CLAUDE_CODE = "claude-code"
 KINDS = ("own", "candidate")  # 自分の畑か、候補地（自分の畑でない場所）か
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+OBSERVATION_FRONT_KEYS = ("date", "time", "photos", "location", "lookup", "model", "language", "kind", "ask")
 TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 
 
@@ -302,10 +347,17 @@ class JudgedLines:
 
     KEYS: tuple[str, ...] = READING_KEYS
     RECORD_KEYS: tuple[str, ...] = RECORD_KEYS
+    H_LINES: str = H_READING  # AI の行の見出しと、その前の読みの見出し
+    H_LINES_EARLIER: str = H_EARLIER
     reading: list[Line]
     earlier: list[Line]
     record: list[Line]
     model: str | None
+    # 本人がファイルに手で書き足した物。読みには使わず、書き戻すときに元の場所の近くにそのまま残す
+    kept_front: dict  # 前書きの知らない鍵
+    kept_text: dict[str, str]  # 知っている見出し → その下の行の形でない文
+    kept_sections: list[tuple[str, str]]  # 知らない見出し (題, 中身)、元の順
+    kept_preface: str  # 前書きと最初の見出しの間の文
 
     def reread(self, new_reading: list[Line], model: str) -> None:
         """もう一度読ませた結果を入れる。AI の行は置き換え、判定と本人の行は残す。
@@ -322,6 +374,12 @@ class JudgedLines:
         self.earlier = self.earlier + gone
         self.reading = carried
         self.model = model
+        # 読みの下に本人が書いた文は置き換える前の読みについての言葉なので、判定の付いた古い行と同じく前の読みへ移す
+        moved = self.kept_text.pop(self.H_LINES, "")
+        if moved:
+            self.kept_text[self.H_LINES_EARLIER] = join_text(
+                self.kept_text.get(self.H_LINES_EARLIER, ""), moved
+            )
 
     def mark(self, key: str, verdict: str, reason: str | None = None, text: str | None = None) -> Line:
         """読みの行に本人の判定を付ける。同じ key が複数なら text で選ぶ。
@@ -369,6 +427,10 @@ class Observation(JudgedLines):
     earlier: list[Line] = field(default_factory=list)
     data: list[Line] = field(default_factory=list)
     record: list[Line] = field(default_factory=list)
+    kept_front: dict = field(default_factory=dict)
+    kept_text: dict[str, str] = field(default_factory=dict)
+    kept_sections: list[tuple[str, str]] = field(default_factory=list)
+    kept_preface: str = ""
 
     def __post_init__(self) -> None:
         if not DATE_RE.match(self.date):
@@ -399,21 +461,28 @@ class Observation(JudgedLines):
             language=str(front.get("language") or "en"),
             kind=str(front.get("kind") or "own"),
             ask=[str(a) for a in (front.get("ask") or [])],
+            kept_front={k: v for k, v in front.items() if k not in OBSERVATION_FRONT_KEYS},
         )
+        obs.kept_preface = preface(body)
+        # 同じ見出しが二つあれば行を一つにまとめる（後の物だけ読むと前の行が書き戻しで消え、前だけ読むと後の判定が使われない）
         for title, block in split_sections(body):
             name, arg = heading_arg(title)
-            lines = parse_lines(block)
+            lines, text = split_block(block)
             if name == H_READING:
-                obs.reading = lines
-                if arg and not obs.model:
+                obs.reading = obs.reading + lines
+                if arg and arg != "none" and not obs.model:  # (none) は読みがまだ無い印
                     obs.model = arg
             elif name == H_EARLIER:
-                obs.earlier = lines
+                obs.earlier = obs.earlier + lines
             elif name == H_DATA:
-                obs.data = lines
+                obs.data = obs.data + lines
             elif name == H_RECORD:
-                obs.record = lines
-            # 知らない見出しは読み飛ばす（読む側は壊れない）
+                obs.record = obs.record + lines
+            else:  # 知らない見出しは読みには使わず（読む側は壊れない）、書き戻すときに残す
+                obs.kept_sections.append((title, block))
+                continue
+            if text:
+                obs.kept_text[name] = join_text(obs.kept_text.get(name, ""), text)
         return obs
 
     def front(self) -> dict:
@@ -429,15 +498,22 @@ class Observation(JudgedLines):
             f["kind"] = self.kind
         if self.ask:
             f["ask"] = list(self.ask)
+        f.update(self.kept_front)
         return f
 
     def render(self) -> str:
+        t = self.kept_text
         parts = [render_front(self.front())]
-        parts.append(f"## {H_READING} ({self.model or 'none'})\n{render_lines(self.reading)}\n")
-        if self.earlier:
-            parts.append(f"## {H_EARLIER}\n{render_lines(self.earlier)}\n")
-        parts.append(f"## {H_DATA}\n{render_lines(self.data)}\n")
-        parts.append(f"## {H_RECORD}\n{render_lines(self.record)}\n")
+        if self.kept_preface:
+            parts.append(f"{self.kept_preface}\n")
+        parts.append(
+            render_section(f"{H_READING} ({self.model or 'none'})", self.reading, t.get(H_READING, ""))
+        )
+        if self.earlier or t.get(H_EARLIER):
+            parts.append(render_section(H_EARLIER, self.earlier, t.get(H_EARLIER, "")))
+        parts.append(render_section(H_DATA, self.data, t.get(H_DATA, "")))
+        parts.append(render_section(H_RECORD, self.record, t.get(H_RECORD, "")))
+        parts += render_kept_sections(self.kept_sections)
         return "\n".join(parts)
 
     @classmethod
@@ -453,6 +529,7 @@ class Observation(JudgedLines):
 # ---------------------------------------------------------------- 栽培計画 plan.md（記録の形 §10）
 
 H_PLAN_EARLIER = "Earlier plan"
+PLAN_FRONT_KEYS = ("since", "season", "language", "model")
 
 
 @dataclass
@@ -461,6 +538,8 @@ class Plan(JudgedLines):
 
     KEYS = PLAN_KEYS
     RECORD_KEYS = PLAN_RECORD_KEYS
+    H_LINES = H_PLAN
+    H_LINES_EARLIER = H_PLAN_EARLIER
 
     since: str
     season: str = ""
@@ -470,6 +549,10 @@ class Plan(JudgedLines):
     earlier: list[Line] = field(default_factory=list)
     data: list[Line] = field(default_factory=list)
     record: list[Line] = field(default_factory=list)
+    kept_front: dict = field(default_factory=dict)
+    kept_text: dict[str, str] = field(default_factory=dict)
+    kept_sections: list[tuple[str, str]] = field(default_factory=list)
+    kept_preface: str = ""
 
     def __post_init__(self) -> None:
         if not DATE_RE.match(self.since):
@@ -483,20 +566,28 @@ class Plan(JudgedLines):
             season=str(front.get("season") or ""),
             language=str(front.get("language") or "en"),
             model=front.get("model"),
+            kept_front={k: v for k, v in front.items() if k not in PLAN_FRONT_KEYS},
         )
+        plan.kept_preface = preface(body)
+        # 同じ見出しが二つあれば行を一つにまとめる（後の物だけ読むと前の行が書き戻しで消え、前だけ読むと後の判定が使われない）
         for title, block in split_sections(body):
             name, arg = heading_arg(title)
-            lines = parse_lines(block)
+            lines, text = split_block(block)
             if name == H_PLAN:
-                plan.reading = lines
-                if arg and not plan.model:
+                plan.reading = plan.reading + lines
+                if arg and arg != "none" and not plan.model:  # (none) は計画がまだ無い印
                     plan.model = arg
             elif name == H_PLAN_EARLIER:
-                plan.earlier = lines
+                plan.earlier = plan.earlier + lines
             elif name == H_DATA:
-                plan.data = lines
+                plan.data = plan.data + lines
             elif name == H_RECORD:
-                plan.record = lines
+                plan.record = plan.record + lines
+            else:  # 知らない見出しは読みには使わず、書き戻すときに残す
+                plan.kept_sections.append((title, block))
+                continue
+            if text:
+                plan.kept_text[name] = join_text(plan.kept_text.get(name, ""), text)
         return plan
 
     def front(self) -> dict:
@@ -506,15 +597,20 @@ class Plan(JudgedLines):
         f["language"] = self.language
         if self.model:
             f["model"] = self.model
+        f.update(self.kept_front)
         return f
 
     def render(self) -> str:
+        t = self.kept_text
         parts = [render_front(self.front())]
-        parts.append(f"## {H_PLAN} ({self.model or 'none'})\n{render_lines(self.reading)}\n")
-        if self.earlier:
-            parts.append(f"## {H_PLAN_EARLIER}\n{render_lines(self.earlier)}\n")
-        parts.append(f"## {H_DATA}\n{render_lines(self.data)}\n")
-        parts.append(f"## {H_RECORD}\n{render_lines(self.record)}\n")
+        if self.kept_preface:
+            parts.append(f"{self.kept_preface}\n")
+        parts.append(render_section(f"{H_PLAN} ({self.model or 'none'})", self.reading, t.get(H_PLAN, "")))
+        if self.earlier or t.get(H_PLAN_EARLIER):
+            parts.append(render_section(H_PLAN_EARLIER, self.earlier, t.get(H_PLAN_EARLIER, "")))
+        parts.append(render_section(H_DATA, self.data, t.get(H_DATA, "")))
+        parts.append(render_section(H_RECORD, self.record, t.get(H_RECORD, "")))
+        parts += render_kept_sections(self.kept_sections)
         return "\n".join(parts)
 
     @classmethod

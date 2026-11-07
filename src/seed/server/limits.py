@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """上限（設計書 §7.3）。1 日の回数（token、IP、全体）と、usage から概算した 1 日の費用。
+もう一つ、門で間違えた回数（番地ごと、分の単位。Tries）。
 
-メモリ上の辞書だけで持ち、日付が変われば消す。token はハッシュ（sha256 の先頭 16 桁）で持つ。
+メモリ上の辞書だけで持ち、日付が変われば消す（Tries は時が過ぎれば消す。再起動でも消える）。token はハッシュ（sha256 の先頭 16 桁）で持つ。
 写真と座標は、ここには一切入らない。
 """
 
@@ -10,7 +11,9 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import threading
-from collections import Counter
+import time
+from collections import Counter, OrderedDict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # 写真（1 回に送れる枚数、1 枚、合計の大きさ）
@@ -18,6 +21,11 @@ PHOTOS_MAX = 6
 PHOTO_MAX = 2 * 1024 * 1024
 PHOTOS_TOTAL_MAX = 8 * 1024 * 1024
 CONNECT_PER_IP = 5  # token 無しの一言
+# 門で間違えた回数（Tries）の既定。SEED_GATE_TRIES、SEED_GATE_WINDOW、SEED_GATE_BLOCK（秒）で変えられる
+GATE_TRIES = 10  # GATE_WINDOW 秒の中でこの回数を間違えた番地を止める
+GATE_WINDOW = 600
+GATE_BLOCK = 600  # 止める長さ。止めている間は正しいコードでも断る
+GATE_KEEP = 10_000  # 覚えておく番地の数。超えたら古い物から捨てる（メモリが大きくならないように）
 # 100 万トークンあたりの US$。Opus 5.5 の値（設計書 §7.3）。ほかのモデルでも上限の目安としてこれを使う
 PRICE_PER_M = {"input": 4.00, "output": 20.00, "cache_read": 0.20, "cache_write": 5.00}
 
@@ -147,3 +155,66 @@ class Limits:
                 "talks": max(0, self.daily_talks - self.talks),
                 "usd": round(max(0.0, self.daily_usd - self.spent_usd), 2),
             }
+
+
+class Tries:
+    """門で断った回数を、相手の番地ごとに数える。window 秒に tries 回を数えたら、その番地を block 秒止める。
+
+    家のサーバーの招待コードは手で打つ 6 桁（百万通り）なので、家の網の中の別の機械から総当たりで試されないように。
+    通した要求でも数は戻さない（同じ番地に正しい人と試す者がいる時に、試し続けられないように）。
+    clock は差し替えられる（テスト）。
+    """
+
+    def __init__(
+        self,
+        tries: int = GATE_TRIES,
+        window: float = GATE_WINDOW,
+        block: float = GATE_BLOCK,
+        keep: int = GATE_KEEP,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.tries = max(1, tries)
+        self.window = max(1.0, float(window))
+        self.block = max(1.0, float(block))
+        self.keep = max(1, keep)
+        self.clock = clock
+        self._fails: OrderedDict[str, deque[float]] = OrderedDict()  # 古く間違えた番地が前
+        self._until: dict[str, float] = {}  # 止めている番地 → 止め終える時
+        self._lock = threading.Lock()
+
+    def blocked(self, ip: str) -> float:
+        """止めていれば残りの秒（0 より大きい）。止めていなければ 0。"""
+        with self._lock:
+            until = self._until.get(ip)
+            if until is None:
+                return 0.0
+            left = until - self.clock()
+            if left > 0:
+                return left
+            del self._until[ip]
+            return 0.0
+
+    def fail(self, ip: str) -> bool:
+        """間違えた一回を数える。これで止め始めたら True。"""
+        now = self.clock()
+        with self._lock:
+            q = self._fails.pop(ip, None) or deque()
+            while q and q[0] <= now - self.window:
+                q.popleft()
+            q.append(now)
+            started = len(q) >= self.tries
+            if started:
+                self._until[ip] = now + self.block
+            else:
+                self._fails[ip] = q  # 後ろに置き直す（新しく間違えた番地が後ろ）
+            self._trim(now)
+            return started
+
+    def _trim(self, now: float) -> None:
+        while len(self._fails) > self.keep:
+            self._fails.popitem(last=False)
+        if len(self._until) > self.keep:
+            for ip in [ip for ip, u in self._until.items() if u <= now]:
+                del self._until[ip]
+            while len(self._until) > self.keep:  # まだ多ければ、早く止め終える物から捨てる
+                del self._until[min(self._until, key=self._until.__getitem__)]

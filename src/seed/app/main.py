@@ -63,6 +63,22 @@ SCREENS = [
 ]
 
 
+NAV_BUTTON = 48  # 上の端の印一つの幅（スマートフォンの既定。PC は 40 で、少し余る）
+
+
+def nav_fit(page_width: float | None, screens: int) -> int:
+    """上の端に印で並べる画面の数。歯車とフォルダーの二つは必ず置き、入らない画面は「…」の一覧に回す。
+
+    幅を知らない時と、全部が入る時は全部。題の分は取らない（今の見た目のまま。入らない時だけ畳む）。
+    """
+    if not page_width:
+        return screens
+    room = int((page_width - 16) // NAV_BUTTON) - 2  # 16 は右の端の余白
+    if room >= screens:
+        return screens
+    return max(1, room - 1)  # 一つ分は「…」に
+
+
 class FieldApp:
     """プロジェクト全体の時に、畑一つ分として部品を作るための app。folder だけ替え、ほかは元の app の物。"""
 
@@ -258,32 +274,51 @@ class App:
                 expand=True,
             )
         self.page.on_resize = self._fit
+        fit = self._nav_fit = nav_fit(getattr(self.page, "width", None), len(screens))
+        shown, more = screens[:fit], screens[fit:]
+        actions: list[ft.Control] = [
+            ft.IconButton(
+                ft.Icons.SETTINGS_OUTLINED,
+                tooltip=self.t("nav_settings"),
+                on_click=self.show_settings,
+            ),
+            ft.IconButton(
+                ft.Icons.FOLDER_OPEN_OUTLINED,
+                tooltip=self.t("project_switch"),
+                on_click=self.show_projects,
+            ),
+        ] + [
+            ft.IconButton(
+                sc.icon,
+                tooltip=self.screen_name(sc),
+                selected=i == idx,
+                icon_color=ft.Colors.PRIMARY if i == idx else None,
+                on_click=self._nav_to(sc.route),
+            )
+            for i, sc in enumerate(shown)
+        ]
+        if more:  # 入らない画面の印は「…」の一覧に（本人のプラグインが増えても右へはみ出さない）
+            actions.append(
+                ft.PopupMenuButton(
+                    icon=ft.Icons.MORE_HORIZ,
+                    icon_color=ft.Colors.PRIMARY if idx >= fit else None,
+                    tooltip=self.t("nav_more"),
+                    items=[
+                        ft.PopupMenuItem(
+                            content=self.screen_name(sc),
+                            icon=sc.icon,
+                            checked=fit + i == idx,
+                            on_click=self._nav_to(sc.route),
+                        )
+                        for i, sc in enumerate(more)
+                    ],
+                )
+            )
         return ft.View(
             route=route,
             appbar=ft.AppBar(
                 title=ft.Text(f"{self.place_name} — {self.screen_name(screens[idx])}"),
-                actions=[
-                    ft.IconButton(
-                        ft.Icons.SETTINGS_OUTLINED,
-                        tooltip=self.t("nav_settings"),
-                        on_click=self.show_settings,
-                    ),
-                    ft.IconButton(
-                        ft.Icons.FOLDER_OPEN_OUTLINED,
-                        tooltip=self.t("project_switch"),
-                        on_click=self.show_projects,
-                    ),
-                ]
-                + [
-                    ft.IconButton(
-                        sc.icon,
-                        tooltip=self.screen_name(sc),
-                        selected=i == idx,
-                        icon_color=ft.Colors.PRIMARY if i == idx else None,
-                        on_click=self._nav_to(sc.route),
-                    )
-                    for i, sc in enumerate(screens)
-                ],
+                actions=actions,
             ),
             controls=[self._body],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -291,7 +326,13 @@ class App:
         )
 
     def _fit(self, e=None) -> None:
-        """窓の幅が変わったら、画面を作り直さずに幅だけを直す（撮っている間も部品を外さない）。"""
+        """窓の幅が変わったら、画面を作り直さずに幅だけを直す（撮っている間も部品を外さない）。
+
+        上の端に入る画面の印の数が変わる時だけは、作り直す（入らない印を「…」へ回す、戻す）。
+        """
+        if nav_fit(getattr(self.page, "width", None), len(self.screens())) != getattr(self, "_nav_fit", None):
+            self.refresh()
+            return
         body = getattr(self, "_body", None)
         if body is not None:
             body.width = theme.fit_width(getattr(self.page, "width", None))

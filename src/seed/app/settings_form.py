@@ -84,14 +84,29 @@ def open_form(app: App) -> None:
         dense=True,
     )
     choices = route_choices(app)
-    now = s.read if s.read in choices else ("server" if "server" in choices else choices[0])
+    from .talk import route  # 設定の札と同じく、今実際に使う所を選んでおく
+
+    used = route(app) or s.read
+    now = used if used in choices else ("server" if "server" in choices else choices[0])
+
+    def choice(c: str) -> ft.Control:
+        """丸と名。名は折り返す（Radio の label は折り返さず、スマートフォンの幅では枠の外へ出る）。"""
+
+        def pick(e) -> None:
+            read.value = c
+            app.page.update()
+
+        return ft.Row(
+            [
+                ft.Radio(value=c),
+                ft.Container(ft.Text(t(f"set_read_{c}", model=s.model)), expand=True, on_click=pick),
+            ],
+            spacing=4,
+        )
+
     read = ft.RadioGroup(
         value=now,
-        content=ft.Column(
-            [ft.Radio(value=c, label=t(f"set_read_{c}", model=s.model)) for c in choices],
-            tight=True,
-            spacing=0,
-        ),
+        content=ft.Column([choice(c) for c in choices], tight=True, spacing=0),
     )
     status = ft.Text("", size=13)
 
@@ -124,13 +139,24 @@ def open_form(app: App) -> None:
         app.toast(t("form_saved"))
         app.refresh()
 
+    remover = (
+        ft.Container()
+    )  # 「鍵を外す」。消すと戻せないので、設定の札と同じく二度押し（一度目で「本当に外す」）
+
     def remove_key(e) -> None:
+        if not isinstance(remover.content, ft.FilledButton):
+            remover.content = ft.FilledButton(t("set_key_remove_sure"), on_click=remove_key)
+            app.page.update()
+            return
         s.anthropic_key = ""
         s.save()
         app.state.pop("direct_messages", None)
         key.hint_text = t("form_key_hint")
         status.value = t("talk_key_removed")
+        remover.visible = False
         app.page.update()
+
+    remover.content = ft.TextButton(t("form_key_remove"), on_click=remove_key)
 
     body: list[ft.Control] = [
         theme.subheading(t("form_pc")),
@@ -144,7 +170,7 @@ def open_form(app: App) -> None:
         key,
     ]
     if s.anthropic_key:
-        body.append(ft.TextButton(t("form_key_remove"), on_click=remove_key))
+        body.append(remover)
     body.append(status)
     app.page.show_dialog(
         ft.AlertDialog(

@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import gate
+from .limits import GATE_BLOCK, GATE_TRIES, GATE_WINDOW, Tries
 
 REPO_SKILL_DIR = Path(__file__).resolve().parents[3] / "skill"
 
@@ -85,14 +86,20 @@ class Settings:
     )  # Pl@ntNet の鍵（無ければ環境変数 PLANTNET_API_KEY）
     # SEED_HOME。家のサーバー（seed home。設計書 §5.13）のプロジェクトフォルダー。在れば写真と観察をそこに置く
     home: Path | None = None
+    # SEED_GATE_TRIES、SEED_GATE_WINDOW、SEED_GATE_BLOCK（秒）。門で間違えた回数で番地を止める（limits.Tries）
+    gate_tries: int = GATE_TRIES
+    gate_window: int = GATE_WINDOW
+    gate_block: int = GATE_BLOCK
     _book: InviteBook = field(init=False, repr=False, compare=False)
     _tokens: gate.TokenBook = field(init=False, repr=False, compare=False)
     journal: gate.Journal = field(init=False, repr=False, compare=False)
+    tries: Tries = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_book", InviteBook(self.invites_path, self.invites))
         object.__setattr__(self, "_tokens", gate.TokenBook(self.tokens_path))
         object.__setattr__(self, "journal", gate.Journal(self.audit_path))
+        object.__setattr__(self, "tries", Tries(self.gate_tries, self.gate_window, self.gate_block))
 
     @property
     def connections_dir(self) -> Path:
@@ -126,6 +133,9 @@ class Settings:
             per_token_talks=_int("SEED_PER_TOKEN_TALKS", 60),
             plantnet_key=credential(CRED_PLANTNET, "PLANTNET_API_KEY"),
             home=Path(h).expanduser() if (h := os.environ.get("SEED_HOME", "").strip()) else None,
+            gate_tries=_int("SEED_GATE_TRIES", GATE_TRIES),
+            gate_window=_int("SEED_GATE_WINDOW", GATE_WINDOW),
+            gate_block=_int("SEED_GATE_BLOCK", GATE_BLOCK),
         )
 
     @property

@@ -40,7 +40,7 @@ kagi = "kagi.cli:main"
 Homepage = "https://seed.aiseed.dev"
 Source = "https://github.com/aiseed-dev/seed"
 
-# スマートフォンのアプリ（flet build ipa / apk。docs/iPhone 版.md）。入口は src/seed_mobile.py
+# スマートフォンのアプリ（flet build ipa / apk。docs/iPhone 版.md）。入口は src/main.py（[tool.flet.app] の module）
 [tool.flet]
 product = "seed"
 org = "dev.aiseed"

@@ -259,7 +259,8 @@ def t_list_observations(desk: Desk, inp: dict) -> str:
 
 def t_read_observation(desk: Desk, inp: dict) -> str:
     obs = Observation.read(desk.obs_path(inp.get("name")))
-    return dataclasses.replace(obs, location=None).render()  # 細かい座標は渡さない
+    # 細かい座標は渡さない（本人が足した前書きの鍵にも座標がありうる）
+    return dataclasses.replace(obs, location=None, kept_front={}).render()
 
 
 def t_view_photo(desk: Desk, inp: dict) -> list[dict]:
@@ -590,6 +591,9 @@ def read_with_key(st: Settings, folder: Folder, obs: Observation, skill_dir: Pat
         obs.language or st.language,
         list(obs.ask),
         [Path(r).stem for r in obs.photos],
+        date=obs.date,
+        time=obs.time,
+        kind=obs.kind,
     )
     data = post(st.anthropic_key, with_fallbacks(body, st.model))
     stop = data.get("stop_reason")

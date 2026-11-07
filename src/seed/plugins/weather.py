@@ -41,12 +41,22 @@ def number(v: float | None, unit: str) -> str:
 
 
 def picture(app, svg: str) -> list[ft.Control]:
-    """図。縮めず自分の幅で出し、横に動かして見る。"""
+    """図。縮めず自分の幅で出し、横に動かして見る。
+
+    横の棒はいつも出す（スマートフォンの幅では図の右が画面の端で切れて見えるので、続きがある事を見せる。
+    PC ではマウスで棒を引いて動かせる）。棒が軸の字に重ならないよう、図の下を空ける。
+    """
     if not svg:
         return []
     w, h = chart.size(svg)
     data = chart.png(svg) or svg.encode("utf-8")
-    return [ft.Row([ft.Image(src=data, width=w, height=h, fit=ft.BoxFit.CONTAIN)], scroll=ft.ScrollMode.AUTO)]
+    image = ft.Image(src=data, width=w, height=h, fit=ft.BoxFit.CONTAIN)
+    return [ft.Row([ft.Container(image, padding=ft.Padding.only(bottom=12))], scroll=ft.ScrollMode.ALWAYS)]
+
+
+def keep_together(text: str) -> str:
+    """数と単位、深さと値の間で行を変えない（「9」と「℃」が別の行に分かれない）。"""
+    return text.replace(" ", "\u00a0")
 
 
 def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
@@ -58,9 +68,9 @@ def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
     parts = []
     if soil.surface:
         tm, v = soil.surface
-        parts.append(t("weather_surface", value=f"{v:.0f}", time=tm[-5:]))
+        parts.append(keep_together(t("weather_surface", value=f"{v:.0f}", time=tm[-5:])))
     if soil.temp:
-        temp = " · ".join(f"{k} {number(v, ' ℃')}" for k, v in soil.temp.items())
+        temp = " · ".join(keep_together(f"{k} {number(v, ' ℃')}") for k, v in soil.temp.items())
         parts.append(f"{t('weather_soil_temp')}: {temp}")
     out: list[ft.Control] = [theme.subheading(t("weather_soil", time=when[-5:]))]
     if parts:

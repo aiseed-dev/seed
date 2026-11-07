@@ -89,6 +89,9 @@ def _page_fit(app: App) -> float:
     return max(96.0, theme.fit_width(getattr(app.page, "width", None)) - 32)
 
 
+NARROW = 600  # これより狭い窓は、大きく開いた所の操作を縦に並べる
+
+
 def viewer_box(app: App, below: int) -> tuple[float, float]:
     """大きく見る枠。幅は窓の幅いっぱい、高さは下の操作の分を引いた残り。"""
     pw = getattr(app.page, "width", None) or 1000
@@ -195,7 +198,10 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
     state = {"i": index, "confirm": False, "changed": False}
     body = ft.Column(spacing=8, tight=True)
     said = ft.Text("", selectable=True)
-    actions = ft.Row(wrap=True, spacing=8)
+    # 狭い幅（スマートフォン）では三つの操作を一つずつ縦に左揃えで並べ、「閉じる」は最後の行の右に。
+    # 折り返しに任せると、二つ、一つ、二つと行ごとに数と位置が揃わない。広い幅では一行に並べる
+    narrow = (getattr(app.page, "width", None) or 1000) < NARROW
+    actions = ft.Column(spacing=0, tight=True) if narrow else ft.Row(wrap=True, spacing=8)
 
     def shot() -> Shot:
         return shots[state["i"]]
@@ -227,7 +233,7 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
             ft.Row([*nav, *info], wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             said,
         ]
-        actions.controls = [
+        ops: list[ft.Control] = [
             ft.TextButton(t("photo_name_it"), icon=ft.Icons.GRASS_OUTLINED, on_click=name_it),
             ft.TextButton(t("photo_make_today"), icon=ft.Icons.STAR_OUTLINE, on_click=make_today),
             ft.TextButton(
@@ -235,8 +241,12 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
                 icon=ft.Icons.HIDE_IMAGE_OUTLINED,
                 on_click=remove,
             ),
-            ft.TextButton(t("close"), icon=ft.Icons.CLOSE, on_click=close),
         ]
+        shut = ft.TextButton(t("close"), icon=ft.Icons.CLOSE, on_click=close)
+        if narrow:
+            actions.controls = [*ops, ft.Row([shut], alignment=ft.MainAxisAlignment.END)]
+        else:
+            actions.controls = [*ops, shut]
 
     def step(d: int):
         def h(e) -> None:

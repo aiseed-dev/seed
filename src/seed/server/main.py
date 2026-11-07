@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -151,8 +152,41 @@ def _paused(settings: Settings) -> JSONResponse | None:
     return None
 
 
+# 間違えた回数に数える理由。missing（コード無し）と scope（正しいコードで範囲の外）は、コードを当てる試しではないので数えない
+MISSES = ("unknown", "expired", "revoked")
+
+
+def _minutes(seconds: float) -> int:
+    return max(1, math.ceil(seconds / 60))
+
+
+def _gate_closed(settings: Settings, ip: str) -> JSONResponse | None:
+    """間違いを重ねた番地は、止めている間は正しいコードでも 429（limits.Tries）。止めていなければ None。"""
+    left = settings.tries.blocked(ip)
+    if left <= 0:
+        return None
+    r = _error(
+        429,
+        "too_many_tries",
+        detail=f"招待コードを何度も間違えたので、あと {_minutes(left)} 分ほど受け付けない",
+    )
+    r.headers["Retry-After"] = str(math.ceil(left))
+    return r
+
+
+def _missed(settings: Settings, ip: str, why: str, action: str) -> None:
+    """間違えた一回を数える。止め始めたら、記録と端末（seed home の出力）に一行。コードと token は書かない。"""
+    if why not in MISSES or not settings.tries.fail(ip):
+        return
+    t = settings.tries
+    line = f"止めた: {ip} が {_minutes(t.window)} 分に {t.tries} 回間違えたので {_minutes(t.block)} 分断る"
+    settings.journal.record("?", action, line)
+    log.warning("門: %s", line)  # seed home は記録（SEED_AUDIT）を渡さないので、端末にも出す
+
+
 def _invite(
     settings: Settings,
+    request: Request,
     code: str | None,
     action: str = "",
     need: tuple[str, ...] = ("member",),
@@ -163,12 +197,18 @@ def _invite(
 
     need は入ってよい範囲（どれか一つを持っていれば通る）。通した事も断った事も記録に一行（token は書かない）。
     note が False なら通した行は書かない（結果の数を後で書く口のため。断った行は書く）。
+    間違えた回数はここで数え、重ねた番地は止める（429）。6 桁の家のコードだけでなく token の門の全部に効かせる:
+    門はこの一か所なので分ける方が複雑で、token は長い乱数なので正しい人が 10 分に 10 回間違える事はまず無い。
     """
+    ip = _client_ip(request)
+    if (closed := _gate_closed(settings, ip)) is not None:
+        return closed
     who, why = settings.who(code)
     if who is not None and "admin" not in who.scopes and not (who.scopes & set(need)):
         who, why = None, "scope"  # admin は member の事も全部できる
     if who is None:
         settings.journal.record("?", action, f"断った: {why}" + (f" {detail}" if detail else ""))
+        _missed(settings, ip, why, action)
         return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
     if note:
         settings.journal.record(_actor(who), action, detail or "通した")
@@ -271,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(400, "bad_token", detail=e.reasons)
         inv = form.get("invite")
-        who = _invite(settings, inv if isinstance(inv, str) else None, "read")
+        who = _invite(settings, request, inv if isinstance(inv, str) else None, "read")
         if not isinstance(who, str):
             return who
         uploads = [f for f in form.getlist("photos") if isinstance(f, UploadFile)]
@@ -297,6 +337,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ask = R.parse_asks(str(form.get("ask") or ""))
         except ValueError:
             return _error(400, "bad_ask", detail=f"ask は {', '.join(R.ASKS)} をコンマで")
+        # 観察の前書きの date・time・kind（時期と、候補地の読み方のため）。古いアプリは送らないので無くてよい。
+        # 座標は Claude に渡さない（center は資料の照会にだけ使う）
+        front = {k: str(form.get(k) or "") or None for k in ("date", "time", "kind")}
+        for k, ok in (
+            ("date", R.DATE_RE.fullmatch),
+            ("time", R.TIME_RE.fullmatch),
+            ("kind", R.KINDS.__contains__),
+        ):
+            if front[k] is not None and not ok(front[k]):
+                return _error(400, "bad_front", detail=f"{k} の形が違う")
 
         try:
             limits.take(token, _client_ip(request))
@@ -320,6 +370,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 language=language,
                 ask=ask,
                 names=[Path(f.filename or "").stem for f in uploads],
+                **front,
             )
         except RD.ReadError as e:
             limits.spend(e.usage)
@@ -380,6 +431,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     language=language,
                     ask=list(obs.ask),
                     names=[Path(r).stem for r in obs.photos],
+                    date=obs.date,
+                    time=obs.time,
+                    kind=obs.kind,
                 )
             except RD.ReadError as e:
                 limits.spend(e.usage)
@@ -413,7 +467,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _error(404, "not_found")
         if (closed := _paused(settings)) is not None:
             return closed
-        who = _invite(settings, request.headers.get("x-seed-invite"), "video")
+        who = _invite(settings, request, request.headers.get("x-seed-invite"), "video")
         if not isinstance(who, str):
             return who
         if int(request.headers.get("content-length") or 0) > H.VIDEO_MAX:
@@ -503,7 +557,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _error(400, "bad_talk", detail=["JSON の表でない"])
         inv = body.get("invite")
         code = inv if isinstance(inv, str) else None
-        who = _invite(settings, code, "talk", note=False)
+        who = _invite(settings, request, code, "talk", note=False)
         if not isinstance(who, str):
             return who
         if talk_home:
@@ -575,7 +629,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(400, "bad_token", detail=e.reasons)
         inv = form.get("invite")
-        who = _invite(settings, inv if isinstance(inv, str) else None, "identify")
+        who = _invite(settings, request, inv if isinstance(inv, str) else None, "identify")
         if not isinstance(who, str):
             return who
         uploads = [f for f in form.getlist("photos") if isinstance(f, UploadFile)]
@@ -607,7 +661,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_lookup(
         request: Request, lat: float, lon: float, invite: str | None = None, language: str | None = None
     ):
-        who = _invite(settings, invite, "lookup")
+        who = _invite(settings, request, invite, "lookup")
         if not isinstance(who, str):
             return who
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
@@ -638,7 +692,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = PublishBody.model_validate_json(bytes(raw))
         except ValidationError as e:
             return JSONResponse({"detail": e.errors(include_url=False, include_input=False)}, status_code=422)
-        who = _invite(settings, body.invite, "publish", note=False)
+        who = _invite(settings, request, body.invite, "publish", note=False)
         if not isinstance(who, str):
             return who
         actor = who or "?"
@@ -655,8 +709,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"id": pub.id, "url": f"{base}/public/{pub.id}.md"}
 
     @app.delete("/api/publish/{record_id}")
-    async def api_withdraw(record_id: str, body: WithdrawBody):
-        who = _invite(settings, body.invite, "withdraw", detail=record_id[:80])
+    async def api_withdraw(record_id: str, body: WithdrawBody, request: Request):
+        who = _invite(settings, request, body.invite, "withdraw", detail=record_id[:80])
         if not isinstance(who, str):
             return who
         try:
@@ -667,13 +721,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ---- 管理の口（動かす人だけ。範囲 admin。招待コードと同じ所に入れた token をヘッダで受ける）
     def _admin(request: Request, action: str, detail: str = "") -> str | JSONResponse:
-        return _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), detail=detail)
+        return _invite(
+            settings, request, request.headers.get("x-seed-invite"), action, need=("admin",), detail=detail
+        )
 
     @app.get("/api/whoami")
     async def api_whoami(request: Request):
         """入れてある token の呼び名と範囲。アプリが、管理の画面を出すかを決めるのに使う。"""
+        ip = _client_ip(request)
+        if (closed := _gate_closed(settings, ip)) is not None:  # 尋ねる口でも試せないように、門と同じく数える
+            return closed
         who, why = settings.who(request.headers.get("x-seed-invite"))
         if who is None:
+            _missed(settings, ip, why, "whoami")
             return _error(403, "invite_required", reason=why, detail=[DENIED[why]])
         return {"name": who.name, "scopes": sorted(who.scopes)}
 
@@ -752,7 +812,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def admin_token_revoke_all(request: Request):
         """押した本人の token を残して、生きている token を全部取り消す。記録には取り消した数を一行。"""
         action = "admin.token_revoke_all"
-        who = _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), note=False)
+        who = _invite(
+            settings, request, request.headers.get("x-seed-invite"), action, need=("admin",), note=False
+        )
         if not isinstance(who, str):
             return who
         if settings.tokens_path is None:
@@ -770,7 +832,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def admin_pause(body: PauseBody, request: Request):
         """受け付けを止める・再開する。印は台帳の隣のファイルで、再起動しても残る。"""
         action = "admin.pause" if body.paused else "admin.resume"
-        who = _invite(settings, request.headers.get("x-seed-invite"), action, need=("admin",), note=False)
+        who = _invite(
+            settings, request, request.headers.get("x-seed-invite"), action, need=("admin",), note=False
+        )
         if not isinstance(who, str):
             return who
         flag = settings.pause_path
@@ -831,6 +895,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         action = "admin.connection_remove"
         who = _invite(
             settings,
+            request,
             request.headers.get("x-seed-invite"),
             action,
             need=("admin",),
@@ -862,7 +927,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (closed := _paused(settings)) is not None:
             return closed
         # 一言は買い手も送れる（買い手の token でできるのはここだけ。設計書 §5.9）
-        who = _invite(settings, body.invite, "connect", need=("member", "buyer"), detail=str(body.to)[:80])
+        who = _invite(
+            settings, request, body.invite, "connect", need=("member", "buyer"), detail=str(body.to)[:80]
+        )
         if not isinstance(who, str):
             return who
         ip = _client_ip(request)

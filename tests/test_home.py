@@ -183,6 +183,38 @@ def test_read_without_claude_code_or_key_is_unavailable(tmp_path):
     assert r.status_code == 503 and r.json()["error"] == "read_unavailable"
 
 
+def test_read_with_key_passes_the_front_of_the_stored_observation(tmp_path, monkeypatch):
+    """Claude Code が無く鍵で読む時は、家に置いた観察の date・time・kind を渡す。location は渡さない。"""
+    import json
+    from types import SimpleNamespace
+
+    from seed.server import read as RD
+
+    monkeypatch.setattr(local, "available", lambda: None)
+    got = []
+
+    async def call(client, **kw):
+        got.append(kw)
+        payload = {"lines": [{"key": "overall", "text": "草が大半", "confidence": 0.8}]}
+        return SimpleNamespace(
+            stop_reason="end_turn",
+            content=[SimpleNamespace(type="text", text=json.dumps(payload))],
+            model="claude-opus-5-5",
+            usage=None,
+        )
+
+    monkeypatch.setattr(RD, "call", call)
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj, api_key="test-key")
+    r = post_read(c, code, jpeg(tmp_path), date="1999-01-01")  # 家では送られた date より、置いた観察の物
+    assert r.status_code == 200, r.text
+    (path,) = (proj / "observations").glob("*.md")
+    obs = Observation.read(path)
+    text = got[0]["messages"][0]["content"][-1]["text"]
+    assert f"## 前書き\n- date: {obs.date}\n- time: {obs.time}\n- kind: {obs.kind}\n" in text
+    assert "1999-01-01" not in text and "location" not in text
+
+
 def test_talk_passes_the_last_words_to_claude_code(tmp_path, claude):
     proj = multi(tmp_path)
     c, code = server(tmp_path, proj)
@@ -621,3 +653,90 @@ def test_video_sent_again_is_not_kept_twice(tmp_path):
     assert post_video(c, code, MP4, where).json()["path"] == "videos/2026-11-07/171951.mp4"
     assert post_video(c, code, MP4 + b"x", where).json()["path"] == "videos/2026-11-07/171951-2.mp4"
     assert not list(proj.glob(".video-*"))
+
+
+# ---------------------------------------------------------------- 間違えた回数で止める（6 桁の招待コードの総当たり）
+
+
+def talk(c: TestClient, code: str):
+    return c.post("/api/talk", json={"messages": [{"role": "user", "content": "やあ"}], "invite": code})
+
+
+def test_wrong_codes_lock_the_address_for_a_while(tmp_path, claude, caplog):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    now = [1000.0]
+    c.app.state.settings.tries.clock = lambda: now[0]
+    for _ in range(10):
+        assert talk(c, "000000").status_code == 403
+    r = talk(c, "000001")
+    assert r.status_code == 429 and r.json()["error"] == "too_many_tries"
+    assert r.headers["retry-after"] == "600"
+    assert talk(c, code).status_code == 429  # 止めている間は正しいコードでも通さない
+    assert post_video(c, code, MP4).status_code == 429
+    assert c.get("/api/whoami", headers={"x-seed-invite": code}).status_code == 429
+    lines = [m for m in caplog.messages if "止めた" in m]
+    assert len(lines) == 1 and code not in lines[0] and "000000" not in lines[0]
+    now[0] += 599
+    assert talk(c, code).status_code == 429
+    now[0] += 2
+    r = talk(c, code)
+    assert r.status_code == 200, r.text
+
+
+def test_lockout_is_per_address(tmp_path, claude):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    for _ in range(10):
+        talk(c, "000000")
+    assert talk(c, code).status_code == 429
+    other = TestClient(c.app, client=("192.0.2.20", 50000))  # 同じ網の別の機械
+    assert talk(other, code).status_code == 200
+
+
+def test_old_misses_drop_out_of_the_window(tmp_path, claude):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    now = [0.0]
+    c.app.state.settings.tries.clock = lambda: now[0]
+    for _ in range(9):
+        assert talk(c, "000000").status_code == 403
+    now[0] += 601  # 10 分より前の間違いは数えない
+    for _ in range(9):
+        assert talk(c, "000000").status_code == 403
+    assert talk(c, code).status_code == 200
+
+
+def test_missing_code_and_right_code_do_not_count(tmp_path, claude):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    for _ in range(12):
+        assert talk(c, "").status_code == 403  # コード無しは当てる試しではない
+        assert talk(c, code).status_code == 200
+
+
+def test_tries_forgets_old_addresses():
+    from seed.server.limits import Tries
+
+    t = Tries(tries=2, window=60, block=60, keep=3, clock=lambda: 0.0)
+    for n in range(10):
+        t.fail(f"10.0.0.{n}")
+    assert len(t._fails) == 3
+    for n in range(10):
+        t.fail(f"10.0.1.{n}")
+        t.fail(f"10.0.1.{n}")
+    assert len(t._until) == 3
+
+
+def test_client_says_when_the_address_is_locked():
+    def handler(request):
+        body = {
+            "error": "too_many_tries",
+            "detail": "招待コードを何度も間違えたので、あと 10 分ほど受け付けない",
+        }
+        return httpx.Response(429, json=body, headers={"retry-after": "600"})
+
+    c = Client("http://pc.test", "tok", "ja", transport=httpx.MockTransport(handler), invite="123456")
+    with pytest.raises(seed_client.ClientError) as e:
+        c.talk([{"role": "user", "content": "やあ"}])
+    assert e.value.word == "server_tries" and e.value.status == 429 and "10 分" in e.value.detail

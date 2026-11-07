@@ -395,8 +395,13 @@ def test_read_instructions_are_the_same_on_server_and_device(app, seedfolder, tm
                 language="ja",
                 ask=list(obs.ask),
                 names=[Path(r).stem for r in obs.photos],
+                date=obs.date,
+                time=obs.time,
+                kind=obs.kind,
             )
         )
+    asked = device["messages"][0]["content"][-1]["text"]
+    assert f"- date: {obs.date}\n- time: {obs.time}\n- kind: {obs.kind}" in asked
     for k in ("model", "max_tokens", "system", "messages", "output_config", "fallbacks"):
         assert device[k] == got[k], k
 

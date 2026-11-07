@@ -67,6 +67,20 @@ def test_read_sends_ask_only_when_given():
     assert b'name="ask"' not in bodies[1]
 
 
+def test_read_sends_the_front_only_when_given():
+    bodies = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        bodies.append(req.read())
+        return httpx.Response(200, json=READ_OK)
+
+    client(handler).read([b"\xff\xd8one"], date="2026-11-05", time="14:21:07", kind="candidate")
+    client(handler).read([b"\xff\xd8one"])
+    for name, value in (("date", b"2026-11-05"), ("time", b"14:21:07"), ("kind", b"candidate")):
+        assert f'name="{name}"'.encode() in bodies[0] and value in bodies[0]
+        assert f'name="{name}"'.encode() not in bodies[1]
+
+
 def test_read_refused():
     c = client(lambda req: httpx.Response(200, json={"refused": True, "category": "unclear"}))
     with pytest.raises(ClientError) as e:

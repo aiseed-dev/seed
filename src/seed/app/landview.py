@@ -43,15 +43,19 @@ async def make_past_frames(app: App) -> bool:
 def controls(app: App) -> list[ft.Control]:
     """題、四つの組（事実と出典）、昔の地図と空中写真。無い物は取りに行く釦。"""
     t = app.t
-    out: list[ft.Control] = [theme.subheading(t("land_title"))]
+    # 題は組の見出しより大きく。事実とその出典は一つの塊にし、塊と塊の間は画面の間（14）で空ける
+    out: list[ft.Control] = [
+        ft.Text(t("land_title"), theme_style=ft.TextThemeStyle.TITLE_LARGE, weight=ft.FontWeight.W_600)
+    ]
     centre = land.center(app.folder)
     groups = land.summary(app.folder, app.lang)
     for g in groups:
-        out.append(ft.Text(t(f"land_{g.key}"), weight=ft.FontWeight.W_600, size=theme.BODY_SIZE))
+        out.append(ft.Container(theme.subheading(t(f"land_{g.key}")), padding=ft.Padding.only(top=8)))
         for f in g.facts:
-            out.append(ft.Text(f.body, size=theme.BODY_SIZE, selectable=True))
+            fact: list[ft.Control] = [ft.Text(f.body, size=theme.BODY_SIZE, selectable=True)]
             if f.source:
-                out.append(theme.muted(f.source))
+                fact.append(theme.muted(f.source))
+            out.append(ft.Column(fact, spacing=2, tight=True))
     frames = land.frames(app.folder)
     if centre is None:
         out.append(ft.Text(t("land_need_photo"), size=theme.BODY_SIZE))

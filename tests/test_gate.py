@@ -222,6 +222,23 @@ def test_journal_records_who_did_what_without_codes(tmp_path, ledger, keyfile):
     assert audit.verify(log, audit.find_key())[1]
 
 
+def test_journal_notes_a_lockout_without_codes(tmp_path, ledger, keyfile):
+    log = tmp_path / "audit.log"
+    c = TestClient(
+        create_app(make(tmp_path, ledger, log, gate_tries=3))
+    )  # 数は Settings（SEED_GATE_TRIES）で変わる
+    for n in range(3):
+        assert connect(c, f"wrong-code-{n}").status_code == 403
+    assert connect(c, INVITE).status_code == 429
+    recs = [json.loads(ln) for ln in log.read_text().splitlines()]
+    stops = [r for r in recs if r["detail"].startswith("止めた")]
+    assert len(stops) == 1 and "3 回" in stops[0]["detail"]
+    text = log.read_text()
+    for secret in (INVITE, "wrong-code-0", "wrong-code-2"):
+        assert secret not in text
+    assert not audit.verify(log, audit.find_key())[1]
+
+
 def test_journal_off_without_key_or_path(tmp_path, ledger, monkeypatch):
     monkeypatch.delenv("KAGI_LOG_KEY_FILE", raising=False)
     monkeypatch.delenv("CREDENTIALS_DIRECTORY", raising=False)

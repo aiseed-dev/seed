@@ -612,7 +612,8 @@ def me_bubble(app: App, controls: list[ft.Control]) -> ft.Control:
     return ft.Row(
         [
             ft.Container(
-                ft.Column(controls, spacing=8, tight=True, horizontal_alignment=ft.CrossAxisAlignment.END),
+                # 吹き出しは右に寄せ、中は左揃えに一つ（短い行と折り返した行で揃えが混ざらない）
+                ft.Column(controls, spacing=8, tight=True, horizontal_alignment=ft.CrossAxisAlignment.START),
                 bgcolor=ft.Colors.PRIMARY_CONTAINER,
                 padding=12,
                 border_radius=16,
@@ -1000,7 +1001,10 @@ async def run_example(app: App, key: str) -> None:
         return
     phrase = app.t(f"ex_{key}")
     if key in ("landform", "soil_q"):  # 打った言葉と同じに Claude へ。土地の画面は「この土地」
-        await send(app, phrase, as_example=False)
+        if can_talk(app):
+            await send(app, phrase, as_example=False)
+        else:  # Claude が無い時は、資料を並べた「この土地」の画面へ（頼んだ言葉を記録の said にしない）
+            await app.go("/p/land")
         return
     if key == "past":
         await app.go("/p/land")
@@ -1067,12 +1071,23 @@ def example_chips(app: App, keys: list[str], one_line: bool = False) -> ft.Contr
 
         return h
 
+    # 折り返す時は、二行になった札の字が枠に触れないように上下にも余白を
+    style = None if one_line else ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=16, vertical=10))
     chips = []
     for k in keys:
         icon = EXAMPLE_ICONS.get(k)
-        chips.append(ft.OutlinedButton(example_label(app, k), icon=icon, on_click=press(k)))
+        chips.append(ft.OutlinedButton(example_label(app, k), icon=icon, on_click=press(k), style=style))
     if one_line:
-        return ft.ListView(chips, horizontal=True, spacing=6, height=40)
+        # ADAPTIVE: PC と Web では横の棒が出て、マウスでも右の札まで送れる（ホイールとドラッグでは横に動かない）。
+        # 棒が札の枠に重ならないよう、棒の出る所だけ下を空ける
+        bar = (
+            bool(getattr(app.page, "web", False)) or getattr(app.page, "platform", None) not in capture.MOBILE
+        )
+        row = ft.Row(chips, spacing=6)
+        return ft.Row(
+            [ft.Container(row, padding=ft.Padding.only(bottom=12 if bar else 0))],
+            scroll=ft.ScrollMode.ADAPTIVE,
+        )
     return ft.Row(chips, wrap=True, spacing=6, run_spacing=6)
 
 

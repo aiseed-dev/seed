@@ -182,14 +182,20 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     got = texts(app.page.views[-1])
     for h in ("土（14:00 の値）", "今日と明日", "二週間", "作業の目安"):
         assert h in got
-    assert "地表面 16 ℃（ECMWF、14:00）  地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
+    # 数と単位の間（「15」と「℃」）では行を変えない（間は改行しない空白）
+    line = "地表面 16 ℃（ECMWF、14:00）  地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃"
+    assert line in [x.replace("\u00a0", " ") for x in got]
+    assert any("0\u00a0cm\u00a015\u00a0℃" in x for x in got)
     # 字の一覧は無く、四つの図が横に動かせる行に入っている
     assert not any(re.match(r"\d\d:\d\d  ", x) or x.startswith(("最高", "日照")) for x in got)
     images = [c for c in walk(app.page.views[-1]) if isinstance(c, ft.Image)]
     assert len(images) == 4
-    for c in walk(app.page.views[-1]):
-        if isinstance(c, ft.Row) and any(isinstance(x, ft.Image) for x in c.controls):
-            assert c.scroll == ft.ScrollMode.AUTO
+    rows = [
+        c
+        for c in walk(app.page.views[-1])
+        if isinstance(c, ft.Row) and any(isinstance(x, ft.Image) for x in walk(c) if x is not c)
+    ]
+    assert len(rows) == 4 and all(c.scroll == ft.ScrollMode.ALWAYS for c in rows)  # 続きがある事を棒で見せる
     assert all(img.width and img.width > 400 and isinstance(img.src, bytes) for img in images)
     assert "Open-Meteo 天気予報 API" in got and "地表面: ECMWF IFS（Open-Meteo）" in got
     assert any(x.startswith("計算: 畑の座標") for x in got)

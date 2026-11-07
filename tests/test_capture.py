@@ -343,3 +343,62 @@ def test_sending_skips_a_refused_video_and_goes_on(tmp_path, monkeypatch):
     assert toasts == ["capture_video_sent", "capture_video_refused"]
     assert capture.unsent_videos(root) == [ok]  # 送った物の印は fake では付かない。big は断られた印
     assert app.state == {}
+
+
+def test_sending_to_an_old_home_without_the_video_door_keeps_it_for_later(tmp_path, monkeypatch):
+    """動画を受ける口の無い古い seed home は 404 を返す。断られた印は付けず、PC を新しくした後にまた送る。"""
+    import asyncio
+
+    from seed.app import talk
+    from seed.client import ClientError
+
+    root = tmp_path / "rec"
+    a = capture.keep_video(root, b"a", None, dt.datetime(2026, 11, 7, 19, 8, 0))
+    toasts = []
+
+    def old_home(app, path):
+        raise ClientError("server_rejected", "not found", None, 404)
+
+    async def yes(app):
+        return True
+
+    monkeypatch.setattr(capture, "send_video_home", old_home)
+    monkeypatch.setattr(talk, "home_server", yes)
+    app = SimpleNamespace(
+        state={}, folder=SimpleNamespace(root=root), toast=toasts.append, t=lambda k, **kw: k
+    )
+    asyncio.run(capture.send_pending_videos(app))
+    assert toasts == ["capture_video_not_sent"]
+    assert capture.unsent_videos(root) == [a]  # refused の印は無い
+    assert "refused" not in capture._side(a)
+
+
+def test_sending_while_the_gate_waits_keeps_videos_for_later(tmp_path, monkeypatch):
+    """招待コードを何度も間違えて門が止めている間（429 too_many_tries）は、印を付けずに止め、次にまた送る。"""
+    import asyncio
+
+    from seed.app import talk
+    from seed.client import ClientError
+
+    root = tmp_path / "rec"
+    a = capture.keep_video(root, b"a", None, dt.datetime(2026, 11, 7, 19, 9, 0))
+    b = capture.keep_video(root, b"b", None, dt.datetime(2026, 11, 7, 19, 10, 0))
+    tried = []
+    toasts = []
+
+    def gate(app, path):
+        tried.append(path)
+        raise ClientError("server_tries", "too many wrong invite codes; wait a while", None, 429)
+
+    async def yes(app):
+        return True
+
+    monkeypatch.setattr(capture, "send_video_home", gate)
+    monkeypatch.setattr(talk, "home_server", yes)
+    app = SimpleNamespace(
+        state={}, folder=SimpleNamespace(root=root), toast=toasts.append, t=lambda k, **kw: k
+    )
+    asyncio.run(capture.send_pending_videos(app))
+    assert tried == [a]  # そこで止める（後ろの動画で門を叩き続けない）
+    assert toasts == ["capture_video_not_sent"]
+    assert capture.unsent_videos(root) == [a, b]

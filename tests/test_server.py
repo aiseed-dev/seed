@@ -218,6 +218,23 @@ def test_read_with_ask_adds_block(settings, calls):
     assert "<ask>" not in calls.kwargs[-1]["messages"][0]["content"][-1]["text"]
 
 
+def test_read_passes_the_front(settings, calls):
+    """観察の date・time・kind を Claude に渡す。古いアプリ（送らない）でも読める。形の違う物は 400 で、日の枠を使わない。"""
+    c = client_for(settings)
+    r = post_read(c, date="2026-11-05", time="14:21:07", kind="candidate", center="34.05,134.25")
+    assert r.status_code == 200
+    text = calls.kwargs[-1]["messages"][0]["content"][-1]["text"]
+    assert "## 前書き\n- date: 2026-11-05\n- time: 14:21:07\n- kind: candidate\n" in text
+    assert "34.05" not in text and "134.25" not in text  # 座標は Claude に渡さない
+    assert post_read(c).status_code == 200
+    assert "## 前書き" not in calls.kwargs[-1]["messages"][0]["content"][-1]["text"]
+    n = len(calls.kwargs)
+    for bad in ({"date": "2026/11/05"}, {"time": "14:21"}, {"kind": "neighbour"}, {"date": "2026-11-05\n"}):
+        r = post_read(c, **bad)
+        assert r.status_code == 400 and r.json()["error"] == "bad_front", bad
+    assert len(calls.kwargs) == n
+
+
 def test_read_without_previous(settings, calls):
     post_read(client_for(settings))
     text = calls.kwargs[0]["messages"][0]["content"][-1]["text"]

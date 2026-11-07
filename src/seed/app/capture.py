@@ -10,7 +10,7 @@
 - 画面いっぱいがカメラ。上の端に「← 戻る」と位置の印だけ。下（横の時は右の端）に倍率、写真と動画、シャッター。
 - 倍率は二本の指でつまむか、0.5× 1× 2× 5× の印を押す。
 - 左下の丸は最後に撮った物。押すと見返しになり、「消す」で消せる（すぐ下に「元に戻す」）。
-- 座標はこの作業に必須（設計書 §9）。位置が取れるまで、シャッターは切れない。
+- 座標はこの作業に必須（設計書 §5.14）。位置が取れるまで、シャッターは切れない。
 - 撮った写真には、その場で座標・時刻・向き・誤差を EXIF で書く（photos.stamp）。
 - 動画は撮った時に記録の videos/ に置き、カメラを出た時に PC（家のサーバー）へ送る。消す物は送る前に消せる。
 - 部品は flet-camera と flet-geolocator。PC の窓ではカメラの部品が動かないので、この画面は出さない。
@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from .main import App
 
 MOBILE = (ft.PagePlatform.IOS, ft.PagePlatform.ANDROID)
-MAX_SHOTS = 6
-TRASH = ".seed-trash"  # 消した物を、カメラを出るまで置く所（元のファイルの横）  # 一度の観察の写真の数（選ぶ時と同じ）
+MAX_SHOTS = 6  # 一度の観察の写真の数（選ぶ時と同じ）
+TRASH = ".seed-trash"  # 消した物を、カメラを出るまで置く所（元のファイルの横）
 POSITION_WAIT_S = 10
 THUMB = 96
 
@@ -304,7 +304,9 @@ async def send_pending_videos(app: App) -> None:
             try:
                 sent.append(await asyncio.to_thread(send_video_home, app, path))
             except ClientError as ex:
-                if ex.status is not None and 400 <= ex.status < 500 and ex.status not in (401, 403):
+                # 404 は動画を受ける口の無い古い seed home、429 は招待コードの誤りが続いて門がしばらく止めている時。
+                # どちらも動画を断ったのではないので、印を付けずにここで止め、次にまた送る
+                if ex.status is not None and 400 <= ex.status < 500 and ex.status not in (401, 403, 404, 429):
                     await asyncio.to_thread(mark_refused, path, ex.word)  # 大きすぎる等。次からは送らない
                     refused.append(path.name)
                     continue
@@ -324,6 +326,17 @@ async def send_pending_videos(app: App) -> None:
 WHITE = ft.Colors.WHITE
 SHADE = ft.Colors.with_opacity(0.45, ft.Colors.BLACK)
 PICK = ft.Colors.AMBER_300  # 選んでいる物（標準のカメラの黄色）
+TARGET = 44  # 押せる範囲の一辺の目安（見える丸や札が小さくても、ここまで広げる）
+
+
+def hit_area(content: ft.Control, on_click, tooltip: str | None = None, pad_v: float = 0) -> ft.Container:
+    """見える部品はそのままに、押せる範囲だけを上下に広げる（透明な外の枠が押しを受ける）。"""
+    return ft.Container(
+        content,
+        padding=ft.Padding.symmetric(vertical=pad_v),
+        on_click=on_click,
+        tooltip=tooltip,
+    )
 
 
 def view(app: App, on_done, on_cancel) -> ft.View:
@@ -381,9 +394,8 @@ def view(app: App, on_done, on_cancel) -> ft.View:
             bgcolor=SHADE,
             border_radius=20,
             padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-            on_click=go_back,
-            ink=True,
         )
+        back = hit_area(back, go_back, pad_v=4)  # 見える札は 38、押せる所は 46
         right: list[ft.Control] = []
         if st["recording"]:
             right.append(
@@ -413,11 +425,11 @@ def view(app: App, on_done, on_cancel) -> ft.View:
                 bgcolor=SHADE,
                 border_radius=20,
                 padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-                on_click=retry_position,
-                tooltip=t("capture_retry_position"),
-                ink=True,
             )
         )
+        right[-1] = hit_area(
+            right[-1], retry_position, t("capture_retry_position"), pad_v=7
+        )  # 見える札は約 30
         return ft.Row(
             [back, ft.Row(right, spacing=8, tight=True)],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -433,24 +445,30 @@ def view(app: App, on_done, on_cancel) -> ft.View:
         items = []
         for s_ in steps:
             on = s_ == near
+            dot = ft.Container(
+                ft.Text(
+                    zoom_label(z) if on else zoom_label(s_),
+                    color=PICK if on else WHITE,
+                    size=13 if on else 12,
+                    weight=ft.FontWeight.BOLD if on else ft.FontWeight.W_500,
+                ),
+                width=46 if on else 38,
+                height=46 if on else 38,
+                border_radius=23,
+                bgcolor=SHADE,
+                alignment=ft.Alignment.CENTER,
+            )
+            # 見える丸は 38（選んでいる物は 46）のまま、押せる所は 48 の四角。丸と丸の間は前と同じ 10
             items.append(
                 ft.Container(
-                    ft.Text(
-                        zoom_label(z) if on else zoom_label(s_),
-                        color=PICK if on else WHITE,
-                        size=13 if on else 12,
-                        weight=ft.FontWeight.BOLD if on else ft.FontWeight.W_500,
-                    ),
-                    width=46 if on else 38,
-                    height=46 if on else 38,
-                    border_radius=23,
-                    bgcolor=SHADE,
+                    dot,
+                    width=48,
+                    height=48,
                     alignment=ft.Alignment.CENTER,
                     on_click=lambda e, s_=s_: page.run_task(zoom_to, s_),
-                    ink=True,
                 )
             )
-        kw = {"spacing": 10, "alignment": ft.MainAxisAlignment.CENTER}
+        kw = {"spacing": 0, "alignment": ft.MainAxisAlignment.CENTER}
         return (
             ft.Column(items, horizontal_alignment=ft.CrossAxisAlignment.CENTER, **kw)
             if vertical
@@ -460,14 +478,14 @@ def view(app: App, on_done, on_cancel) -> ft.View:
     def mode_switch(vertical: bool) -> ft.Control:
         def item(label: str, video: bool) -> ft.Control:
             on = st["video"] == video
-            return ft.Container(
+            pill = ft.Container(
                 ft.Text(label, color=ft.Colors.BLACK if on else WHITE, size=14, weight=ft.FontWeight.W_600),
                 bgcolor=PICK if on else None,
                 border_radius=16,
                 padding=ft.Padding.symmetric(horizontal=14, vertical=6),
-                on_click=None if st["recording"] else (lambda e, v=video: switch(v)),
-                ink=not st["recording"],
             )
+            # 見える札は高さ約 31、押せる所は上下に 7 ずつ広げる
+            return hit_area(pill, None if st["recording"] else (lambda e, v=video: switch(v)), pad_v=7)
 
         items = [item(t("capture_photo"), False), item(t("capture_video"), True)]
         return (
@@ -568,7 +586,8 @@ def view(app: App, on_done, on_cancel) -> ft.View:
 
     def overlays() -> list[ft.Control]:
         land = is_landscape(getattr(page, "width", None), getattr(page, "height", None))
-        out: list[ft.Control] = [ft.Container(top_bar(), left=12, right=122 if land else 12, top=8)]
+        # 上の札は押せる所を上下に広げたので、見える位置が前と同じになるよう top を詰める
+        out: list[ft.Control] = [ft.Container(top_bar(), left=12, right=122 if land else 12, top=4)]
         zc = zoom_chips(vertical=land)
         note, open_ = note_line(), opener()
         if land:

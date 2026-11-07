@@ -591,3 +591,218 @@ def test_tags_key_after_crops_and_ten_states():
 
     assert READING_KEYS.index("tags") == READING_KEYS.index("crops") + 1
     assert len(TAG_STATES["ja"]) == 10 and len(TAG_STATES["en"]) == 10
+
+
+# ---- 本人が手で書き足した物は、書き戻しで消えない
+
+
+# 今の記録の形のまま（seed が書く形）。読んで書き戻すと一文字も変わらない
+CURRENT_OBSERVATION = """---
+date: '2026-11-05'
+time: '14:21:07'
+photos: [photos/2026-11-05/142107.jpg]
+location:
+  center: [34.0512, 134.2534]
+  points: 1
+  extent_m: 0
+model: claude-opus-5-5
+language: ja
+---
+
+## Reading (claude-opus-5-5)
+- overall: 草丈 1 m を超えるセイタカアワダチソウとススキが大半。作物は見えない [0.80]  → farmer: right
+- soil_surface: 地表は見えない。裸地は無い [0.85]
+
+## Earlier reading
+- plants: 草丈 1 m のススキ [0.50]  → farmer: wrong (3 m はある)
+
+## Data
+- geology: 和泉層群の砂岩・泥岩（出典: 産総研 シームレス地質図 V2、確認日 2026-11-05）
+
+## Record
+- did: 今日は見ただけ。刈っていない
+"""
+
+HAND_WRITTEN = """---
+date: '2026-11-05'
+time: '14:21:07'
+photos: []
+weather_memo: 朝は霧
+language: ja
+---
+## Reading (claude-opus-5-5)
+- overall: 草が大半 [0.80]
+読みの下に本人が書いた一言
+
+## メモ
+祖父の代は桑畑だったと聞いた。
+- weird: 行の形でも読まない
+
+## Data
+(none)
+資料の下の文
+
+## Record
+- did: 見ただけ
+北の端で、
+キジを見た。
+
+- saw: 草が低い
+## 後で
+"""
+
+# HAND_WRITTEN を書き戻した形。知っている見出しの下の文はその行の後、知らない見出しは Record の後、知らない鍵は前書きの最後
+HAND_WRITTEN_RENDERED = """---
+date: '2026-11-05'
+time: '14:21:07'
+photos: []
+model: claude-opus-5-5
+language: ja
+weather_memo: 朝は霧
+---
+
+## Reading (claude-opus-5-5)
+- overall: 草が大半 [0.80]
+
+読みの下に本人が書いた一言
+
+## Data
+資料の下の文
+
+## Record
+- did: 見ただけ
+- saw: 草が低い
+
+北の端で、
+キジを見た。
+
+## メモ
+祖父の代は桑畑だったと聞いた。
+- weird: 行の形でも読まない
+
+## 後で
+"""
+
+
+def test_current_format_is_written_back_unchanged():
+    from seed.records import Plan
+
+    texts = [CURRENT_OBSERVATION, Observation("2026-11-05", "14:21:07", language="ja").render()]
+    texts += [Observation.parse(t).render() for t in MARKED_OBSERVATIONS.values()]
+    for text in texts:
+        assert Observation.parse(text).render() == text
+    plans = [Plan.parse(PLAN_EXAMPLE).render(), Plan.parse(MARKED_PLAN).render(), Plan.new("ja").render()]
+    for text in plans:
+        assert Plan.parse(text).render() == text
+
+
+def test_empty_reading_heading_is_not_read_as_a_model():
+    obs = Observation.parse(Observation("2026-11-05", "14:21:07").render())
+    assert obs.model is None and "model:" not in obs.render()
+
+
+def test_hand_written_text_is_kept_but_not_read():
+    obs = Observation.parse(HAND_WRITTEN)
+    # 読む側は今のまま。知らない物は行として読まない
+    assert [l.key for l in obs.reading] == ["overall"] and obs.data == []
+    assert [l.key for l in obs.record] == ["did", "saw"]
+    assert not any(l.key == "weird" for l in obs.reading + obs.data + obs.record)
+    assert obs.kept_front == {"weather_memo": "朝は霧"}
+    assert obs.render() == HAND_WRITTEN_RENDERED
+    again = Observation.parse(obs.render())
+    assert again.render() == obs.render()
+    assert again.record == obs.record and again.reading == obs.reading
+
+
+def test_reread_moves_reading_text_to_earlier_and_keeps_record_text():
+    obs = Observation.parse(HAND_WRITTEN)
+    obs.reread([Line("overall", "草とススキ", 0.7)], "claude-opus-5-5")
+    text = obs.render()
+    assert "## Earlier reading\n読みの下に本人が書いた一言\n" in text
+    reading_part = text.split("## Reading")[1].split("## Earlier reading")[0]
+    assert "一言" not in reading_part
+    assert (
+        "北の端で、\nキジを見た。" in text
+        and "祖父の代は桑畑だった" in text
+        and "weather_memo: 朝は霧" in text
+    )
+    assert Observation.parse(text).render() == text
+
+
+def test_plan_keeps_hand_written_text():
+    from seed.records import Plan
+
+    text = (
+        PLAN_EXAMPLE.replace("language: ja\n", "language: ja\nfield_name: 北の田\n")
+        .replace(
+            "- sow: 北側に小麦。12 月の初め [0.70]\n",
+            "- sow: 北側に小麦。12 月の初め [0.70]\n計画への本人の言葉\n",
+        )
+        .replace("- decided: 南側は今年は草のまま\n", "- decided: 南側は今年は草のまま\n隣の人と話してから\n")
+        + "\n## 種の在庫\n小麦 2 kg\n"
+    )
+    plan = Plan.parse(text)
+    assert [l.key for l in plan.reading] == ["ground", "sow", "uncertain"]
+    assert [l.key for l in plan.record] == ["decided", "did"]
+    out = plan.render()
+    for kept in (
+        "field_name: 北の田\n---",
+        "計画への本人の言葉",
+        "隣の人と話してから",
+        "## 種の在庫\n小麦 2 kg\n",
+    ):
+        assert kept in out
+    assert out.index("隣の人と話してから") > out.index("- did:") and out.endswith("## 種の在庫\n小麦 2 kg\n")
+    assert Plan.parse(out).render() == out
+    plan.reread([Line("ground", "耕さない", 0.6)], "claude-code")
+    out = plan.render()
+    assert (
+        "## Earlier plan" in out
+        and "計画への本人の言葉" in out.split("## Earlier plan")[1].split("## Data")[0]
+    )
+    assert "隣の人と話してから" in out and Plan.parse(out).render() == out
+
+
+def test_text_before_first_heading_is_kept():
+    from seed.records import Plan
+
+    text = CURRENT_OBSERVATION.replace(
+        "---\n\n## Reading", "---\n去年の秋に借りた畑。\n\n二枚目の段落\n## Reading"
+    )
+    obs = Observation.parse(text)
+    out = obs.render()
+    assert "---\n\n去年の秋に借りた畑。\n\n二枚目の段落\n\n## Reading (claude-opus-5-5)\n" in out
+    assert out == CURRENT_OBSERVATION.replace(
+        "---\n\n## Reading", "---\n\n去年の秋に借りた畑。\n\n二枚目の段落\n\n## Reading"
+    )
+    assert (
+        Observation.parse(out).render() == out
+        and obs.reading == Observation.parse(CURRENT_OBSERVATION).reading
+    )
+    plan_text = (
+        Plan.parse(PLAN_EXAMPLE).render().replace("---\n\n## Plan", "---\n\n田の名は北の田\n\n## Plan")
+    )
+    assert Plan.parse(plan_text).render() == plan_text
+
+
+def test_duplicate_headings_are_merged_not_lost():
+    from seed.records import Plan
+
+    text = (
+        CURRENT_OBSERVATION
+        + "\n## Record\n- saw: 二つ目の Record の行\n二つ目の下の文\n\n## Data\n- soil: 後の資料\n"
+    )
+    obs = Observation.parse(text)
+    assert [l.text for l in obs.record] == ["今日は見ただけ。刈っていない", "二つ目の Record の行"]
+    assert [l.key for l in obs.data] == ["geology", "soil"]
+    out = obs.render()
+    assert out.count("## Record") == 1 and out.count("## Data") == 1
+    assert out.endswith(
+        "## Record\n- did: 今日は見ただけ。刈っていない\n- saw: 二つ目の Record の行\n\n二つ目の下の文\n"
+    )
+    assert Observation.parse(out).render() == out
+    plan = Plan.parse(
+        PLAN_EXAMPLE + "\n## Plan (claude-code)\n- cover: 後の計画の行 [0.40]  → farmer: right\n"
+    )
+    assert [l.key for l in plan.reading] == ["ground", "sow", "uncertain", "cover"]
+    assert plan.render().count("## Plan") == 1 and Plan.parse(plan.render()).render() == plan.render()

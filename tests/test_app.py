@@ -550,6 +550,20 @@ def test_land_examples(app, seedfolder, tmp_path, monkeypatch):
     assert len(calls) == 2
 
 
+def test_land_examples_without_claude_open_the_land_screen(app, seedfolder, tmp_path, monkeypatch):
+    """Claude が使えない時は、土地の例を押すと「この土地」の画面へ。頼んだ言葉を記録（said）に書かない。"""
+    path = observe(seedfolder, tmp_path, NEW_READING)
+    monkeypatch.setattr(local, "available", lambda: None)
+    assert not talk.can_talk(app)
+    before = path.read_text(encoding="utf-8")
+    for key in ("landform", "soil_q"):
+        app.page.route = "/"
+        run(talk.run_example(app, key))
+        assert app.page.route == "/p/land" and app.page.views[-1].route == "/p/land"
+    assert path.read_text(encoding="utf-8") == before
+    assert not talk.talk_state(app)
+
+
 def test_land_lines_are_shown_apart_from_photo_lines(app, seedfolder, tmp_path):
     reading = [*NEW_READING, Line("basis", "土壌図では水田化褐色低地土", 0.6)]
     observe(seedfolder, tmp_path, reading)
@@ -982,6 +996,12 @@ def test_viewer_zooms_and_pictures_fit_a_narrow_page(app, seedfolder, tmp_path):
     v = iv[0]
     assert v.scale_enabled and v.pan_enabled and v.min_scale == 1 and v.max_scale == 8
     assert v.content.fit == ft.BoxFit.CONTAIN and v.content.width <= 360 and v.content.height <= 740
+    # 狭い幅では三つの操作を縦に一つずつ、「閉じる」は最後の行の右に
+    (acts,) = app.page.dialogs[-1].actions
+    assert isinstance(acts, ft.Column) and len(acts.controls) == 4
+    assert all(isinstance(c, ft.TextButton) for c in acts.controls[:3])
+    last = acts.controls[3]
+    assert isinstance(last, ft.Row) and last.alignment == ft.MainAxisAlignment.END
     # 大きな今日の一枚は、窓の幅からはみ出さず、切らない
     w = min(560, theme.fit_width(360) - 32 - 24)
     pic = photo.picture(app, seedfolder / A, photo.BIG, w, w * 1.2)
@@ -1024,3 +1044,82 @@ def test_settings_form_refuses_bad_values():
     assert settings_form.check("192.0.2.5:8800", "", "") == ["server_url_bad"]
     assert settings_form.check("", "", "short") == ["talk_key_bad_shape"]
     assert settings_form.check("http://192.0.2.5:8800", "483271", "") == []
+
+
+def test_settings_form_read_choice_label_wraps(app):
+    """読む所の名は、折り返す文として丸の横に置く（Radio の label は折り返さず、スマートフォンの幅で枠の外へ出た）。
+
+    名を押しても選べる。
+    """
+    app.show_settings()
+    group = next(c for c in walk(app.page.dialogs[-1]) if isinstance(c, ft.RadioGroup))
+    rows = group.content.controls
+    assert rows and all(isinstance(r, ft.Row) for r in rows)
+    for r in rows:
+        radio, name = r.controls
+        assert isinstance(radio, ft.Radio) and not radio.label
+        assert name.expand and isinstance(name.content, ft.Text) and name.content.value
+    radio, name = rows[0].controls
+    name.on_click(None)
+    assert group.value == radio.value
+
+
+def test_settings_form_removes_the_key_on_the_second_press(app):
+    """歯車のフォームの「鍵を外す」は、設定の札と同じく二度押し。一度目は「本当に外す」に替わるだけ。"""
+    app.settings.anthropic_key = "sk-ant-" + "x" * 30
+    app.show_settings()
+    dlg = app.page.dialogs[-1]
+    first = next(
+        c for c in walk(dlg) if isinstance(c, ft.TextButton) and c.content == app.t("form_key_remove")
+    )
+    first.on_click(None)
+    assert app.settings.anthropic_key  # まだ外さない
+    sure = next(
+        c for c in walk(dlg) if isinstance(c, ft.FilledButton) and c.content == app.t("set_key_remove_sure")
+    )
+    sure.on_click(None)
+    assert app.settings.anthropic_key == ""
+
+
+def test_screen_icons_that_do_not_fit_go_to_the_more_menu(app, seedfolder):
+    """狭い幅で画面の印が入らない時だけ、入らない物を「…」の一覧に回す。入る時は今のまま全部並べる。"""
+    from seed.app import main as main_mod
+
+    assert main_mod.nav_fit(None, 9) == 9 and main_mod.nav_fit(375, 5) == 5
+    assert main_mod.nav_fit(375, 6) == 4  # 歯車、フォルダー、印 4 つ、「…」で 7 つ（48 × 7 = 336）
+    plugins_dir = seedfolder / "plugins"
+    plugins_dir.mkdir(exist_ok=True)
+    for n in ("aa", "bb", "cc"):
+        (plugins_dir / f"{n}.py").write_text(
+            f"TITLE = {{'ja': '{n}'}}\nICON = 'STAR'\ndef build(app):\n    return []\n", encoding="utf-8"
+        )
+    app.reload_plugins()
+    app.page.width = 375
+    actions = talk.view(app).appbar.actions
+    menus = [c for c in actions if isinstance(c, ft.PopupMenuButton)]
+    assert len(menus) == 1 and len(actions) * main_mod.NAV_BUTTON <= 375
+    names = [i.content for i in menus[0].items]
+    assert names[-3:] == ["aa", "bb", "cc"]
+    app.page.width = 1280
+    assert not [c for c in talk.view(app).appbar.actions if isinstance(c, ft.PopupMenuButton)]
+
+
+def test_example_chips_scroll_and_wrap(app):
+    """入力の上の例は一行で横に送る（PC では横の棒でマウスでも送れる）。返事の中の例は折り返し、二行でも枠に触れない余白。"""
+    keys = talk.examples(app, everything=True)
+    one = talk.example_chips(app, keys, one_line=True)
+    assert isinstance(one, ft.Row) and one.scroll == ft.ScrollMode.ADAPTIVE and not one.wrap
+    inner = one.controls[0].content
+    assert len(inner.controls) == len(keys) and not inner.wrap
+    many = talk.example_chips(app, keys)
+    assert many.wrap
+    assert all(c.style is not None and c.style.padding is not None for c in many.controls)
+
+
+def test_every_line_key_has_a_name():
+    """読み・計画・本人の行の key は、どれも本人の言語の名で見せる（英語の key のまま画面に出さない）。"""
+    from seed.app.strings import key_label
+    from seed.records import PLAN_KEYS, PLAN_RECORD_KEYS, READING_KEYS, RECORD_KEYS
+
+    for k in (*READING_KEYS, *PLAN_KEYS, *PLAN_RECORD_KEYS, *RECORD_KEYS):
+        assert key_label(k, "ja") != k and key_label(k, "en") != k

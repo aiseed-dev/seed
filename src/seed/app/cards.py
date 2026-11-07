@@ -232,9 +232,21 @@ def others_card(app: App) -> list[ft.Control]:
         out.append(theme.body(t("index_empty")))
     out += [
         theme.muted(t("continue_discord")),
-        ft.TextButton(t("discord"), icon=ft.Icons.FORUM_OUTLINED, url=DISCORD_URL),
+        discord_button(app),
     ]
     return out
+
+
+def discord_button(app: App) -> ft.Control:
+    """Discord に入る釦。名（「…」）は一つの塊にして、狭い幅では「Discord」の後で行を変える（一字だけ折り返さない）。"""
+    label = app.t("discord")
+    head, sep, rest = label.partition("「")
+    parts = [ft.Text(head.strip())] + ([ft.Text(sep + rest)] if sep else [])
+    return ft.TextButton(
+        content=ft.Row(parts, wrap=True, spacing=4, run_spacing=0, tight=True),
+        icon=ft.Icons.FORUM_OUTLINED,
+        url=DISCORD_URL,
+    )
 
 
 def server_url(app: App, path: str) -> str:
@@ -560,7 +572,7 @@ def settings_card(app: App) -> list[ft.Control]:
     out.append(
         ft.Row(
             [
-                ft.TextButton(t("discord"), icon=ft.Icons.FORUM_OUTLINED, url=DISCORD_URL),
+                discord_button(app),
                 ft.TextButton(t("set_source"), icon=ft.Icons.CODE, url=SOURCE_URL),
             ],
             wrap=True,
