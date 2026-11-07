@@ -178,6 +178,12 @@ seed が持ち込むのは、作者の得意な生物学・気象・地質の読
 
 徳島の吉野川沿い、[藍のふるさと](https://japan-heritage.bunka.go.jp/ja/stories/story081/)から。吉野川の上流には、同じ三波川帯の結晶片岩の土の上で、斜面のままカヤをすき込んで耕してきた世界農業遺産[「にし阿波の傾斜地農耕システム」](https://giahs-tokushima.jp/steepslopeagriculture)があります。Built with Claude: Japan 2026（2026-11-02 12:00 JST の開始の後、12:30 から 11-08 20:00 まで）の間に、このリポジトリの全部を新しく書いています。同じ作者が別のハッカソン（Meta、2026-10-26〜11-04）向けに作ったパッケージ fieldnotes-farm を、座標からの照会にだけ、PyPI の 0.2.0 に固定して手を入れずに使います。記録の行の形は仕様（fieldnotes の docs/records.md）で共有し、コードは共有しません（境界は [docs/設計書.md](docs/設計書.md) §2）。
 
+seed は、同じ作者の三つ目です。少しずつ進めています。
+
+- [aiai](https://github.com/aiseed-dev/aiai)（Zenn のハッカソン）: ふだん使っている AI に手引きを読ませ、AI とのチャットの履歴を使う。
+- [fieldnotes](https://github.com/aiseed-dev/fieldnotes)（Meta のハッカソン）: 畑で写真を撮り、Meta の Muse で読む。声の記録も。
+- seed（Built with Claude: Japan 2026）: 写真を撮って Claude と話し、その記録を残して活用する。チャットしながらアプリを作っていく。
+
 - [docs/基本計画.md](docs/基本計画.md) — 何を、なぜ
 - [docs/設計書.md](docs/設計書.md) — どういう形で
 - [docs/利用マニュアル.md](docs/利用マニュアル.md) — 使い方
