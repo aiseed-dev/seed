@@ -76,11 +76,19 @@ Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHu
 
 ### スマートフォンで試す
 
-PC とスマートフォンを同じ Wi-Fi に置き、スマートフォンに Google Play か App Store の「Flet」アプリを入れて、端末に出る QR を読みます（iPhone は `--ios`）。
+USB で繋いだ Android に、その場で入れて動かします（Flet 1.1 の開発の道。Flutter と Android Studio、スマートフォンの開発者モードが要ります）。`flet devices` で出る ID を渡します。初回は数分、二回目からは速く、Python を直したら端末で `R` を押すと入れ直ります。
 
 ```bash
-.venv/bin/flet run --android
+.venv/bin/flet devices
 ```
+
+```bash
+.venv/bin/flet debug android --device-id <ID> --arch arm64-v8a
+```
+
+iPhone は Mac で `flet debug ios`（[docs/iPhone 版.md](docs/iPhone%20版.md)）。
+
+Play の「Flet」アプリで PC の seed を開く道（`flet run --android` と QR）もありますが、Play の Flet アプリは SDK 1.0.1 で、この seed の Flet 1.1.0 とは版が違い、作者の手元では繋がりませんでした。
 
 ### アプリにする
 
@@ -92,7 +100,7 @@ Flutter と Android Studio が要ります。
 
 出来た `build/apk/seed-farm.apk` をスマートフォンに入れます。iPhone は Mac で作ります（[docs/iPhone 版.md](docs/iPhone%20版.md)）。
 
-作者が確かめたのは Linux で開く所と Android のアプリです。「Flet」アプリで開く所は、まだ確かめていません。
+作者が確かめたのは、Linux で開く所、`flet debug android` で実機に入れて動く所、Android の APK です。
 
 ### 画面
 
