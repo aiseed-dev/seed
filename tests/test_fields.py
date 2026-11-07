@@ -59,7 +59,9 @@ def test_resolve_order(tmp_path, monkeypatch):
         fields_mod.resolve(field="無い")
     monkeypatch.delenv("SEED_FOLDER")
     fields_mod.save_fields(fields_mod.Fields())
-    assert fields_mod.resolve() == Path("~/seed").expanduser()
+    # 本物の ~/seed（seed.toml がある）を読まないよう、HOME を tmp に向ける
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert fields_mod.resolve() == tmp_path / "home" / "seed"
 
 
 def test_cwd_with_seed_toml_wins(tmp_path, monkeypatch):
