@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
 from test_app import FakePage, texts
 
+from seed import weather as W
 from seed.app import plugins
 from seed.app.main import App
 
@@ -47,13 +49,13 @@ def put(folder, name, body):
 def test_shipped_land_is_found(app):
     (land,) = [p for p in plugins.load(app.folder) if p.name == "land"]
     assert land.route == "/p/land" and land.title["ja"] == "この土地"
-    assert [p.name for p in app.plugins] == ["land"]
+    assert [p.name for p in app.plugins] == ["land", "weather"]
 
 
 def test_own_plugin_comes_after_shipped(app, seedfolder):
     put(seedfolder, "harvest", GOOD)
     app.open_folder(str(seedfolder))
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/harvest"]
+    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/weather", "/p/harvest"]
     app.route_change(path="/p/harvest")
     v = app.page.views[-1]
     assert v.route == "/p/harvest" and "seed — 収穫" in texts(v) and "収穫の画面です" in texts(v)
@@ -70,7 +72,7 @@ def test_broken_plugins_are_skipped(app, seedfolder, caplog):
     put(seedfolder, "ok", GOOD)
     with caplog.at_level(logging.WARNING, logger="seed.app"):
         got = plugins.load(app.folder)
-    assert [p.name for p in got] == ["land", "ok"]
+    assert [p.name for p in got] == ["land", "weather", "ok"]
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 3
 
 
@@ -88,7 +90,7 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     app.open_folder(str(other))
-    assert [p.name for p in app.plugins] == ["land"]
+    assert [p.name for p in app.plugins] == ["land", "weather"]
     app2 = App(FakePage(), str(seedfolder))
     assert "harvest" in [p.name for p in app2.plugins]
 
@@ -96,7 +98,7 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
 def test_plugins_written_while_running_are_picked_up(app, seedfolder):
     import os
 
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land"]
+    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/weather"]
     put(seedfolder, "harvest", GOOD)
     app.refresh()
     assert "/p/harvest" in [sc.route for sc in app.screens()]
@@ -106,3 +108,61 @@ def test_plugins_written_while_running_are_picked_up(app, seedfolder):
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
     app.route_change(path="/p/harvest")
     assert "seed — 刈り取り" in texts(app.page.views[-1])
+
+
+def run_tasks(app):
+    while app.page.tasks:
+        asyncio.run(app.page.tasks.pop(0)())
+
+
+def forecast_rows(n=7):
+    return [W.Forecast(f"2026-11-{8 + i:02d}", 61, 18.4, 9.6, 2.5, 70) for i in range(n)]
+
+
+def test_weather_plugin_after_land(app):
+    got = [p.name for p in plugins.load(app.folder)]
+    assert got.index("weather") == got.index("land") + 1
+    (w,) = [p for p in plugins.load(app.folder) if p.name == "weather"]
+    assert w.title["ja"] == "天気" and w.route == "/p/weather"
+
+
+def test_weather_renders_week_and_caches(app, monkeypatch):
+    from seed import land
+
+    calls = []
+    monkeypatch.setattr(land, "center", lambda folder: (34.051, 134.249))
+    monkeypatch.setattr(
+        W, "fetch_forecast", lambda lat, lon, **k: calls.append((lat, lon)) or forecast_rows()
+    )
+    app.page.route = "/p/weather"
+    app.route_change(path="/p/weather")
+    assert "取って来ています…" in texts(app.page.views[-1])
+    run_tasks(app)
+    got = texts(app.page.views[-1])
+    assert len([x for x in got if x.startswith("11/")]) == 7
+    assert any("11/08（日）" in x and "雨" in x and "18 ℃" in x and "70 %" in x for x in got)
+    assert "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
+    app.refresh()
+    assert not app.page.tasks and len(calls) == 1  # 同じ日の開き直しは取り直さない
+    app.state.pop("forecast")  # 「取り直す」と同じ
+    app.refresh()
+    run_tasks(app)
+    assert len(calls) == 2
+
+
+def test_weather_failure_and_no_coordinates(app, monkeypatch):
+    from seed import land
+
+    app.page.route = "/p/weather"
+    app.route_change(path="/p/weather")
+    assert "位置の入った写真が一枚あると、その場所の天気を出せます。" in texts(app.page.views[-1])
+    monkeypatch.setattr(land, "center", lambda folder: (34.05, 134.25))
+
+    def boom(*a, **k):
+        raise W.WeatherError("weather_unreachable", "ConnectError")
+
+    monkeypatch.setattr(W, "fetch_forecast", boom)
+    app.page.route = "/p/weather"
+    app.route_change(path="/p/weather")
+    run_tasks(app)
+    assert "天気を取れませんでした（ConnectError）。" in texts(app.page.views[-1])

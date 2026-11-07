@@ -19,6 +19,14 @@ OPEN_METEO_URL = "https://open-meteo.com/"
 JMA_URL = "https://www.data.jma.go.jp/stats/etrn/"
 DAILY = ("temperature_2m_max", "temperature_2m_min", "precipitation_sum", "sunshine_duration")
 TIMEZONE = "Asia/Tokyo"
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+FORECAST_DAILY = (
+    "weather_code",
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "precipitation_sum",
+    "precipitation_probability_max",
+)
 H_DATA = "Data"
 DAY_LINE_RE = re.compile(r"^- (?P<date>\d{4}-\d{2}-\d{2}): ")
 COORD_RE = re.compile(r"(-?\d{1,3}(?:\.\d+)?)\s*[,、]\s*(-?\d{1,3}(?:\.\d+)?)")
@@ -174,6 +182,94 @@ def fetch(
     except ValueError:
         raise WeatherError("weather_bad_answer", "not JSON") from None
     return parse_daily(data)
+
+
+@dataclass
+class Forecast:
+    date: str
+    code: int
+    tmax: float | None
+    tmin: float | None
+    rain: float | None
+    rain_prob: int | None
+
+
+def parse_forecast(data: dict) -> list[Forecast]:
+    """Open-Meteo の予報の daily を日ごとに。形が違えば WeatherError。"""
+    try:
+        daily = data["daily"]
+        dates = daily["time"]
+        cols = [daily[k] for k in FORECAST_DAILY]
+        if any(len(c) != len(dates) for c in cols):
+            raise ValueError("lengths")
+    except (KeyError, TypeError, ValueError) as e:
+        raise WeatherError("weather_bad_answer", str(e)) from None
+
+    def num(v, kind):
+        return None if v is None else kind(v)
+
+    out = []
+    for i, date in enumerate(dates):
+        code, tmax, tmin, rain, prob = (c[i] for c in cols)
+        out.append(
+            Forecast(
+                str(date),
+                num(code, int) or 0,
+                num(tmax, float),
+                num(tmin, float),
+                num(rain, float),
+                num(prob, int),
+            )
+        )
+    return out
+
+
+def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Forecast]:
+    """Open-Meteo の予報を取る。座標は 2 桁に丸める。get は差し替え用（既定は httpx.get）。失敗は WeatherError。"""
+    import httpx
+
+    lat, lon = rounded(lat, lon)
+    params = {
+        "latitude": f"{lat:.2f}",
+        "longitude": f"{lon:.2f}",
+        "daily": ",".join(FORECAST_DAILY),
+        "forecast_days": days,
+        "timezone": TIMEZONE,
+    }
+    get = get or httpx.get
+    try:
+        r = get(FORECAST_URL, params=params, timeout=10.0)
+    except httpx.HTTPError as e:
+        raise WeatherError("weather_unreachable", type(e).__name__) from None
+    if r.status_code != 200:
+        raise WeatherError("weather_http", f"HTTP {r.status_code}")
+    try:
+        data = r.json()
+    except ValueError:
+        raise WeatherError("weather_bad_answer", "not JSON") from None
+    return parse_forecast(data)
+
+
+# WMO の天気の符号 → 短い語（上から合う物）
+WORDS = (
+    ({0}, ("快晴", "Clear")),
+    ({1, 2}, ("晴れ", "Sunny")),
+    ({3}, ("くもり", "Cloudy")),
+    ({45, 48}, ("霧", "Fog")),
+    ({51, 53, 55, 56, 57}, ("霧雨", "Drizzle")),
+    ({61, 63, 65, 66, 67}, ("雨", "Rain")),
+    ({71, 73, 75, 77}, ("雪", "Snow")),
+    ({80, 81, 82}, ("にわか雨", "Showers")),
+    ({85, 86}, ("にわか雪", "Snow showers")),
+    ({95, 96, 99}, ("雷雨", "Thunder")),
+)
+
+
+def weather_word(code: int, language: str) -> str:
+    for codes, (ja, en) in WORDS:
+        if code in codes:
+            return ja if language == "ja" else en
+    return "—"
 
 
 def month_path(root: Path, month: str) -> Path:
