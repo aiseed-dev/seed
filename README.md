@@ -14,6 +14,8 @@
 
 ## 使ってみる
 
+アプリは [Flet](https://flet.dev/)（Python だけで PC、Web、スマートフォンに同じコードで出る）で作っています。Python 3.11 以上が要ります。
+
 ```bash
 git clone https://github.com/aiseed-dev/seed.git
 ```
