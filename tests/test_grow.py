@@ -527,9 +527,7 @@ def test_draw_server_not_answering_returns_2(field, drawn_day, monkeypatch, caps
         raise httpx.ConnectError("refused")
 
     monkeypatch.setattr(draw, "TRANSPORT", httpx.MockTransport(down))
-    assert (
-        cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.168.1.2:9"]) == 2
-    )
+    assert cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.168.1.2:9"]) == 2
     assert "応えません" in capsys.readouterr().err
     assert (drawn_day / "01-2026-12.svg").is_file()
 

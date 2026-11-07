@@ -197,7 +197,7 @@ def test_conversation_without_observations(app):
     assert talk.turns(app.folder) == []
     words = texts(talk.view(app))
     assert app.t("talk_hello") in words and talk.first_photo_text(app) in words
-    assert talk.examples(app) == ["first"]  # 観察が無い時は「まず一枚」だけ
+    assert talk.examples(app) == ["first", "settings"]  # 観察が無い時は「まず一枚」と、繋ぐための設定
     assert talk.example_label(app, "first") in words
 
 
@@ -779,7 +779,8 @@ def test_app_bar_shows_project_and_folder_icon(app, seedfolder):
     fields_mod.save_fields(fl)
     v = app.view("/photos", [])
     assert v.appbar.title.value.startswith("自分の畑 — ")
-    first = v.appbar.actions[0]
+    gear, first = v.appbar.actions[0], v.appbar.actions[1]
+    assert gear.icon == ft.Icons.SETTINGS_OUTLINED and gear.tooltip == "設定"  # 繋がる前でも開ける
     assert first.icon == ft.Icons.FOLDER_OPEN_OUTLINED and first.tooltip == "プロジェクトフォルダーを変える"
 
 
@@ -988,3 +989,9 @@ def test_viewer_zooms_and_pictures_fit_a_narrow_page(app, seedfolder, tmp_path):
     # 小さな写真も窓より広くならない
     t = photo.tile(app, shots, 0, size=1000)
     assert t.width <= 360
+
+
+def test_settings_gear_opens_the_card_without_claude(app, seedfolder):
+    """上の端の歯車で、Claude に繋がっていなくても設定の札が出る（PC を探す、招待コードはここから）。"""
+    run(app.show_settings())
+    assert talk.talk_state(app)[-1].get("card") == "settings"

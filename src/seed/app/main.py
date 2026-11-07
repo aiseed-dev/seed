@@ -205,6 +205,14 @@ class App:
             return f"{self.project_name} / {self.field_name}"
         return self.project_name
 
+    async def show_settings(self, e=None) -> None:
+        """設定の札を「話す」に出す。Claude に繋がっていなくても開ける（PC を探す、鍵、招待コードはここから）。"""
+        talk.add(self, card="settings")
+        if urlparse(self.page.route or "/").path != "/":
+            await self.go("/")
+        else:
+            self.refresh()
+
     def show_projects(self, e=None) -> None:
         from seed.app import cards  # cards は main を読むので、使う時に取る
 
@@ -256,10 +264,15 @@ class App:
                 title=ft.Text(f"{self.place_name} — {self.screen_name(screens[idx])}"),
                 actions=[
                     ft.IconButton(
+                        ft.Icons.SETTINGS_OUTLINED,
+                        tooltip=self.t("nav_settings"),
+                        on_click=self.show_settings,
+                    ),
+                    ft.IconButton(
                         ft.Icons.FOLDER_OPEN_OUTLINED,
                         tooltip=self.t("project_switch"),
                         on_click=self.show_projects,
-                    )
+                    ),
                 ]
                 + [
                     ft.IconButton(

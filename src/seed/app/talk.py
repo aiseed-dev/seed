@@ -899,7 +899,7 @@ CARD_OF = {
 def examples(app: App, everything: bool = False) -> list[str]:
     """今の場面に合う例の鍵。観察が無い時は「まず一枚」だけ。手元の Claude が無い端末は、AI 無しの物を先に。"""
     if not app.folder.list_observations():
-        return ["first"]
+        return ["first", "settings"]  # 繋がる前でも設定（PC を探す、鍵、招待コード）を開けるように
     plan = "plan_show" if app.folder.plan.exists() else "plan_make"
     keys = [
         "landform",
