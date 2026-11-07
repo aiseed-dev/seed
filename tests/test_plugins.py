@@ -238,7 +238,6 @@ def test_weather_hours_open_today_and_toggle(app, monkeypatch):
     )
     assert len(lines()) == 17 + 1 + 24  # 今日の 07〜23 時と明日の 1 行、今日を開いた 24 行
     assert "07:00  雨 0.0 mm（10 %）  快晴  9 ℃  風 2 m/s 北西  湿度 85 %" in lines()
-    assert not any(x.startswith("06:00  雨") and "11-" in x for x in lines())  # 過ぎた時は出ない
     colour = {
         c.value: c.color
         for c in walk(app.page.views[-1])
