@@ -16,14 +16,14 @@
 
 ## 1. 事実（11-05 夜に測った。halo は ssh で読むだけ、deb2 は配備の手順書 §1 から）
 
-| | halo（192.168.100.6） | deb2（Cloudflare の後ろ） |
+| | halo（192.0.2.6） | deb2（Cloudflare の後ろ） |
 |---|---|---|
 | OS | Debian 13、カーネル 7.1.8 | Debian、Python 3.13 |
 | CPU・メモリ | Ryzen AI Max+ 395、32 スレッド、123 GB（Glimmer が約 100 GB） | 26 GB |
 | 盤 | NVMe 1.7 TB、使用 222 GB、残り 1.4 TB、ext4、暗号化無し、swap 96 GB | 849 GB 空き |
 | 開いている口 | 22、8080、11434（Glimmer）、11435（sd-server）。5432・8551 は閉 | 443（Caddy: office、aiai、git、auth、analytics、11-06 から seed） |
 | 入っていない物 | postgresql、wireguard、tailscale、caddy、podman、docker（dpkg に無い） | — |
-| 網 | LAN 192.168.100.6、IPv6 グローバル有り、無線は down | 公開の IP、Cloudflare proxied |
+| 網 | LAN 192.0.2.6、IPv6 グローバル有り、無線は down | 公開の IP、Cloudflare proxied |
 | 役目 | Glimmer、seed の絵（sd-server）。user の systemd で動く | 公開のサーバー。PocketBase（auth）も載っている |
 
 ## 2. 形: deb2 は入口、halo は本体

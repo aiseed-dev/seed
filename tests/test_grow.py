@@ -426,7 +426,7 @@ def test_draw_sends_prompt_figure_and_photo_and_stamps(field, drawn_day, photo, 
     monkeypatch.setattr(draw, "TRANSPORT", fake_server(calls))
     f = str(field.root)
     rc = cli.main(
-        ["grow", "--folder", f, "--draw", "--server", "http://192.168.100.6:11435", "--photo", str(photo)]
+        ["grow", "--folder", f, "--draw", "--server", "http://192.0.2.6:11435", "--photo", str(photo)]
     )
     assert rc == 0
     assert len(calls) == 1  # prompt の無い 2027-04 は頼まない
@@ -466,7 +466,7 @@ def test_draw_sends_prompt_figure_and_photo_and_stamps(field, drawn_day, photo, 
     md = (drawn_day / "captions.md").read_text(encoding="utf-8")
     assert "| 図 | 絵 |" in md and "[01-2026-12.png](01-2026-12.png)" in md
     assert "## 絵の作り方" in md and PROMPT in md and "`01-2026-12.svg`" in md and "photo-1" not in md
-    assert "http://192.168.100.6:11435" in md and "FLUX.2 klein 4B" in md and "秒" in md
+    assert "http://192.0.2.6:11435" in md and "FLUX.2 klein 4B" in md and "秒" in md
     assert "写真は家の外に出ていない" in md
     assert "### 描かなかった場面" in md and "prompt）が無い" in md
     assert "## Claude の照らし" in md and "（まだ。" in md  # conftest は claude を見つけない
@@ -528,7 +528,7 @@ def test_draw_server_not_answering_returns_2(field, drawn_day, monkeypatch, caps
 
     monkeypatch.setattr(draw, "TRANSPORT", httpx.MockTransport(down))
     assert (
-        cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.168.100.6:9"]) == 2
+        cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.0.2.6:9"]) == 2
     )
     assert "応えません" in capsys.readouterr().err
     assert (drawn_day / "01-2026-12.svg").is_file()
@@ -564,7 +564,7 @@ def test_is_lan():
     from seed.draw import is_lan
 
     for u in (
-        "http://192.168.100.6:11435",
+        "http://192.0.2.6:11435",
         "http://10.0.0.2",
         "http://localhost:11435",
         "http://127.0.0.1:1",
@@ -676,7 +676,7 @@ def test_draw_sends_bearer_from_credentials(field, drawn_day, monkeypatch, crede
     st.save()
     calls: list = []
     monkeypatch.setattr(draw, "TRANSPORT", _gate(calls, "draw-fake-token-0001"))
-    rc = cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.168.100.6"])
+    rc = cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.0.2.6"])
     assert rc == 0
     assert calls and all(r.headers["authorization"] == "Bearer draw-fake-token-0001" for r in calls)
     assert all(r.url.port == 11445 for r in calls)  # 口の無い URL は門の口
@@ -700,7 +700,7 @@ def test_draw_401_says_check_token(field, drawn_day, monkeypatch, capsys):
     monkeypatch.setenv(draw.ENV_TOKEN, "draw-fake-wrong-0004")
     calls: list = []
     monkeypatch.setattr(draw, "TRANSPORT", _gate(calls, "draw-fake-right-0005"))
-    rc = cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.168.100.6:11445"])
+    rc = cli.main(["grow", "--folder", str(field.root), "--draw", "--server", "http://192.0.2.6:11445"])
     assert rc == 2
     err = capsys.readouterr().err
     assert "token を受けませんでした" in err and "draw_token" in err and "401" in err
@@ -711,7 +711,7 @@ def test_draw_401_says_check_token(field, drawn_day, monkeypatch, capsys):
 def test_draw_401_words_in_english():
     from seed.app.strings import s
 
-    text = s("draw_unauthorized", "en", server="http://192.168.100.6:11445", detail="HTTP 401")
+    text = s("draw_unauthorized", "en", server="http://192.0.2.6:11445", detail="HTTP 401")
     assert "did not accept the token" in text and "SEED_DRAW_TOKEN" in text
 
 
