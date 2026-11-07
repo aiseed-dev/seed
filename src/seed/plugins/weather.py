@@ -13,6 +13,8 @@ from seed.app import theme
 
 TITLE = {"ja": "天気", "en": "Weather"}
 ICON = "WB_SUNNY_OUTLINED"
+API_URL = "https://open-meteo.com/en/docs"
+ECMWF_URL = "https://open-meteo.com/en/docs/ecmwf-api"
 
 WEEKDAYS = {"ja": "月火水木金土日", "en": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")}
 
@@ -61,14 +63,38 @@ def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
     if soil is None:
         return []
     t = app.t
-    temp = " · ".join(f"{k} {number(v, ' ℃')}" for k, v in soil.temp.items())
-    moist = " · ".join(f"{k} {'—' if v is None else f'{v:.2f}'}" for k, v in soil.moisture.items())
-    return [
-        theme.subheading(t("weather_soil", time=soil.time[-5:])),
-        ft.Text(f"{t('weather_soil_temp')}: {temp}", size=theme.BODY_SIZE),
-        ft.Text(f"{t('weather_soil_moist')}: {moist} m³/m³", size=theme.BODY_SIZE),
-        theme.muted(t("weather_soil_note")),
-    ]
+    when = soil.time or (soil.surface[0] if soil.surface else "")
+    out: list[ft.Control] = [theme.subheading(t("weather_soil", time=when[-5:]))]
+    if soil.surface:
+        tm, v = soil.surface
+        out.append(ft.Text(t("weather_surface", value=f"{v:.0f}", time=tm[-5:]), size=theme.BODY_SIZE))
+    if soil.temp:
+        temp = " · ".join(f"{k} {number(v, ' ℃')}" for k, v in soil.temp.items())
+        moist = " · ".join(f"{k} {'—' if v is None else f'{v:.2f}'}" for k, v in soil.moisture.items())
+        out += [
+            ft.Text(f"{t('weather_soil_temp')}: {temp}", size=theme.BODY_SIZE),
+            ft.Text(f"{t('weather_soil_moist')}: {moist} m³/m³", size=theme.BODY_SIZE),
+        ]
+    return out
+
+
+def credits(app) -> list[ft.Control]:
+    """画面の一番下の二行: 出典（リンク）と計算の仕方。"""
+    t = app.t
+    style = ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE)
+    sep = "、" if app.lang == "ja" else "; "
+    colon = "：" if app.lang == "ja" else ": "
+    source = ft.Text(
+        spans=[
+            ft.TextSpan(f"{t('weather_source')}{colon}"),
+            ft.TextSpan(t("weather_source_api"), url=API_URL, style=style),
+            ft.TextSpan(sep),
+            ft.TextSpan(t("weather_source_surface"), url=ECMWF_URL, style=style),
+        ],
+        size=13,
+        color=ft.Colors.ON_SURFACE_VARIANT,
+    )
+    return [source, theme.muted(t("weather_calc"))]
 
 
 def build(app) -> list[ft.Control]:
@@ -92,7 +118,7 @@ def build(app) -> list[ft.Control]:
             *soil_controls(app, soil),
             theme.subheading(TITLE.get(app.lang, TITLE["en"])),
             ft.Column([row(f, app.lang) for f in rows], spacing=8),
-            theme.muted(t("weather_source")),
+            *credits(app),
             button,
         ]
     if failed and failed[0] == key:

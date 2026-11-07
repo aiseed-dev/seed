@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .records import EMPTY, Folder, Observation, split_sections
@@ -20,6 +20,7 @@ JMA_URL = "https://www.data.jma.go.jp/stats/etrn/"
 DAILY = ("temperature_2m_max", "temperature_2m_min", "precipitation_sum", "sunshine_duration")
 TIMEZONE = "Asia/Tokyo"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+ECMWF_URL = "https://api.open-meteo.com/v1/ecmwf"
 FORECAST_DAILY = (
     "weather_code",
     "temperature_2m_max",
@@ -246,6 +247,7 @@ class Soil:
     time: str  # 2026-11-08T14:00（Asia/Tokyo）
     temp: dict[str, float | None]  # 深さ → 地温 ℃
     moisture: dict[str, float | None]  # 深さ → 水分 m³/m³
+    surface: tuple[str, float] | None = None  # ECMWF の地表面温度（時, ℃）
 
 
 def parse_soil(data: dict, now: dt.datetime | None = None) -> Soil | None:
@@ -274,12 +276,50 @@ def parse_soil(data: dict, now: dt.datetime | None = None) -> Soil | None:
     return Soil(times[best], pick(SOIL_TEMP), pick(SOIL_MOISTURE))
 
 
+def fetch_surface(
+    lat: float, lon: float, get=None, now: dt.datetime | None = None
+) -> tuple[str, float] | None:
+    """ECMWF の地表面温度（今以前で一番新しい時, ℃）。どんな失敗でも None（投げない）。"""
+    try:
+        import httpx
+
+        lat, lon = rounded(lat, lon)
+        params = {
+            "latitude": f"{lat:.2f}",
+            "longitude": f"{lon:.2f}",
+            "hourly": "surface_temperature",
+            "timezone": TIMEZONE,
+            "forecast_days": 1,
+        }
+        r = (get or httpx.get)(ECMWF_URL, params=params, timeout=10.0)
+        if r.status_code != 200:
+            return None
+        hourly = r.json()["hourly"]
+        now = now or dt.datetime.now(JST).replace(tzinfo=None)
+        best = None
+        for tm, v in zip(hourly["time"], hourly["surface_temperature"], strict=True):
+            if v is not None and dt.datetime.fromisoformat(tm) <= now:
+                best = (tm, float(v))
+        return best
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Forecast]:
     """予報の日ごとだけ（fetch_week の前半）。"""
-    return fetch_week(lat, lon, days, get)[0]
+    return _week(lat, lon, days, get)[0]
 
 
 def fetch_week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecast], Soil | None]:
+    """予報、土の値、それに ECMWF の地表面温度（二つ目の問い合わせ。取れなくても他は返す）。"""
+    rows, soil = _week(lat, lon, days, get)
+    surface = fetch_surface(lat, lon, get)
+    if surface:
+        soil = replace(soil, surface=surface) if soil else Soil("", {}, {}, surface)
+    return rows, soil
+
+
+def _week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecast], Soil | None]:
     """Open-Meteo の予報と今の土の値を取る。座標は 2 桁に丸める。get は差し替え用（既定は httpx.get）。失敗は WeatherError。"""
     import httpx
 

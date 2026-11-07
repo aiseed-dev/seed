@@ -6,8 +6,9 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import flet as ft
 import pytest
-from test_app import FakePage, texts
+from test_app import FakePage, texts, walk
 
 from seed import weather as W
 from seed.app import plugins
@@ -120,6 +121,7 @@ def soil():
         "2026-11-08T14:00",
         {"0 cm": 15.2, "6 cm": 14.0, "18 cm": 15.4, "54 cm": 17.0},
         {"0-1 cm": 0.31, "1-3 cm": 0.30, "3-9 cm": 0.29, "9-27 cm": 0.28, "27-81 cm": 0.27},
+        ("2026-11-08T14:00", 16.4),
     )
 
 
@@ -149,11 +151,18 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     got = texts(app.page.views[-1])
     assert len([x for x in got if x.startswith("最高")]) == 7
     assert "土（14:00 の値）" in got
+    assert "地表面 16 ℃（ECMWF、14:00）" in got
     assert "地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
     assert "水分: 0-1 cm 0.31 · 1-3 cm 0.30 · 3-9 cm 0.29 · 9-27 cm 0.28 · 27-81 cm 0.27 m³/m³" in got
     assert "11/08（日）  雨" in got
     assert "最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
-    assert "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
+    assert "Open-Meteo 天気予報 API" in got and "地表面: ECMWF IFS（Open-Meteo）" in got
+    assert any(x.startswith("計算: 畑の座標") for x in got)
+    assert not any("実測" in x for x in got)
+    links = [
+        sp.url for c in walk(app.page.views[-1]) if isinstance(c, ft.Text) for sp in c.spans or [] if sp.url
+    ]
+    assert links == ["https://open-meteo.com/en/docs", "https://open-meteo.com/en/docs/ecmwf-api"]
     app.refresh()
     assert not app.page.tasks and len(calls) == 1  # 同じ日の開き直しは取り直さない
     app.state.pop("forecast")  # 「取り直す」と同じ
@@ -189,7 +198,4 @@ def test_weather_without_soil(app, monkeypatch):
     app.route_change(path="/p/weather")
     run_tasks(app)
     got = texts(app.page.views[-1])
-    assert (
-        not any(x.startswith("土（") for x in got)
-        and "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
-    )
+    assert not any(x.startswith("土（") for x in got) and "Open-Meteo 天気予報 API" in got

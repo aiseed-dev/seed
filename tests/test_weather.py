@@ -90,7 +90,8 @@ def test_fetch_week_asks_hourly_soil():
     seen = {}
 
     def get(url, params=None, timeout=None):
-        seen.update(params)
+        if url == W.FORECAST_URL:
+            seen.update(params)
         return Resp(soil_payload())
 
     rows, soil = W.fetch_week(34.05, 134.25, get=get)
@@ -100,3 +101,39 @@ def test_fetch_week_asks_hourly_soil():
         and "soil_moisture_27_to_81cm" in seen["hourly"]
     )
     assert soil is None or soil.time.startswith("2026-11-08")
+
+
+def test_fetch_surface():
+    seen = {}
+    data = {
+        "hourly": {
+            "time": ["2026-11-08T12:00", "2026-11-08T15:00", "2026-11-08T18:00"],
+            "surface_temperature": [15.1, 16.4, 12.0],
+        }
+    }
+
+    def get(url, params=None, timeout=None):
+        seen.update(url=url, params=params)
+        return Resp(data)
+
+    got = W.fetch_surface(34.05678, 134.24321, get=get, now=dt.datetime(2026, 11, 8, 16, 0))
+    assert got == ("2026-11-08T15:00", 16.4) and seen["url"] == W.ECMWF_URL
+    assert seen["params"]["latitude"] == "34.06" and seen["params"]["hourly"] == "surface_temperature"
+    assert W.fetch_surface(1, 2, get=get, now=dt.datetime(2026, 11, 8, 9, 0)) is None
+    assert W.fetch_surface(1, 2, get=lambda *a, **k: Resp({}, 500)) is None
+    assert W.fetch_surface(1, 2, get=lambda *a, **k: Resp(None)) is None
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    assert W.fetch_surface(1, 2, get=boom) is None
+
+
+def test_fetch_week_includes_surface():
+    def get(url, params=None, timeout=None):
+        if url == W.ECMWF_URL:
+            return Resp({"hourly": {"time": ["2000-01-01T00:00"], "surface_temperature": [7.5]}})
+        return Resp(SAMPLE)  # hourly の無い答え
+
+    rows, soil = W.fetch_week(34.05, 134.25, get=get)
+    assert len(rows) == 2 and soil.surface == ("2000-01-01T00:00", 7.5) and soil.temp == {}
