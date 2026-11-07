@@ -454,8 +454,10 @@ def test_answer_discovery_replies_with_the_url():
 
 
 class FakeSock:
-    def __init__(self, reply=None):
-        self.reply, self.sent = reply, []
+    """reply は、送った数が after を超えてから届く（放送が通らない網を真似る）。"""
+
+    def __init__(self, reply=None, after=0):
+        self.reply, self.after, self.sent = reply, after, []
 
     def setsockopt(self, *a):
         pass
@@ -467,7 +469,7 @@ class FakeSock:
         self.sent.append((data, addr))
 
     def recvfrom(self, n):
-        if self.reply is None:
+        if self.reply is None or len(self.sent) <= self.after:
             raise TimeoutError
         r, self.reply = self.reply, None
         return r, ("192.168.1.5", 8801)
@@ -482,8 +484,19 @@ def test_find_home_with_a_fake_socket():
     s = FakeSock(b"seed-home http://192.168.1.5:8800")
     assert discover.find_home(sock=s) == "http://192.168.1.5:8800"
     assert s.sent[0] == (b"seed?", ("255.255.255.255", 8801))
+    assert (b"seed?", ("192.168.1.255", 8801)) in s.sent and len(s.sent) == 3  # 放送だけで足りた
     assert discover.find_home(sock=FakeSock(None)) is None
     assert discover.find_home(sock=FakeSock(b"junk")) is None
+
+
+def test_find_home_sweeps_the_subnet_when_broadcast_is_dropped():
+    from seed import discover
+
+    s = FakeSock(b"seed-home http://192.168.1.5:8800", after=3 + 253 - 1)  # 掃き終わってから届く
+    assert discover.find_home(sock=s) == "http://192.168.1.5:8800"
+    uni = [a[0] for _, a in s.sent[3:]]
+    assert len(uni) == 253 and "192.168.1.10" not in uni and "192.168.1.1" in uni and "192.168.1.254" in uni
+    assert discover.find_home(sock=FakeSock(None), own_ip="10.0.0.7") is None
 
 
 def test_find_pc_button_saves_url_and_waits_for_the_code(seedfolder, monkeypatch):
