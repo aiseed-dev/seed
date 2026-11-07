@@ -736,7 +736,9 @@ def conversation(app: App) -> list[ft.Control]:
     for it in items:
         if it.get("after") is None:
             out += item_controls(app, it)
+    month = None
     for turn in all_turns:
+        month = add_month(out, turn, month)
         out += turn_controls(app, turn, hide)
         for it in items:
             if it.get("after") == turn.name:
@@ -745,6 +747,24 @@ def conversation(app: App) -> list[ft.Control]:
     if pending:
         out += pending_controls(app, pending)
     return out
+
+
+def month_mark(month: str) -> ft.Control:
+    """月が替わる所の細い印（YYYY-MM）。真ん中に小さく。"""
+    text = theme.muted(month)
+    text.size = 12
+    return ft.Row([text], alignment=ft.MainAxisAlignment.CENTER)
+
+
+def add_month(out: list[ft.Control], turn: Turn, month: str | None) -> str | None:
+    """月が替わったら、その月の一つ目のやり取りの前に月の印を足し、今の月を返す（古い順。作者 11-07「畑ごと月ごとに」）。
+
+    一つ目のやり取りの前には出さない（やり取りに日付があるので、替わり目だけ）。
+    """
+    now = (turn.obs.date or "")[:7] or None
+    if now and month and now != month:
+        out.append(month_mark(now))
+    return now or month
 
 
 def whole_conversation(app: App, items: list[dict], hide: set[str]) -> list[ft.Control]:
@@ -756,7 +776,9 @@ def whole_conversation(app: App, items: list[dict], hide: set[str]) -> list[ft.C
         if not field_turns:
             continue
         out.append(theme.subheading(f.root.name))
+        month = None
         for turn in field_turns:
+            month = add_month(out, turn, month)
             out += turn_controls(fa, turn, hide)
     if not out:
         out.append(claude_side([words_text(app.t("talk_hello")), words_text(first_photo_text(app))]))

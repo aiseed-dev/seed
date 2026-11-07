@@ -352,3 +352,69 @@ def test_land_plugin_per_field_in_whole(project):
     app = make_app(project)
     heads = subheadings(ft.Column(land_plugin.build(app)))
     assert heads.index("北") < heads.index("南")
+
+
+# ---------------------------------------------------------------- 畑ごと、月ごと、日ごと（作者 11-07）
+
+DAYS = ("2026:10:20 10:00:00", "2026:11:05 14:21:07", "2026:11:06 09:00:00")
+
+
+def observe_days(folder, tmp_path, days=DAYS) -> None:
+    from test_photos import make_jpeg
+
+    for i, taken in enumerate(days):
+        a = make_jpeg(tmp_path / "in" / folder.name / f"{i}.jpg", taken=taken)
+        assert cli.main(["observe", "--folder", str(folder), "--claude-code", str(a)]) == 0
+
+
+def test_gallery_month_headings_single_field(seedfolder, tmp_path):
+    observe_days(seedfolder, tmp_path)
+    app = App(FakePage(), str(seedfolder))
+    app.lang = "ja"
+    heads = subheadings(gallery.view(app))
+    assert heads == ["2026-11", "2026-11-06", "2026-11-05", "2026-10", "2026-10-20"]
+    app.state["photo_tag"] = "無い語"  # 絞り込みは今まで通り（無い語は外れる）
+    assert subheadings(gallery.view(app))[0] == "2026-11"
+
+
+def test_gallery_month_headings_whole(project, tmp_path):
+    observe_days(project / "fields" / "北", tmp_path)
+    observe_days(project / "fields" / "南", tmp_path, days=DAYS[:1])
+    app = make_app(project)
+    heads = subheadings(gallery.view(app))
+    assert heads == [
+        "北", "2026-11", "2026-11-06", "2026-11-05", "2026-10", "2026-10-20",
+        "南", "2026-10", "2026-10-20",
+    ]  # fmt: skip
+
+
+def month_marks(controls) -> list[str]:
+    return [
+        c.controls[0].value
+        for c in controls
+        if isinstance(c, ft.Row) and len(c.controls) == 1 and isinstance(c.controls[0], ft.Text)
+        and c.controls[0].size == 12
+    ]  # fmt: skip
+
+
+def test_conversation_month_marks(seedfolder, tmp_path):
+    observe_days(seedfolder, tmp_path)
+    app = App(FakePage(), str(seedfolder))
+    app.lang = "ja"
+    conv = talk.conversation(app)
+    assert month_marks(conv) == ["2026-11"]  # 替わり目だけ（古い順）
+    i = next(i for i, c in enumerate(conv) if month_marks([c]))
+    assert "2026-11-05 14:21" in " ".join(texts(conv[i + 1]))  # その月の一つ目の前
+    assert "2026-10-20 10:00" in " ".join(texts(conv[0]))
+
+
+def test_conversation_month_marks_whole(project, tmp_path):
+    observe_days(project / "fields" / "北", tmp_path)
+    observe_days(project / "fields" / "南", tmp_path, days=DAYS[:2])
+    app = make_app(project)
+    conv = talk.conversation(app)
+    assert month_marks(conv) == ["2026-11", "2026-11"]  # 畑ごとに数える
+    heads = [
+        c.value for c in conv if isinstance(c, ft.Text) and c.theme_style == ft.TextThemeStyle.TITLE_MEDIUM
+    ]
+    assert heads == ["北", "南"]

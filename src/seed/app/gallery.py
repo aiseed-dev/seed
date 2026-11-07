@@ -64,10 +64,24 @@ def tag_chips(app: App, tags: list[tuple[str, int]]) -> ft.Control:
     return ft.Row(chips, wrap=True, spacing=6, run_spacing=6)
 
 
+def month_heading(month: str) -> ft.Text:
+    """月の見出し（YYYY-MM）。日の見出しと同じ大きさで、色を控える。"""
+    return ft.Text(
+        month,
+        theme_style=ft.TextThemeStyle.TITLE_MEDIUM,
+        weight=ft.FontWeight.W_600,
+        color=ft.Colors.ON_SURFACE_VARIANT,
+    )
+
+
 def day_rows(app: App, shown: list[photo.Shot], size: float) -> list[ft.Control]:
-    """日の見出しと、観察ごとの写真の並び。"""
+    """月の見出し、日の見出し、観察ごとの写真の並び（新しい月、新しい日から。作者 11-07「畑ごと月ごとに」）。"""
     out: list[ft.Control] = []
+    month = None
     for date, by_obs in groups(shown):
+        if date[:7] != month:  # 一日だけの月にも見出しを出す
+            month = date[:7]
+            out.append(month_heading(month))
         out.append(theme.subheading(date))
         for idx in by_obs:
             tiles = [x for x in (photo.tile(app, shown, i, size) for i in idx) if x is not None]
