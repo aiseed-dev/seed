@@ -126,7 +126,10 @@ def soil():
 
 
 def forecast_rows(n=7):
-    return [W.Forecast(f"2026-11-{8 + i:02d}", 61, 18.4, 9.6, 2.5, 70) for i in range(n)]
+    return [
+        W.Forecast(f"2026-11-{8 + i:02d}", 61, 18.4, 9.6, 2.5, 70, 18720.0 / 3600, 2.14, 3.2, 8.1, 315)
+        for i in range(n)
+    ]
 
 
 def test_weather_plugin_after_land(app):
@@ -155,6 +158,7 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     assert "地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
     assert "水分: 0-1 cm 0.31 · 1-3 cm 0.30 · 3-9 cm 0.29 · 9-27 cm 0.28 · 27-81 cm 0.27 m³/m³" in got
     assert "11/08（日）  雨" in got
+    assert got.count("日照 5.2 h  蒸発散 2.1 mm  風 3 m/s 北西（突風 8）") == 7
     assert "最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
     assert "Open-Meteo 天気予報 API" in got and "地表面: ECMWF IFS（Open-Meteo）" in got
     assert any(x.startswith("計算: 畑の座標") for x in got)

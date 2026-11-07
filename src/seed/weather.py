@@ -28,6 +28,13 @@ FORECAST_DAILY = (
     "precipitation_sum",
     "precipitation_probability_max",
 )
+EXTRA_DAILY = (
+    "sunshine_duration",
+    "et0_fao_evapotranspiration",
+    "wind_speed_10m_max",
+    "wind_gusts_10m_max",
+    "wind_direction_10m_dominant",
+)
 H_DATA = "Data"
 DAY_LINE_RE = re.compile(r"^- (?P<date>\d{4}-\d{2}-\d{2}): ")
 COORD_RE = re.compile(r"(-?\d{1,3}(?:\.\d+)?)\s*[,、]\s*(-?\d{1,3}(?:\.\d+)?)")
@@ -193,6 +200,11 @@ class Forecast:
     tmin: float | None
     rain: float | None
     rain_prob: int | None
+    sunshine_h: float | None = None  # 日照（時間）
+    et0: float | None = None  # 蒸発散（mm）
+    wind: float | None = None  # 最大の風（m/s）
+    gust: float | None = None  # 最大の突風（m/s）
+    wind_dir: int | None = None  # 主な風向（度）
 
 
 def parse_forecast(data: dict) -> list[Forecast]:
@@ -212,6 +224,10 @@ def parse_forecast(data: dict) -> list[Forecast]:
     out = []
     for i, date in enumerate(dates):
         code, tmax, tmin, rain, prob = (c[i] for c in cols)
+        sun, et0, wind, gust, wdir = (
+            (daily.get(k) or [None] * len(dates))[i] if len(daily.get(k) or []) in (0, len(dates)) else None
+            for k in EXTRA_DAILY
+        )
         out.append(
             Forecast(
                 str(date),
@@ -220,6 +236,11 @@ def parse_forecast(data: dict) -> list[Forecast]:
                 num(tmin, float),
                 num(rain, float),
                 num(prob, int),
+                None if sun is None else float(sun) / 3600,
+                num(et0, float),
+                num(wind, float),
+                num(gust, float),
+                num(wdir, int),
             )
         )
     return out
@@ -327,7 +348,8 @@ def _week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecas
     params = {
         "latitude": f"{lat:.2f}",
         "longitude": f"{lon:.2f}",
-        "daily": ",".join(FORECAST_DAILY),
+        "daily": ",".join((*FORECAST_DAILY, *EXTRA_DAILY)),
+        "wind_speed_unit": "ms",
         "hourly": ",".join(HOURLY),
         "forecast_days": days,
         "timezone": TIMEZONE,
@@ -359,6 +381,51 @@ WORDS = (
     ({85, 86}, ("にわか雪", "Snow showers")),
     ({95, 96, 99}, ("雷雨", "Thunder")),
 )
+
+
+COMPASS = {
+    "ja": [
+        "北",
+        "北北東",
+        "北東",
+        "東北東",
+        "東",
+        "東南東",
+        "南東",
+        "南南東",
+        "南",
+        "南南西",
+        "南西",
+        "西南西",
+        "西",
+        "西北西",
+        "北西",
+        "北北西",
+    ],
+    "en": [
+        "N",
+        "NNE",
+        "NE",
+        "ENE",
+        "E",
+        "ESE",
+        "SE",
+        "SSE",
+        "S",
+        "SSW",
+        "SW",
+        "WSW",
+        "W",
+        "WNW",
+        "NW",
+        "NNW",
+    ],
+}
+
+
+def wind_name(deg: float, language: str) -> str:
+    """風向（度。風の来る向き）を 16 方位の語に。"""
+    return COMPASS["ja" if language == "ja" else "en"][int((float(deg) % 360) / 22.5 + 0.5) % 16]
 
 
 def weather_word(code: int, language: str) -> str:

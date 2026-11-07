@@ -56,7 +56,19 @@ def row(f: weather.Forecast, language: str) -> ft.Control:
     else:
         detail = f"max {tmax} / min {tmin}  rain {rain} ({prob})"
     head = f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}"
-    return ft.Column([ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail)], tight=True, spacing=2)
+    sun = "—" if f.sunshine_h is None else f"{f.sunshine_h:.1f} h"
+    et0 = "—" if f.et0 is None else f"{f.et0:.1f} mm"
+    wind = number(f.wind, " m/s")
+    if f.wind_dir is not None:
+        wind += f" {weather.wind_name(f.wind_dir, language)}"
+    gust = number(f.gust, "")
+    if ja:
+        farm = f"日照 {sun}  蒸発散 {et0}  風 {wind}（突風 {gust}）"
+    else:
+        farm = f"sun {sun}  ET₀ {et0}  wind {wind} (gusts {gust})"
+    return ft.Column(
+        [ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail), theme.muted(farm)], tight=True, spacing=2
+    )
 
 
 def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:

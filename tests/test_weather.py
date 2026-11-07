@@ -137,3 +137,38 @@ def test_fetch_week_includes_surface():
 
     rows, soil = W.fetch_week(34.05, 134.25, get=get)
     assert len(rows) == 2 and soil.surface == ("2000-01-01T00:00", 7.5) and soil.temp == {}
+
+
+def test_parse_forecast_farm_fields():
+    data = {"daily": {**SAMPLE["daily"]}}
+    data["daily"].update(
+        sunshine_duration=[18720.0, None],
+        et0_fao_evapotranspiration=[2.14, 1.0],
+        wind_speed_10m_max=[3.2, 5.0],
+        wind_gusts_10m_max=[8.1, None],
+        wind_direction_10m_dominant=[315, 90],
+    )
+    a, b = W.parse_forecast(data)
+    assert (a.sunshine_h, a.et0, a.wind, a.gust, a.wind_dir) == (5.2, 2.14, 3.2, 8.1, 315)
+    assert b.sunshine_h is None and b.gust is None and b.wind_dir == 90
+    c = W.parse_forecast(SAMPLE)[0]  # 無い列は None
+    assert (c.sunshine_h, c.et0, c.wind, c.gust, c.wind_dir) == (None,) * 5
+
+
+def test_fetch_asks_farm_variables_in_ms():
+    seen = {}
+
+    def get(url, params=None, timeout=None):
+        if url == W.FORECAST_URL:
+            seen.update(params)
+        return Resp(SAMPLE)
+
+    W.fetch_forecast(34.05, 134.25, get=get)
+    assert seen["wind_speed_unit"] == "ms" and "et0_fao_evapotranspiration" in seen["daily"]
+
+
+def test_wind_name():
+    assert [W.wind_name(d, "ja") for d in (0, 22.5, 45, 90, 180, 315, 350, 360)] == [
+        "北", "北北東", "北東", "東", "南", "北西", "北", "北",
+    ]  # fmt: skip
+    assert [W.wind_name(d, "en") for d in (0, 45, 202, 315, 349)] == ["N", "NE", "SSW", "NW", "N"]
