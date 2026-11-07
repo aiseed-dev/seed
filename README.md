@@ -6,6 +6,14 @@
 - **記録は手元に。** 写真と座標の入った記録は、あなたの PC のプロジェクトフォルダー（`~/seed/`）に素の文字で残ります。人に見えるのは、あなたが「出す」と言った行と写真だけです。
 - **機能は自分で足す。** 「これからは収穫の量も記録して」「収穫の表の画面を作って」と話すと、Claude が手引きと画面を足します。配布はこの GitHub だけで、使う人はフォークして自分の物にします。
 
+<p align="center">
+<img src="docs/images/app-talk.jpg" width="280" alt="話す: Claude の読み、問い、次の一枚">
+<img src="docs/images/field-2026-11-03.jpg" width="280" alt="作者の畑の写真（2026-11-03 の朝）">
+</p>
+<p align="center"><sub>左: 「話す」の画面。Claude の読み、問い、次の一枚。右: 作者の畑で撮った一枚（位置の情報は外してあります）。</sub></p>
+
+![撮る → 話す → 記録 → 公開](docs/images/flow.svg)
+
 ## 使ってみる
 
 ```bash
@@ -76,7 +84,26 @@ Flutter と Android Studio が要ります。
 - **写真**: この畑の写真を日ごとに見渡し、タグ（植物の名、開花、刈った…）で絞り、大きく開いて「この草の名前は？」「今日の一枚にする」「この写真を外す」ができます。
 - **この土地**: 座標から引いた、この土地の成り立ち（地形、土、水と災害の区域、歴史）と、昔の地図と空中写真。AI は使いません。これは最初のプラグインで、下の「機能は自分で足す」の見本です。
 
+<p align="center">
+<img src="docs/images/app-talk.jpg" width="220" alt="話す">
+<img src="docs/images/app-photo.jpg" width="300" alt="写真を大きく開いた所">
+<img src="docs/images/app-land.jpg" width="300" alt="この土地">
+</p>
+<p align="center"><sub>話す（左）、写真を大きく開いた所（中。この草の名前は？、今日の一枚にする、この写真を外す）、この土地（右。出典付き）。</sub></p>
+
 ## プロジェクトフォルダー
+
+```
+~/seed/                  プロジェクトフォルダー（Claude Code の仕事場と同じ）
+  CLAUDE.md              Claude Code を開いた時の決まり
+  skill/                 手引き。言葉で足した事はここに入る
+  plugins/               画面。一つの .py が一つの画面
+  fields/北の畑/          畑ごとの記録
+    observations/        観察（素の文字。読みの行、あなたの判定、あなたの言葉）
+    photos/              写真（座標入り）
+    place.md plan.md     土地の資料、栽培計画
+    public/              公開した物の控え
+```
 
 `~/seed/` がプロジェクトフォルダーで、Claude Code の仕事場と同じ物です。記録（写真と座標を含む）、手引き（`skill/`）、画面（`plugins/`）、Claude Code を開いた時の決まり（`CLAUDE.md`）が、この中にあります。畑が二つ以上あるなら、中の `fields/<畑の名>/` に分け、上の端のフォルダーの印で畑か全体を選びます。座標はこの作業に必須で、記録から外しません。人に見える所に出るのは、あなたが了解した行と写真だけです（写真は位置の情報を外した物）。Claude Code がある PC なら API キー無しで動きます（Claude の契約は Pro 以上）。自分の鍵は端末の `~/.config/seed/credentials.toml`（600）にだけ置かれ、Anthropic の API にだけ送られます。
 
