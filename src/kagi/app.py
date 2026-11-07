@@ -247,7 +247,7 @@ def machine_view(d: Path, host: str, now: dt.datetime | None = None) -> dict:
         return v
     facts = machine.load_facts(d / machine.FACTS_DIR / row["facts"])
     v["head"] = machine.head(host, facts, row["findings"])
-    v["fixes"] = [{"what": f.what, "result": f.result, "how": list(f.how)} for f in row["findings"] if f.fix]
+    v["fixes"] = [{"what": f.what, "result": f.result, "how": f.all_how()} for f in row["findings"] if f.fix]
     v["notes"] = [[f.what, f.result] for f in row["findings"] if not f.fix]
     v["changes"] = [ln.strip().removeprefix("- ") for ln in report.change_lines(row)]
     return v

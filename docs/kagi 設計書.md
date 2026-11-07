@@ -158,7 +158,7 @@ fingerprint = "SHA256:…"      # pub があれば要らない
 | `kagi machine script` | 機械で走らせる読むだけの sh の文を出す（人が読める。約 90 行） | 0 |
 | `kagi machine collect --host H [--local]` | 写しを取り `facts/<H>-<日時>.txt`（600）に置く。ssh を使った時は記録に `machine.collect` を一行（署名の鍵があれば） | 0 / 2 |
 | `kagi machine check [--host H] [--facts FILE]` | 写しを、機械の表・口の表・在庫表と突き合わせる。`--host` が無ければ全部の機械 | 直す物があれば 1 |
-| `kagi machine fix --host H` | 直す手を sh の文で出す。**走らせない**。連載 2-02 の八つに当たる手（ssh の形、鍵、人と管理者、防火壁、口、入口、機械の鍵）には `【読んで確かめてから】` の印。印の無い手（更新、サービス、時計）は、打って写しを取り直して確かめる | 直す物があれば 1 |
+| `kagi machine fix --host H` | 直す手を sh の文で出す。**走らせない**。連載 2-02 の八つに当たる手（ssh の形、鍵、人と管理者、防火壁、口、入口、機械の鍵）には `【読んで確かめてから】` の印。印の無い手（更新、サービス、時計）は、打って写しを取り直して確かめる。防火壁の外へ出る通信を閉じる手は、終わりに「二段目」の見出しを付けて分けて出す（入る向きを閉じて ssh で入れるのを確かめ、要る外への道を数えてから打つ） | 直す物があれば 1 |
 | `kagi machine install --host H [--out DIR]` | 入れる時の三つのファイルを `install/<H>/` に書く | 0 / 2 |
 | `kagi key list` | 鍵ごとに、持つ人、指紋、入れてよい機械、在庫表の期限 | 在庫表に無い鍵があれば 1 |
 | `kagi key fingerprint FILE.pub` | 公開鍵の指紋 | 0 / 2 |
@@ -246,7 +246,7 @@ auth = "app"                  # public | app | gate | lan
 |---|---|---|
 | 3 最小インストール | netinst、tasksel は SSH サーバーと標準ユーティリティだけ | `machine install` の `preseed.cfg`（`standard, ssh-server`。パスワードと盤は人が画面で） |
 | 4 SSH という玄関 | ed25519 の鍵、合言葉を付ける、`PasswordAuthentication no`、`PermitRootLogin no`、`sshd -t` と `reload`、別の窓で確かめてから閉じる、退路（画面） | 認証（ssh）の行、入っている鍵と鍵の表、機械の鍵の指紋。直す手は同じ順（先に別の窓で確かめる、`sshd -t`、`reload`） |
-| 5 守りの基本 | ufw は入りも出も既定は拒否、ssh を通してから有効に、出口は 53・123/udp・80,443/tcp、unattended-upgrades、fail2ban（`jail.local` に 10m・10m・5 回、`[sshd]`）、不要なサービスを止める、`ss -tlnp` | 防火壁（入る向き・出る向きの既定、fail2ban）、更新（自動の更新、再起動）、口の表との突き合わせ。`firstboot.sh` は同じ規則を同じ順で書く |
+| 5 守りの基本 | ufw は入りも出も既定は拒否、ssh を通してから有効に、出口は 53・123/udp・80,443/tcp・67/udp（DHCP の要求）、unattended-upgrades、fail2ban（`jail.local` に 10m・10m・5 回、`[sshd]`）、不要なサービスを止める、`ss -tlnp` | 防火壁（入る向き・出る向きの既定、fail2ban）、更新（自動の更新、再起動）、口の表との突き合わせ。`firstboot.sh` は同じ規則を同じ順で書く |
 | 6 サービスという単位 | systemd の unit と timer | `services`、`user_services`、`timers`、落ちている unit |
 | 9 外の世界に公開する | リバースプロキシ、公開しないも選択肢 | 入口の表（`[[door]]`）と Caddy の設定の形 |
 | 10 データを守る | restic、`backup.service` と `backup.timer`、合言葉は `/etc/restic/backup.env`（600）、復元の演習 | `timers = ["backup"]` が止まれば直す物。`data` の置き場が無ければ直す物。合言葉は在庫表に一件（値は書かない） |
@@ -297,3 +297,5 @@ auth = "app"                  # public | app | gate | lan
 - 2026-11-06 夜: §3.5 `kagi check tokens`（相手に出した token の台帳）。
 - 2026-11-06 夜: §3.4b 連載との対応。防火壁の出る向き、fail2ban、控えの timer、この 7 日のエラー、前の写しとの比べ、`kagi weekly`。`firstboot.sh` を連載の規則に。
 - 2026-11-06 夜: AI が動くアカウントに sudo を渡さない。`fix` の手に、連載の八つに当たる物の印。
+- 2026-11-08: §3.4 `fix` の防火壁の手を二段に。入る向きを一段目、外へ出る通信を閉じる手を終わりの二段目に分けて出す（skill-keeper 03 の歩 1・歩 2 に合わせる）。
+- 2026-11-08: §3.4 `fix` の二段目（外へ出る通信を閉じる手）の通す行に `ufw allow out 67/udp`（DHCP の要求）を足す。ufw の既定の before.rules には出る向きの DHCP の行が無く、閉じると番地のもらい直しが止まるため。

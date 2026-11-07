@@ -711,7 +711,8 @@ def test_series_shape_firewall_backup_errors(tbl):
 
 def _firewall_how(tbl, fw):
     f = run_check(tbl, facts_text(firewall=fw))
-    (x,) = [x for x in f if x.what == "防火壁" and x.fix and "default deny outgoing" in "\n".join(x.how)]
+    (x,) = [x for x in f if x.what == "防火壁" and x.fix and "default deny outgoing" in "\n".join(x.later)]
+    assert "default deny outgoing" not in "\n".join(x.how)  # 出る向きを閉じる手は二段目だけ
     return x
 
 
@@ -719,9 +720,12 @@ def test_closing_outgoing_counts_ports_and_sets_undo_timer(tbl):
     fw = 'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="DROP"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nfail2ban=active'
     x = _firewall_how(tbl, fw)
     assert x.confirm  # 防火壁の手には今も印が付く
-    how = x.how
+    how = x.later
     count = how.index(machine.OUT_PORTS_NOW)
-    allow = how.index("sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp")
+    allow = how.index(
+        "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp && sudo ufw allow out 67/udp"
+    )
+    assert "sudo ufw allow out 67/udp" in how[allow]  # DHCP の要求（宛先 67/udp）
     timer = how.index(machine.UFW_UNDO_TIMER)
     deny = how.index("sudo ufw default deny outgoing")
     cancel = how.index(machine.UFW_UNDO_CANCEL)
@@ -729,19 +733,45 @@ def test_closing_outgoing_counts_ports_and_sets_undo_timer(tbl):
     assert "ufw-modosu" in machine.UFW_UNDO_TIMER and "ufw-modosu.timer" in machine.UFW_UNDO_CANCEL
 
 
-def test_no_firewall_counts_ports_and_sets_undo_timer_before_enable(tbl):
+def test_no_firewall_closes_incoming_first_and_outgoing_in_stage_two(tbl):
     fw = "ufw=inactive\nnftables=inactive\nfirewalld=inactive"
     x = _firewall_how(tbl, fw)
     assert x.confirm
     how = x.how
-    count = how.index(machine.OUT_PORTS_NOW)
     ssh_in = next(i for i, ln in enumerate(how) if ln.startswith("sudo ufw limit 22/tcp"))
-    allow = how.index("sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp")
-    timer = how.index(machine.UFW_UNDO_TIMER)
-    enable = how.index("sudo ufw enable")
-    cancel = how.index(machine.UFW_UNDO_CANCEL)
-    assert count < how.index("sudo apt install -y ufw") < ssh_in < allow < timer < enable < cancel
-    assert enable == timer + 1  # 有効にする直前に仕掛ける
+    assert how.index("sudo apt install -y ufw") < how.index("sudo ufw default deny incoming") < ssh_in
+    assert ssh_in < how.index("sudo ufw enable")
+    assert x.later == machine.OUT_CLOSE
+    # 一段目の後に、見出しを付けた二段目。数える行と閉じる行は二段目にだけある
+    text = facts_text(firewall=fw, reboot="required", failed="foo.service")
+    f = run_check(tbl, text)
+    script = machine.fix_script("box", machine.parse_facts(text), f)
+    head = script.index(machine.STAGE2_HEAD[0])
+    assert script.index("sudo ufw enable") < head < script.index(machine.STAGE2_HEAD[1])
+    assert head < script.index(machine.OUT_PORTS_NOW) < script.index("sudo ufw default deny outgoing")
+    assert script.count(machine.OUT_PORTS_NOW) == 1 and script.count("ufw default deny outgoing") == 1
+    # 二段目は台本の終わり。ほかの直す物の手は全部その前
+    last_other = max(script.index(ln) for g in f if g.fix and g.what != "防火壁" for ln in g.how)
+    assert last_other < head
+    # 画面で一つの物ごとに見せる時も、一段目、見出し、二段目の順
+    assert x.all_how() == [*x.how, *machine.STAGE2_HEAD, *machine.OUT_CLOSE]
+
+
+def test_outgoing_open_only_puts_everything_in_stage_two(tbl):
+    fw = 'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="DROP"\nDEFAULT_OUTPUT_POLICY="ACCEPT"\nfail2ban=active'
+    f = run_check(tbl, facts_text(firewall=fw))
+    script = machine.fix_script("box", machine.parse_facts(facts_text(firewall=fw)), f)
+    assert "#   手は終わりの二段目" in script
+    assert script.index("#   手は終わりの二段目") < script.index(machine.STAGE2_HEAD[0])
+
+
+def test_incoming_only_machine_has_no_stage_two(tbl):
+    fw = 'ufw=active\nnftables=inactive\nfirewalld=inactive\nENABLED=yes\nDEFAULT_INPUT_POLICY="ACCEPT"\nDEFAULT_OUTPUT_POLICY="DROP"\nfail2ban=active'
+    f = run_check(tbl, facts_text(firewall=fw))
+    assert ("防火壁", "入る向きを既定で通している（ufw）") in whats(f)
+    script = machine.fix_script("box", machine.parse_facts(facts_text(firewall=fw)), f)
+    assert "sudo ufw default deny incoming" in script
+    assert "二段目" not in script and machine.OUT_PORTS_NOW not in script
 
 
 def test_fix_script_passes_sh_n(tbl):
@@ -771,6 +801,7 @@ def test_firstboot_follows_the_series(tbl):
         "ufw allow out 53",
         "ufw allow out 123/udp",
         "ufw allow out 80,443/tcp",
+        "ufw allow out 67/udp",
         "ufw allow out to 192.0.2.0/24",
         "'bantime = 10m' 'findtime = 10m' 'maxretry = 5'",
     ):

@@ -215,6 +215,8 @@ ufw default deny outgoing
 ufw allow out 53
 ufw allow out 123/udp
 ufw allow out 80,443/tcp
+# 67/udp は網の番地をもらい直す要求（DHCP）。無いと番地が切れた時に網から落ちる
+ufw allow out 67/udp
 {lan_out}ufw --force enable
 
 echo "== 3 自動の更新"

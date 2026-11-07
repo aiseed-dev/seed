@@ -499,6 +499,13 @@ class Finding:
     result: str
     how: list[str] = field(default_factory=list)  # 直す手（sh の行。kagi は走らせない）
     confirm: bool = False  # 連載 2-02 の八つに当たる手。人が一行ずつ読んで確かめてから打つ
+    later: list[str] = field(
+        default_factory=list
+    )  # 二段目の手（外へ出る通信を閉じる）。fix の終わりに分けて出す
+
+    def all_how(self) -> list[str]:
+        """一段目と二段目の手を、二段目の見出しを挟んで一続きに（画面で一つの物ごとに見せる時）。"""
+        return self.how + ([*STAGE2_HEAD, *self.later] if self.later else [])
 
 
 # 連載 2-02 の「重要な仕事は人が確認する」八つに当たる直す物の見出し（認証、鍵、権限、口を開ける・閉じる）。
@@ -527,6 +534,27 @@ UFW_ALLOW_NOTE = (
 )
 UFW_UNDO_TIMER = "sudo systemd-run --unit=ufw-modosu --on-active=10min /usr/sbin/ufw default allow outgoing"
 UFW_UNDO_CANCEL = "sudo systemctl stop ufw-modosu.timer"
+# 外へ出る通信を閉じる手。閉じると更新や名前解決が止まりうるので、入る向きの後に、要る外への道を確かめてから
+OUT_CLOSE = [
+    "# 1. 先に、この機械が今、外のどの口へ通信しているかを数える（sudo は要らない）",
+    OUT_PORTS_NOW,
+    UFW_ALLOW_NOTE,
+    "# 67/udp は網の番地をもらい直す要求（DHCP）。無いと番地が切れた時に網から落ちる",
+    "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp && sudo ufw allow out 67/udp",
+    "# 家の網の機械（NAS、データベースの機械）へ出るなら: sudo ufw allow out to <LAN>",
+    "# 3. 10 分後に自動で外向き許可に戻すタイマーを仕掛ける（許可し忘れで何かが止まっても、待てば戻る）",
+    UFW_UNDO_TIMER,
+    "# 4. 外向きの通信を原則禁止にする",
+    "sudo ufw default deny outgoing",
+    "# 5. 確かめる。止められた通信は: sudo journalctl -k --grep 'UFW BLOCK'",
+    "sudo apt update",
+    "# 6. 問題が無ければ、3 のタイマーを取り消す（取り消さないと 10 分後に許可に戻る）",
+    UFW_UNDO_CANCEL,
+]
+STAGE2_HEAD = [
+    "# ---- 二段目: 外へ出る通信を閉じる",
+    "# 一段目を打ち、別の窓から ssh で入れるのを確かめた後に。要る外への道を 1 で確かめてから、一行ずつ打つ。",
+]
 
 SSHD_DROPIN = "/etc/ssh/sshd_config.d/10-kagi.conf"
 HOW_SSHD = [
@@ -1022,21 +1050,7 @@ def check(
                     True,
                     "防火壁",
                     "出る向きを既定で通している（連載 第 5 章の形は、入りも出も既定は拒否）",
-                    [
-                        "# 1. 先に、この機械が今、外のどの口へ通信しているかを数える（sudo は要らない）",
-                        OUT_PORTS_NOW,
-                        UFW_ALLOW_NOTE,
-                        "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
-                        "# 家の網の機械（NAS、データベースの機械）へ出るなら: sudo ufw allow out to <LAN>",
-                        "# 3. 10 分後に自動で外向き許可に戻すタイマーを仕掛ける（許可し忘れで何かが止まっても、待てば戻る）",
-                        UFW_UNDO_TIMER,
-                        "# 4. 外向きの通信を原則禁止にする",
-                        "sudo ufw default deny outgoing",
-                        "# 5. 確かめる。止められた通信は: sudo journalctl -k --grep 'UFW BLOCK'",
-                        "sudo apt update",
-                        "# 6. 問題が無ければ、3 のタイマーを取り消す（取り消さないと 10 分後に許可に戻る）",
-                        UFW_UNDO_CANCEL,
-                    ],
+                    later=OUT_CLOSE,
                 )
             )
     elif fw.get("firewalld") == "active":
@@ -1050,19 +1064,14 @@ def check(
                 "防火壁",
                 "動いていない（ufw も firewalld も nftables も）",
                 [
-                    "# 1. 先に、この機械が今、外のどの口へ通信しているかを数える（sudo は要らない）",
-                    OUT_PORTS_NOW,
+                    "# 一段目: 入ってくる通信を閉じる。ssh を先に通してから有効にする",
                     "sudo apt install -y ufw",
-                    "sudo ufw default deny incoming && sudo ufw default deny outgoing",
-                    "sudo ufw limit 22/tcp   # ssh を先に通す。LAN だけにするなら: sudo ufw allow from <LAN> to any port 22 proto tcp",
-                    UFW_ALLOW_NOTE,
-                    "sudo ufw allow out 53 && sudo ufw allow out 123/udp && sudo ufw allow out 80,443/tcp",
-                    "# 3. 10 分後に自動で外向き許可に戻すタイマーを仕掛ける（許可し忘れで何かが止まっても、待てば戻る）",
-                    UFW_UNDO_TIMER,
+                    "sudo ufw default deny incoming",
+                    "sudo ufw limit 22/tcp   # LAN だけにするなら: sudo ufw allow from <LAN> to any port 22 proto tcp",
                     "sudo ufw enable",
-                    "# 4. 問題が無ければ、3 のタイマーを取り消す（取り消さないと 10 分後に許可に戻る）",
-                    UFW_UNDO_CANCEL,
+                    "# 確かめる: 別の窓から ssh で入れる。sudo ufw status verbose に入る向きの既定の拒否",
                 ],
+                later=OUT_CLOSE,
             )
         )
     if fw.get("fail2ban") and fw["fail2ban"] != "active":
@@ -1288,20 +1297,26 @@ def fix_script(host: str, facts: Facts, findings: list[Finding]) -> str:
         "",
     ]
     done: set[tuple[str, ...]] = set()
+    later: list[str] = []
     for f in findings:
         if not f.fix:
             continue
         mark = "【読んで確かめてから】 " if f.confirm else ""
         out.append(f"# {mark}{f.what}: {f.result}")
         key = tuple(f.how)
+        if f.later and tuple(f.later) not in done:
+            later += [f"# {mark}{f.what}: {f.result}", *f.later, ""]
+            done.add(tuple(f.later))
         if not f.how:
-            out.append("#   決まった手は無い。見て決める")
+            out.append("#   手は終わりの二段目" if f.later else "#   決まった手は無い。見て決める")
         elif key in done:
             out.append("#   上と同じ手")
         else:
             out += f.how
             done.add(key)
         out.append("")
+    if later:
+        out += [*STAGE2_HEAD, "", *later]
     return "\n".join(out)
 
 
