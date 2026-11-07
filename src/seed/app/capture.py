@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -36,7 +37,8 @@ if TYPE_CHECKING:
     from .main import App
 
 MOBILE = (ft.PagePlatform.IOS, ft.PagePlatform.ANDROID)
-MAX_SHOTS = 6  # 一度の観察の写真の数（選ぶ時と同じ）
+MAX_SHOTS = 6
+TRASH = ".seed-trash"  # 消した物を、カメラを出るまで置く所（元のファイルの横）  # 一度の観察の写真の数（選ぶ時と同じ）
 POSITION_WAIT_S = 10
 THUMB = 96
 
@@ -85,6 +87,7 @@ class Shot:
     kept: Path | None = None  # スマートフォンの Pictures/seed に残した写し
     kind: str = "photo"  # photo | video
     trashed: list[tuple[Path, Path]] = field(default_factory=list)  # 消した時の (元の所, 一時のごみ箱)
+    thumb: bytes | None = None  # 左下の丸の小さな絵（描き直すたびに縮めない）
 
     @property
     def files(self) -> list[Path]:
@@ -108,6 +111,7 @@ class Session:
     shots: list[Shot] = field(default_factory=list)
     position: dict | None = None  # 最後に取れた位置
     ready: bool = False
+    bins: set[Path] = field(default_factory=set)  # 消した物の一時の置き場（元の横の .seed-trash）
 
     def photos(self) -> list[Shot]:
         return [s for s in self.shots if s.kind == "photo"]
@@ -127,7 +131,7 @@ class Session:
         path.write_bytes(data)
         kept = photos.keep_on_device(data, path.name, now.strftime("%Y-%m-%d"))
         self.position = pos
-        shot = Shot(path, pos.get("accuracy"), kept)
+        shot = Shot(path, pos.get("accuracy"), kept, thumb=photos.shrink(path, max_side=160))
         self.shots.append(shot)
         return shot
 
@@ -142,25 +146,31 @@ class Session:
         return shot
 
     def remove(self, shot: Shot) -> None:
-        """消す（一時のごみ箱へ。元に戻せる）。Pictures/seed の写しも、動画は記録の物も。"""
+        """消す（一時のごみ箱へ。元に戻せる）。Pictures/seed の写しも、動画は記録の物も。
+
+        ごみ箱は各ファイルの横の .seed-trash（同じ円盤の中で名を変えるだけ。大きな動画も写さない）。
+        """
         if shot not in self.shots:
             return
-        bin_ = self.dir / "trash" / str(id(shot))
-        bin_.mkdir(parents=True, exist_ok=True)
         shot.trashed = []
-        for i, f in enumerate(shot.files):
+        for f in shot.files:
             if f.exists():
-                dst = bin_ / f"{i}-{f.name}"
-                shutil.move(str(f), dst)
+                bin_ = f.parent / TRASH / str(id(shot))
+                bin_.mkdir(parents=True, exist_ok=True)
+                self.bins.add(f.parent / TRASH)
+                dst = bin_ / f.name
+                os.replace(f, dst)
                 shot.trashed.append((f, dst))
         self.shots.remove(shot)
 
     def undo(self, shot: Shot) -> None:
-        """消した物を元の所へ戻し、並びの元の位置（撮った順）に戻す。"""
+        """消した物を元の所へ戻し、並びの元の位置（撮った順）に戻す。写真が 6 枚に達していれば戻さない。"""
+        if shot.kind == "photo" and shot not in self.shots and len(self.photos()) >= MAX_SHOTS:
+            raise photos.PhotoError("too_many_photos", shot.path, "too many shots")
         for src, dst in shot.trashed:
             if dst.exists():
                 src.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(dst), src)
+                os.replace(dst, src)
         shot.trashed = []
         if shot not in self.shots:
             self.shots.append(shot)
@@ -171,7 +181,11 @@ class Session:
         return [s.path for s in self.photos()]
 
     def close(self) -> None:
+        """カメラを出る時。一時の写真と、消した物（ごみ箱）を本当に消す。"""
         shutil.rmtree(self.dir, ignore_errors=True)
+        for b in self.bins:
+            shutil.rmtree(b, ignore_errors=True)
+        self.bins.clear()
 
 
 ZOOM_STEPS = (0.5, 1.0, 2.0, 5.0, 10.0)
@@ -210,6 +224,10 @@ def keep_video(root: Path, data: bytes, position: dict | None, now: dt.datetime 
     now = now or dt.datetime.now()
     day = now.strftime("%Y-%m-%d")
     path = Path(root) / "videos" / day / f"{now.strftime('%H%M%S')}.mp4"
+    n = 1
+    while path.exists():  # 同じ秒に始めた二本目を上書きしない
+        n += 1
+        path = path.with_name(f"{now.strftime('%H%M%S')}-{n}.mp4")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     where = {"taken": now.isoformat(timespec="seconds")}
@@ -232,11 +250,18 @@ def _side(path: Path) -> dict:
 
 
 def unsent_videos(root: Path) -> list[Path]:
-    """記録の videos/ の中で、まだ PC へ送っていない動画（.json に sent が無い物）。古い順。"""
+    """記録の videos/ の中で、まだ PC へ送っていない動画（.json に sent も refused も無い物）。古い順。"""
     base = Path(root) / "videos"
     if not base.is_dir():
         return []
-    return sorted(p for p in base.glob("*/*.mp4") if not _side(p).get("sent"))
+    return sorted(p for p in base.glob("*/*.mp4") if not ({"sent", "refused"} & set(_side(p))))
+
+
+def mark_refused(path: Path, word: str) -> None:
+    """PC が断った動画（大きすぎる等）に印を付ける。次からは送らない（後ろの動画を止めない）。"""
+    where = _side(path)
+    where["refused"] = word
+    path.with_suffix(".json").write_text(json.dumps(where, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def send_video_home(app: App, path: Path) -> str:
@@ -263,21 +288,35 @@ async def send_pending_videos(app: App) -> None:
     カメラを出た時に呼ぶ。畑で網が無くて送れなかった物も、次に繋がった時にここで送る。
     """
     from seed.app.talk import home_server
+    from seed.client import ClientError
 
     if app.state.get("videos_sending"):
         return
-    pending = await asyncio.to_thread(unsent_videos, app.folder.root)
-    if not pending or not await home_server(app):
-        return
-    app.state["videos_sending"] = True
+    app.state["videos_sending"] = True  # 待つ前に立てる（二度押しで同じ物を二度送らない）
     sent: list[str] = []
+    refused: list[str] = []
+    pending: list[Path] = []
     try:
+        pending = await asyncio.to_thread(unsent_videos, app.folder.root)
+        if not pending or not await home_server(app):
+            return
         for path in pending:
-            sent.append(await asyncio.to_thread(send_video_home, app, path))
-        app.toast(app.t("capture_video_sent", n=len(sent), path=sent[-1]))
-    except Exception as ex:  # noqa: BLE001  届かない、断られた、を本人に見せる（動画はスマートフォンに残る）
+            try:
+                sent.append(await asyncio.to_thread(send_video_home, app, path))
+            except ClientError as ex:
+                if ex.status is not None and 400 <= ex.status < 500 and ex.status not in (401, 403):
+                    await asyncio.to_thread(mark_refused, path, ex.word)  # 大きすぎる等。次からは送らない
+                    refused.append(path.name)
+                    continue
+                raise
+        if sent:
+            app.toast(app.t("capture_video_sent", n=len(sent), path=sent[-1]))
+        if refused:
+            app.toast(app.t("capture_video_refused", n=len(refused), names=", ".join(refused[:3])))
+    except Exception as ex:  # noqa: BLE001  届かない、を本人に見せる（動画はスマートフォンに残り、次に送る）
         why = str(ex).split(": ", 1)[0] or type(ex).__name__
-        app.toast(app.t("capture_video_not_sent", n=len(pending) - len(sent), why=why))
+        left = len(pending) - len(sent) - len(refused)
+        app.toast(app.t("capture_video_not_sent", n=left, why=why))
     finally:
         app.state.pop("videos_sending", None)
 
@@ -299,6 +338,7 @@ def view(app: App, on_done, on_cancel) -> ft.View:
     page = app.page
     sess: Session = app.state["capture"]
     camera = fc.Camera(expand=True)
+    sess.ready = False  # 新しいカメラの部品。作り直した時も開き直す
     geo = fg.Geolocator(configuration=fg.GeolocatorConfiguration(accuracy=fg.GeolocatorPositionAccuracy.BEST))
     app.state["capture_parts"] = (camera, geo)  # 参照を持っておく（無いと外される）
     st: dict = {
@@ -470,8 +510,8 @@ def view(app: App, on_done, on_cancel) -> ft.View:
             return ft.Container(width=size, height=size)
         last = sess.shots[-1]
         inner: ft.Control = (
-            ft.Image(src=photos.shrink(last.path, max_side=160), fit=ft.BoxFit.COVER, width=size, height=size)
-            if last.kind == "photo"
+            ft.Image(src=last.thumb, fit=ft.BoxFit.COVER, width=size, height=size)
+            if last.kind == "photo" and last.thumb
             else ft.Icon(ft.Icons.VIDEOCAM, color=WHITE, size=26)
         )
         return ft.Container(
@@ -503,9 +543,9 @@ def view(app: App, on_done, on_cancel) -> ft.View:
             height=54,
             border_radius=27,
             bgcolor=PICK if n else SHADE,
-            opacity=1.0 if n else 0.5,
+            opacity=1.0 if n and not st["busy"] else 0.5,
             alignment=ft.Alignment.CENTER,
-            on_click=finish if n else None,
+            on_click=finish if n and not st["busy"] else None,
             tooltip=t("capture_done", n=n),
         )
 
@@ -528,7 +568,7 @@ def view(app: App, on_done, on_cancel) -> ft.View:
 
     def overlays() -> list[ft.Control]:
         land = is_landscape(getattr(page, "width", None), getattr(page, "height", None))
-        out: list[ft.Control] = [ft.Container(top_bar(), left=12, right=12, top=8)]
+        out: list[ft.Control] = [ft.Container(top_bar(), left=12, right=122 if land else 12, top=8)]
         zc = zoom_chips(vertical=land)
         note, open_ = note_line(), opener()
         if land:
@@ -623,6 +663,10 @@ def view(app: App, on_done, on_cancel) -> ft.View:
             return None
         return position_fields(pos)
 
+    async def refresh_position() -> None:
+        """撮った後に、黙って位置を取り直す（次の一枚のため）。"""
+        sess.position = await locate() or sess.position
+
     async def retry_position(e=None) -> None:
         sess.position = await locate() or sess.position
         say(None if sess.position else t("capture_no_position"), error=sess.position is None)
@@ -666,15 +710,18 @@ def view(app: App, on_done, on_cancel) -> ft.View:
         if sess.ready and sess.position is None:
             await retry_position()
 
-    async def apply_zoom(z: float) -> None:
+    async def apply_zoom(z: float | None = None) -> None:
+        """今の倍率（st["zoom"]）をカメラへ。送っている間に変わった分は、終わってから最新を送り直す。"""
         if st["zooming"]:
             return
         st["zooming"] = True
         try:
-            await camera.set_zoom_level(z)
-            st["zoom_sent"] = z
-        except Exception:  # noqa: BLE001, S110  倍率を変えられない時はそのまま
-            pass
+            while abs(st["zoom"] - st["zoom_sent"]) > 1e-3:
+                want = st["zoom"]
+                await camera.set_zoom_level(want)
+                st["zoom_sent"] = want
+        except Exception:  # noqa: BLE001  倍率を変えられない時はそのまま
+            st["zoom_sent"] = st["zoom"]
         finally:
             st["zooming"] = False
 
@@ -690,10 +737,12 @@ def view(app: App, on_done, on_cancel) -> ft.View:
         if not sess.ready or st["hi"] <= st["lo"] or e.pointer_count < 2:
             return
         z = clamp(st["pinch_from"] * float(e.scale), st["lo"], st["hi"])
+        if abs(z - st["zoom"]) < 0.05:
+            return
         st["zoom"] = z
-        if abs(z - st["zoom_sent"]) >= 0.05:
-            page.run_task(apply_zoom, z)
-            redraw()
+        if not st["zooming"]:
+            page.run_task(apply_zoom)
+        redraw()
 
     def pinch_end(e) -> None:
         if abs(st["zoom"] - st["zoom_sent"]) > 1e-3:
@@ -708,7 +757,8 @@ def view(app: App, on_done, on_cancel) -> ft.View:
         redraw()
         try:
             data = await camera.take_picture()
-            sess.add(data, await locate())
+            await asyncio.to_thread(sess.add, data, None)  # 位置は最後に取れた物（待たない）
+            page.run_task(refresh_position)
         except photos.PhotoError as ex:
             say(
                 t(ex.word) if ex.word.startswith("capture_") or ex.word == "too_many_photos" else str(ex),
@@ -741,12 +791,15 @@ def view(app: App, on_done, on_cancel) -> ft.View:
                     pass
                 await camera.start_video_recording()
                 st["recording"], st["rec_start"] = True, time.monotonic()
+                st["rec_wall"] = dt.datetime.now()
                 page.run_task(tick)
                 page.run_task(retry_position)
             else:
                 data = await camera.stop_video_recording()
                 st["recording"] = False
-                path = await asyncio.to_thread(keep_video, app.folder.root, data, sess.position)
+                path = await asyncio.to_thread(
+                    keep_video, app.folder.root, data, sess.position, st.get("rec_wall")
+                )
                 sess.add_video(path)
         except Exception as ex:  # noqa: BLE001  録れない機種、許しが無い、を本人に見せる
             st["recording"] = False
@@ -802,18 +855,28 @@ def view(app: App, on_done, on_cancel) -> ft.View:
 
             return h_
 
-        def delete(e) -> None:
+        async def delete(e) -> None:
             close()
-            sess.remove(shot)
+            await asyncio.to_thread(sess.remove, shot)
             redraw()
 
-            def undo(e2) -> None:
-                sess.undo(shot)
+            async def undo(e2) -> None:
+                if st["left"]:
+                    return
+                try:
+                    await asyncio.to_thread(sess.undo, shot)
+                    say(None)
+                except photos.PhotoError as ex:
+                    say(t(ex.word), error=True)
                 redraw()
 
             page.show_dialog(
                 ft.SnackBar(
-                    ft.Text(t("capture_deleted")), action=t("capture_undo"), on_action=undo, duration=6000
+                    ft.Text(t("capture_deleted")),
+                    action=t("capture_undo"),
+                    on_action=undo,
+                    duration=6000,
+                    persist=False,  # 元に戻すがあっても、時間で消える（Flet は既定で残す）
                 )
             )
 
@@ -841,10 +904,14 @@ def view(app: App, on_done, on_cancel) -> ft.View:
         page.on_resize = None
 
     async def finish(e=None) -> None:
+        if st["left"] or st["busy"]:
+            return
         leave()
         await on_done(sess.paths())
 
     async def go_back(e=None) -> None:
+        if st["left"] or st["busy"]:
+            return  # 撮っている・残している途中は待つ（途中の一枚を失わない）
         if st["recording"]:
             await toggle_record()
         n = len(sess.photos())
@@ -859,6 +926,8 @@ def view(app: App, on_done, on_cancel) -> ft.View:
 
         async def drop(e2) -> None:
             page.pop_dialog()
+            if st["left"]:
+                return
             leave()
             await on_cancel()
 

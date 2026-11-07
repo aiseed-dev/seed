@@ -339,7 +339,9 @@ def test_whole_camera_button_opens_the_sheet(project):
     app = make_app(project)
     bar = talk.composer(app)
     assert "写真を送る、公開するは、畑を選んでからです。" in texts(bar)
-    photo_button = next(c for c in walk(bar) if isinstance(c, ft.IconButton) and c.tooltip == app.t("choose_photos"))
+    photo_button = next(
+        c for c in walk(bar) if isinstance(c, ft.IconButton) and c.tooltip == app.t("choose_photos")
+    )
     run(photo_button.on_click(None))
     assert isinstance(app.page.dialogs[-1], ft.BottomSheet)
     one = make_app(project, "北")

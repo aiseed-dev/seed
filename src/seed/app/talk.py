@@ -25,7 +25,6 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
-import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -531,31 +530,28 @@ async def add_picked(app: App, text: str, paths: list[Path]) -> None:
     from seed import bundle
 
     app.folder.root.mkdir(parents=True, exist_ok=True)
+    bundle.clean_leftovers(app.folder.root, ".unzip-*")  # 前に落ちた時の残り
     tmp = Path(tempfile.mkdtemp(prefix=".unzip-", dir=app.folder.root))
     try:
         try:
             picked = await asyncio.to_thread(bundle.unpack, paths, tmp)
-        except (bundle.TooBig, zipfile.BadZipFile, OSError) as ex:
-            say(app, app.t("bundle_bad", why=str(ex)))
+            placed = []
+            for v in picked.videos:
+                placed.append(
+                    await asyncio.to_thread(bundle.place_video, app.folder.root, v, v.is_relative_to(tmp))
+                )
+            groups = await asyncio.to_thread(bundle.photo_groups, picked.photos)
+        except Exception as ex:  # noqa: BLE001  壊れた zip、大きすぎる、円盤が一杯、を本人に見せる
+            say(app, app.t("bundle_bad", why=str(ex) or type(ex).__name__))
             app.refresh()
             return
-        placed = []
-        for v in picked.videos:
-            placed.append(
-                await asyncio.to_thread(bundle.place_video, app.folder.root, v, v.is_relative_to(tmp))
-            )
         if placed:
             rel = [p.relative_to(app.folder.root).as_posix() for p in placed]
-            say(
-                app,
-                app.t(
-                    "bundle_videos", n=len(placed), where=", ".join(rel[:3]) + (" …" if len(rel) > 3 else "")
-                ),
-            )
+            where = ", ".join(rel[:3]) + (" …" if len(rel) > 3 else "")
+            say(app, app.t("bundle_videos", n=len(placed), where=where))
         if picked.skipped:
             names = ", ".join(picked.skipped[:5]) + (" …" if len(picked.skipped) > 5 else "")
             say(app, app.t("bundle_skipped", n=len(picked.skipped), names=names))
-        groups = await asyncio.to_thread(bundle.photo_groups, picked.photos)
         if len(groups) > 1:
             say(app, app.t("bundle_groups", photos=len(picked.photos), n=len(groups)))
         if not groups and not placed:
@@ -1280,6 +1276,8 @@ def view(app: App) -> ft.View:
 
 def end_capture(app: App):
     async def done(paths: list | None = None) -> None:
+        if app.state.get("capture") is None:
+            return  # もう出た（二度押し）
         sess = app.state.pop("capture", None)
         app.state.pop("capture_parts", None)
         text = app.state.pop("capture_text", "")

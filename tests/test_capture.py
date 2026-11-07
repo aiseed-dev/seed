@@ -254,3 +254,92 @@ def test_capture_strings_exist_in_both_languages():
     ):  # fmt: skip
         assert s(word, "ja") != word and s(word, "en") != word
     assert "3" in s("capture_leave", "ja", n=3) and "46" in s("capture_pos_m", "en", m=46)
+
+
+# ---------------------------------------------------------------- 見直し（11-07 夜）
+
+
+def test_undo_does_not_go_past_six_photos(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(tmp_path / "pics"))
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    try:
+        here = capture.position_fields(pos())
+        shots = [sess.add(jpeg(), here, dt.datetime(2026, 11, 7, 19, 0, i)) for i in range(capture.MAX_SHOTS)]
+        sess.remove(shots[0])
+        sess.add(jpeg(), here, dt.datetime(2026, 11, 7, 19, 1, 0))
+        with pytest.raises(photos.PhotoError) as e:
+            sess.undo(shots[0])
+        assert e.value.word == "too_many_photos" and len(sess.paths()) == capture.MAX_SHOTS
+    finally:
+        sess.close()
+
+
+def test_trash_sits_beside_the_file_and_goes_on_close(tmp_path, monkeypatch):
+    pics = tmp_path / "pics"
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(pics))
+    root = tmp_path / "rec"
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    path = capture.keep_video(root, b"v", None, dt.datetime(2026, 11, 7, 19, 2, 0))
+    shot = sess.add_video(path)
+    sess.remove(shot)
+    beside = path.parent / capture.TRASH
+    assert beside.is_dir() and (pics / "2026-11-07" / capture.TRASH).is_dir()
+    assert capture.unsent_videos(root) == []  # ごみ箱の中は送らない
+    sess.close()
+    assert not beside.exists() and not (pics / "2026-11-07" / capture.TRASH).exists()
+
+
+def test_photo_keeps_a_small_thumb():
+    sess = capture.Session()
+    try:
+        shot = sess.add(jpeg(), capture.position_fields(pos()))
+        assert shot.thumb and len(shot.thumb) < shot.path.stat().st_size + 1
+    finally:
+        sess.close()
+
+
+def test_keep_video_does_not_overwrite_the_same_second(tmp_path):
+    now = dt.datetime(2026, 11, 7, 19, 3, 0)
+    a = capture.keep_video(tmp_path, b"a", None, now)
+    b = capture.keep_video(tmp_path, b"b", None, now)
+    assert a.name == "190300.mp4" and b.name == "190300-2.mp4" and a.read_bytes() == b"a"
+
+
+def test_refused_video_is_marked_and_not_sent_again(tmp_path):
+    root = tmp_path / "rec"
+    a = capture.keep_video(root, b"a", None, dt.datetime(2026, 11, 7, 19, 4, 0))
+    b = capture.keep_video(root, b"b", None, dt.datetime(2026, 11, 7, 19, 5, 0))
+    capture.mark_refused(a, "server_rejected")
+    assert capture.unsent_videos(root) == [b]
+
+
+def test_sending_skips_a_refused_video_and_goes_on(tmp_path, monkeypatch):
+    import asyncio
+
+    from seed.app import talk
+    from seed.client import ClientError
+
+    root = tmp_path / "rec"
+    big = capture.keep_video(root, b"big", None, dt.datetime(2026, 11, 7, 19, 6, 0))
+    ok = capture.keep_video(root, b"ok", None, dt.datetime(2026, 11, 7, 19, 7, 0))
+    toasts = []
+
+    def fake_send(app, path):
+        if path == big:
+            raise ClientError("server_rejected", "the server did not accept it", None, 413)
+        return "videos/2026-11-07/190700.mp4"
+
+    async def yes(app):
+        return True
+
+    monkeypatch.setattr(capture, "send_video_home", fake_send)
+    monkeypatch.setattr(talk, "home_server", yes)
+    app = SimpleNamespace(
+        state={}, folder=SimpleNamespace(root=root), toast=toasts.append, t=lambda k, **kw: k
+    )
+    asyncio.run(capture.send_pending_videos(app))
+    assert toasts == ["capture_video_sent", "capture_video_refused"]
+    assert capture.unsent_videos(root) == [ok]  # 送った物の印は fake では付かない。big は断られた印
+    assert app.state == {}

@@ -44,6 +44,20 @@ class Picked:
     skipped: list[str] = field(default_factory=list)  # 写真でも動画でもない物の名
 
 
+def clean_leftovers(root: Path, pattern: str, older_s: float = 3600) -> None:
+    """落ちた時に残った一時の物（.unzip-*、.video-*.part）を消す。今使っている物は消さない（古い物だけ）。"""
+    import time
+
+    now = time.time()
+    for p in Path(root).glob(pattern):
+        try:
+            if now - p.stat().st_mtime < older_s:
+                continue
+            shutil.rmtree(p, ignore_errors=True) if p.is_dir() else p.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def kind_of(name: str) -> str | None:
     low = name.lower()
     if low.endswith(PHOTO_EXT):
@@ -98,17 +112,25 @@ def _extract(zpath: Path, into: Path, out: Picked, used: list[int]) -> None:
             if info.file_size > MEMBER_MAX or used[0] + info.file_size > TOTAL_MAX:
                 raise TooBig(f"{zpath.name}: {name}")
             dst = _unique(into, name)
-            with zf.open(info) as src, dst.open("wb") as f:
-                n = 0
-                while chunk := src.read(1024 * 1024):
-                    n += len(chunk)
-                    if n > MEMBER_MAX or used[0] + n > TOTAL_MAX:  # 書かれた大きさより実際が大きい zip
-                        raise TooBig(f"{zpath.name}: {name}")
-                    f.write(chunk)
+            try:
+                with zf.open(info) as src, dst.open("wb") as f:
+                    n = 0
+                    while chunk := src.read(1024 * 1024):
+                        n += len(chunk)
+                        if n > MEMBER_MAX or used[0] + n > TOTAL_MAX:  # 書かれた大きさより実際が大きい zip
+                            raise TooBig(f"{zpath.name}: {name}")
+                        f.write(chunk)
+            except (RuntimeError, NotImplementedError, zipfile.BadZipFile, EOFError):
+                # 鍵の掛かった物、開けない縮め方、壊れた物は、その一つだけ外す
+                dst.unlink(missing_ok=True)
+                out.skipped.append(name)
+                continue
             used[0] += n
-            if info.date_time and info.date_time[0] >= 1980:
+            try:
                 ts = dt.datetime(*info.date_time).timestamp()  # zip の時刻を写す（EXIF の無い物の撮った時に）
                 os.utime(dst, (ts, ts))
+            except (ValueError, OverflowError, OSError):
+                pass  # 0 月 0 日などの時刻は写さない
             (out.photos if k == "photo" else out.videos).append(dst)
 
 

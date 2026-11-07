@@ -147,3 +147,63 @@ def test_app_adds_a_zip_of_photos_and_a_loose_mp4(seedfolder, tmp_path, monkeypa
     vids = sorted(p.name for p in (app.folder.root / "videos").rglob("*.mp4"))
     assert len(vids) == 2 and loose.exists()  # 選んだ mp4 の元は残す
     assert not list(app.folder.root.glob(".unzip-*"))  # 一時の場所は消える
+
+
+def test_zip_with_a_zero_date_or_a_locked_entry_still_imports_the_rest(tmp_path, monkeypatch):
+    z = tmp_path / "odd.zip"
+    j = make_jpeg(tmp_path / "s" / "a.jpg").read_bytes()
+    with zipfile.ZipFile(z, "w") as zf:
+        info = zipfile.ZipInfo("zero.jpg", date_time=(1980, 1, 1, 0, 0, 0))
+        zf.writestr(info, j)
+        zf.writestr("locked.jpg", j)
+        zf.writestr("fine.jpg", j)
+    real_open = zipfile.ZipFile.open
+
+    def fake_open(self, name, *a, **kw):
+        if getattr(name, "filename", name) == "locked.jpg":
+            raise RuntimeError("File is encrypted, password required for extraction")
+        return real_open(self, name, *a, **kw)
+
+    monkeypatch.setattr(zipfile.ZipFile, "open", fake_open)
+    real_dt = bundle.dt.datetime
+
+    class ZeroDay(real_dt):
+        def __new__(cls, *a, **kw):
+            if a[:3] == (1980, 1, 1):
+                raise ValueError("month must be in 1..12")
+            return real_dt.__new__(cls, *a, **kw)
+
+    monkeypatch.setattr(bundle.dt, "datetime", ZeroDay)
+    got = bundle.unpack([z], tmp_path / "into")
+    assert sorted(p.name for p in got.photos) == ["fine.jpg", "zero.jpg"]
+    assert got.skipped == ["locked.jpg"] and not (tmp_path / "into" / "locked.jpg").exists()
+
+
+def test_clean_leftovers_only_removes_old_ones(tmp_path):
+    import os
+    import time
+
+    old = tmp_path / ".unzip-old"
+    old.mkdir()
+    new = tmp_path / ".unzip-new"
+    new.mkdir()
+    t = time.time() - 7200
+    os.utime(old, (t, t))
+    bundle.clean_leftovers(tmp_path, ".unzip-*")
+    assert not old.exists() and new.exists()
+
+
+def test_app_says_why_a_broken_zip_did_not_go_in(seedfolder, tmp_path):
+    from test_app import FakePage
+
+    from seed.app import talk
+    from seed.app.main import App
+
+    app = App(FakePage(), str(seedfolder))
+    app.lang = "ja"
+    bad = tmp_path / "bad.zip"
+    bad.write_bytes(b"PK\x03\x04 not really a zip")
+    asyncio.run(talk.add_picked(app, "", [bad]))
+    said = [m.get("text", "") for m in talk.talk_state(app)]
+    assert any("zip を開けませんでした" in t for t in said)
+    assert not list(app.folder.root.glob(".unzip-*"))

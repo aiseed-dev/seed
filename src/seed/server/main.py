@@ -421,6 +421,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         st = await run_in_threadpool(H.project, home)
         folder = H.folder_for(st, field)
         folder.root.mkdir(parents=True, exist_ok=True)
+        from .. import bundle as B
+
+        await run_in_threadpool(B.clean_leftovers, folder.root, ".video-*.part", 86400)  # 落ちた時の残り
         tmp = folder.root / f".video-{secrets.token_hex(6)}.part"
         try:
             head = b""
