@@ -19,6 +19,7 @@ from PIL import Image
 
 from seed import album, identify, photos
 from seed import highlights as H
+from seed.app import theme
 from seed.app.strings import error_text
 from seed.cli import identify_photos
 from seed.client import ClientError
@@ -74,7 +75,7 @@ def picture(app: App, path: Path, side: int, max_w: float, max_h: float, on_clic
     data, w, h = got
     dw, dh = fitted(w, h, max_w, max_h)
     return ft.Container(
-        ft.Image(src=data, width=dw, height=dh, fit=ft.BoxFit.COVER),
+        ft.Image(src=data, width=dw, height=dh, fit=ft.BoxFit.CONTAIN),
         width=dw,
         height=dh,
         border_radius=12,
@@ -83,11 +84,38 @@ def picture(app: App, path: Path, side: int, max_w: float, max_h: float, on_clic
     )
 
 
+def _page_fit(app: App) -> float:
+    """スマートフォンで写真が画面からはみ出さない幅（本文の幅から余白を引いた物）。"""
+    return max(96.0, theme.fit_width(getattr(app.page, "width", None)) - 32)
+
+
+def viewer_box(app: App, below: int) -> tuple[float, float]:
+    """大きく見る枠。幅は窓の幅いっぱい、高さは下の操作の分を引いた残り。"""
+    pw = getattr(app.page, "width", None) or 1000
+    ph = getattr(app.page, "height", None) or 760
+    return max(240.0, pw - 40), max(240.0, ph - below)
+
+
+def zoomable(src: bytes, box_w: float, box_h: float) -> ft.InteractiveViewer:
+    """つまんで拡大・縮小、指で動かせる絵。中の絵は枠いっぱい（縦横の比は保つ）。"""
+    return ft.InteractiveViewer(
+        content=ft.Image(src=src, width=box_w, height=box_h, fit=ft.BoxFit.CONTAIN),
+        min_scale=1,
+        max_scale=8,
+        pan_enabled=True,
+        scale_enabled=True,
+        boundary_margin=ft.Margin.all(40),
+        width=box_w,
+        height=box_h,
+    )
+
+
 def tile(app: App, shots: list[Shot], i: int, size: float = SMALL) -> ft.Control | None:
     """正方形に切った小さな写真。押すと大きく開く（前後へ送れる）。"""
     got = load(app.folder.root / shots[i].rel, SMALL if size <= SMALL else MEDIUM)
     if got is None:
         return None
+    size = min(size, _page_fit(app) - 8)
 
     def open_it(e) -> None:
         open_viewer(app, shots, i)
@@ -163,9 +191,7 @@ def taken_text(app: App, shot: Shot) -> str:
 def open_viewer(app: App, shots: list[Shot], index: int) -> None:
     """画面いっぱいに大きく。つまんで拡大でき、左右で前後へ送れる。"""
     t = app.t
-    pw = getattr(app.page, "width", None) or 1000
-    ph = getattr(app.page, "height", None) or 760
-    box_w, box_h = max(240, pw - 48), max(240, ph - 260)
+    box_w, box_h = viewer_box(app, 300)
     state = {"i": index, "confirm": False, "changed": False}
     body = ft.Column(spacing=8, tight=True)
     said = ft.Text("", selectable=True)
@@ -181,12 +207,7 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
         if got is None:
             image = ft.Text(t("photo_missing"))
         else:
-            dw, dh = fitted(got[1], got[2], box_w, box_h)
-            image = ft.InteractiveViewer(
-                content=ft.Image(src=got[0], width=dw, height=dh, fit=ft.BoxFit.CONTAIN),
-                min_scale=1,
-                max_scale=6,
-            )
+            image = zoomable(got[0], box_w, box_h)
         info: list[ft.Control] = [ft.Text(taken_text(app, s), size=13)]
         if not album.has_coord(app.folder.root / s.rel):
             info.append(no_coord_mark(app))
@@ -287,7 +308,7 @@ def open_viewer(app: App, shots: list[Shot], index: int) -> None:
             actions=[actions],
             inset_padding=ft.Padding.all(8),
             content_padding=ft.Padding.all(12),
-            scrollable=True,
+            scrollable=False,
         )
     )
 
@@ -308,9 +329,7 @@ def no_coord_mark(app: App) -> ft.Control:
 
 def open_plain(app: App, items: list[tuple[Path, str]], index: int) -> None:
     """操作の無い絵（昔の地図と空中写真）を大きく。つまんで拡大でき、左右で前後へ。"""
-    pw = getattr(app.page, "width", None) or 1000
-    ph = getattr(app.page, "height", None) or 760
-    box_w, box_h = max(240, pw - 48), max(240, ph - 220)
+    box_w, box_h = viewer_box(app, 260)
     state = {"i": index}
     body = ft.Column(spacing=8, tight=True)
 
@@ -319,12 +338,7 @@ def open_plain(app: App, items: list[tuple[Path, str]], index: int) -> None:
         got = load(path, FULL)
         image: ft.Control = ft.Text(app.t("photo_missing"))
         if got is not None:
-            dw, dh = fitted(got[1], got[2], box_w, box_h)
-            image = ft.InteractiveViewer(
-                content=ft.Image(src=got[0], width=dw, height=dh, fit=ft.BoxFit.CONTAIN),
-                min_scale=1,
-                max_scale=6,
-            )
+            image = zoomable(got[0], box_w, box_h)
         nav: list[ft.Control] = []
         if len(items) > 1:
             nav = [
@@ -359,7 +373,7 @@ def open_plain(app: App, items: list[tuple[Path, str]], index: int) -> None:
             actions=[ft.TextButton(app.t("close"), icon=ft.Icons.CLOSE, on_click=close)],
             inset_padding=ft.Padding.all(8),
             content_padding=ft.Padding.all(12),
-            scrollable=True,
+            scrollable=False,
         )
     )
 

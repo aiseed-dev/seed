@@ -213,7 +213,7 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             back = next((c for c in cams if c.lens_direction == fc.CameraLensDirection.BACK), cams[0])
             await camera.initialize(
                 description=back,
-                resolution_preset=fc.ResolutionPreset.VERY_HIGH,
+                resolution_preset=fc.ResolutionPreset.MAX,
                 enable_audio=False,
                 image_format_group=fc.ImageFormatGroup.JPEG,
             )

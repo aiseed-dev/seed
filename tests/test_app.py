@@ -16,7 +16,7 @@ import pytest
 
 from seed import album, cli, local
 from seed import highlights as H
-from seed.app import cards, gallery, photo, talk
+from seed.app import cards, gallery, photo, talk, theme
 from seed.app.main import App
 from seed.records import Line, Observation, Plan, Public
 
@@ -969,3 +969,22 @@ def test_turn_drops_tags_lines(app, seedfolder, tmp_path):
 def test_prompt_rules_ask_for_tags():
     ja, en = H.prompt_rules("ja"), H.prompt_rules("en")
     assert "tags" in ja and "開花" in ja and "flowering" in en
+
+
+def test_viewer_zooms_and_pictures_fit_a_narrow_page(app, seedfolder, tmp_path):
+    observe(seedfolder, tmp_path, NEW_READING)
+    app.page.width, app.page.height = 360, 740
+    shots = gallery.all_shots(app)
+    photo.open_viewer(app, shots, 0)
+    iv = [c for c in walk(app.page.dialogs[-1]) if isinstance(c, ft.InteractiveViewer)]
+    assert len(iv) == 1
+    v = iv[0]
+    assert v.scale_enabled and v.pan_enabled and v.min_scale == 1 and v.max_scale == 8
+    assert v.content.fit == ft.BoxFit.CONTAIN and v.content.width <= 360 and v.content.height <= 740
+    # 大きな今日の一枚は、窓の幅からはみ出さず、切らない
+    w = min(560, theme.fit_width(360) - 32 - 24)
+    pic = photo.picture(app, seedfolder / A, photo.BIG, w, w * 1.2)
+    assert pic.width <= w <= 360 and pic.content.fit == ft.BoxFit.CONTAIN
+    # 小さな写真も窓より広くならない
+    t = photo.tile(app, shots, 0, size=1000)
+    assert t.width <= 360
