@@ -44,18 +44,17 @@ def number(v: float | None, unit: str) -> str:
 
 
 def row(f: weather.Forecast, language: str) -> ft.Control:
+    """一日 = 二行。一行目は日と天気、二行目は小さく気温と降水。"""
     ja = language == "ja"
     rain = "—" if f.rain is None else f"{f.rain:.1f} mm"
     prob = number(f.rain_prob, " %")
-    text = (
-        f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}  "
-        f"{'最高' if ja else 'max'} {number(f.tmax, ' ℃')} / {'最低' if ja else 'min'} {number(f.tmin, ' ℃')}  "
-        f"{'降水' if ja else 'rain'} {rain}（{prob}）"
-        if ja
-        else f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}  "
-        f"max {number(f.tmax, ' °C')} / min {number(f.tmin, ' °C')}  rain {rain} ({prob})"
-    )
-    return ft.Text(text, size=theme.BODY_SIZE)
+    tmax, tmin = number(f.tmax, " ℃"), number(f.tmin, " ℃")
+    if ja:
+        detail = f"最高 {tmax} / 最低 {tmin}  降水 {rain}（{prob}）"
+    else:
+        detail = f"max {tmax} / min {tmin}  rain {rain} ({prob})"
+    head = f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}"
+    return ft.Column([ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail)], tight=True, spacing=2)
 
 
 def build(app) -> list[ft.Control]:
@@ -76,7 +75,7 @@ def build(app) -> list[ft.Control]:
     if cached and cached[0] == key:
         return [
             theme.subheading(TITLE.get(app.lang, TITLE["en"])),
-            *(row(f, app.lang) for f in cached[1]),
+            ft.Column([row(f, app.lang) for f in cached[1]], spacing=8),
             theme.muted(t("weather_source")),
             button,
         ]

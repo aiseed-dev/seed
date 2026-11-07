@@ -139,8 +139,9 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     assert "取って来ています…" in texts(app.page.views[-1])
     run_tasks(app)
     got = texts(app.page.views[-1])
-    assert len([x for x in got if x.startswith("11/")]) == 7
-    assert any("11/08（日）" in x and "雨" in x and "18 ℃" in x and "70 %" in x for x in got)
+    assert len([x for x in got if x.startswith("最高")]) == 7
+    assert "11/08（日）  雨" in got
+    assert "最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
     assert "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
     app.refresh()
     assert not app.page.tasks and len(calls) == 1  # 同じ日の開き直しは取り直さない
