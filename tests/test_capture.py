@@ -114,3 +114,23 @@ def test_keep_on_device_none_on_linux(tmp_path, monkeypatch):
     sess = capture.Session(dir=tmp_path / "tmp")
     sess.dir.mkdir()
     assert sess.add(jpeg(), {"lat": 34.05, "lon": 134.25}).kept is None
+
+
+def test_keep_video_writes_mp4_and_where(tmp_path, monkeypatch):
+    """動画は記録の videos/<日>/<時刻>.mp4 に、撮った所と時は同じ名の .json に。Pictures/seed にも残す。"""
+    import datetime as dt
+    import json
+
+    from seed.app import capture
+
+    pics = tmp_path / "pics"
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(pics))
+    now = dt.datetime(2026, 11, 7, 16, 5, 9)
+    path = capture.keep_video(
+        tmp_path / "rec", b"mp4-bytes", {"lat": 34.08, "lon": 134.45, "accuracy": 5.0}, now
+    )
+    assert path == tmp_path / "rec" / "videos" / "2026-11-07" / "160509.mp4"
+    assert path.read_bytes() == b"mp4-bytes"
+    where = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert where["taken"] == "2026-11-07T16:05:09" and where["lat"] == 34.08 and where["accuracy"] == 5.0
+    assert (pics / "2026-11-07" / "160509.mp4").read_bytes() == b"mp4-bytes"

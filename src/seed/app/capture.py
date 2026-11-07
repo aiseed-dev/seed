@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -119,6 +120,26 @@ class Session:
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
+def keep_video(root: Path, data: bytes, position: dict | None, now: dt.datetime | None = None) -> Path:
+    """動画を記録の videos/<日>/<HHMMSS>.mp4 に置き、撮った所と時を同じ名の .json に書く（動画の中には書けないので）。
+
+    スマートフォンの共有の Pictures/seed にも残す（写真と同じ。消すのは本人）。
+    """
+    now = now or dt.datetime.now()
+    day = now.strftime("%Y-%m-%d")
+    path = Path(root) / "videos" / day / f"{now.strftime('%H%M%S')}.mp4"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    where = {"taken": now.isoformat(timespec="seconds")}
+    if position:
+        where.update(
+            {k: position[k] for k in ("lat", "lon", "accuracy", "heading") if position.get(k) is not None}
+        )
+    path.with_suffix(".json").write_text(json.dumps(where, ensure_ascii=False, indent=1), encoding="utf-8")
+    photos.keep_on_device(data, path.name, day)
+    return path
+
+
 def accuracy_text(app: App, pos: dict | None) -> str:
     if pos is None:
         return app.t("capture_waiting")
@@ -149,6 +170,17 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
     opener = ft.FilledButton(t("capture_open"), icon=ft.Icons.PHOTO_CAMERA_OUTLINED)
     kept_note = theme.muted("")
     kept_note.visible = False
+    # 倍率（カメラを開いてから、その機種の最小〜最大で）
+    zoom = ft.Slider(min=1, max=1, value=1, divisions=None, label="{value}×", visible=False, expand=True)
+    zoom_text = theme.muted("")
+    zoom_text.visible = False
+    # 写真と動画を切り替える
+    mode = {"video": False, "recording": False}
+    to_photo = ft.TextButton(t("capture_mode_photo"), icon=ft.Icons.PHOTO_CAMERA_OUTLINED, visible=False)
+    to_video = ft.TextButton(t("capture_mode_video"), icon=ft.Icons.VIDEOCAM_OUTLINED, visible=False)
+    record = ft.FilledButton(
+        t("capture_record"), icon=ft.Icons.FIBER_MANUAL_RECORD, visible=False, disabled=True
+    )
 
     def say(text: str | None) -> None:
         problem.value, problem.visible = text or "", bool(text)
@@ -180,6 +212,14 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             kept_note.visible = False
         done.content, done.disabled = t("capture_done", n=n), n == 0
         shutter.disabled = not sess.ready or sess.position is None or n >= MAX_SHOTS
+        shutter.visible = not mode["video"]
+        record.visible = sess.ready and mode["video"]
+        record.disabled = not sess.ready
+        record.content = t("capture_stop") if mode["recording"] else t("capture_record")
+        record.icon = ft.Icons.STOP if mode["recording"] else ft.Icons.FIBER_MANUAL_RECORD
+        to_photo.visible = sess.ready and mode["video"] and not mode["recording"]
+        to_video.visible = sess.ready and not mode["video"]
+        zoom.visible = zoom_text.visible = sess.ready and zoom.max > zoom.min
         status.value = accuracy_text(app, sess.position) if sess.ready else ""
         app.page.update()
 
@@ -219,6 +259,12 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             )
             sess.ready = True
             opener.visible = False
+            try:
+                lo, hi = await camera.get_min_zoom_level(), await camera.get_max_zoom_level()
+                zoom.min, zoom.max, zoom.value = float(lo), float(min(hi, 10.0)), float(lo)
+                zoom_text.value = t("capture_zoom", z=f"{zoom.value:.1f}")
+            except Exception:  # noqa: BLE001  倍率を持たない機種は、つまみを出さない
+                zoom.min = zoom.max = 1.0
             if sess.position is None:
                 say(t("capture_no_position"))
         except Exception as ex:  # noqa: BLE001  許しが無い、カメラが無い、を本人に見せる
@@ -250,6 +296,50 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
     async def cancel(e) -> None:
         await on_cancel()
 
+    async def set_zoom(e) -> None:
+        try:
+            await camera.set_zoom_level(float(zoom.value))
+        except Exception:  # noqa: BLE001
+            return
+        zoom_text.value = t("capture_zoom", z=f"{float(zoom.value):.1f}")
+        app.page.update()
+
+    def switch(video: bool):
+        def h(e) -> None:
+            mode["video"] = video
+            say(None)
+            redraw()
+
+        return h
+
+    async def toggle_record(e) -> None:
+        say(None)
+        record.disabled = True
+        app.page.update()
+        try:
+            if not mode["recording"]:
+                try:
+                    await camera.prepare_for_video_recording()
+                except Exception:  # noqa: BLE001, S110  要らない端末もある
+                    pass
+                await camera.start_video_recording()
+                mode["recording"] = True
+                sess.position = await locate() or sess.position
+            else:
+                data = await camera.stop_video_recording()
+                mode["recording"] = False
+                path = await asyncio.to_thread(keep_video, app.folder.root, data, sess.position)
+                kept_note.value, kept_note.visible = (
+                    t("capture_video_kept", path=path.relative_to(app.folder.root).as_posix()),
+                    True,
+                )
+        except Exception as ex:  # noqa: BLE001  録れない機種、許しが無い、を本人に見せる
+            mode["recording"] = False
+            say(str(ex) or t("capture_no_camera"))
+        redraw()
+
+    zoom.on_change_end = set_zoom
+    to_photo.on_click, to_video.on_click, record.on_click = switch(False), switch(True), toggle_record
     opener.on_click, shutter.on_click, done.on_click = open_camera, shoot, finish
     return [
         theme.heading(t("capture_title")),
@@ -261,7 +351,11 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             bgcolor=ft.Colors.BLACK,
             clip_behavior=ft.ClipBehavior.HARD_EDGE,
         ),
-        ft.Row([opener, shutter], wrap=True),
+        ft.Row(
+            [ft.Icon(ft.Icons.ZOOM_IN, size=18), zoom, zoom_text],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        ),
+        ft.Row([opener, shutter, record, to_video, to_photo], wrap=True),
         status,
         ft.Row(
             [
