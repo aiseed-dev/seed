@@ -224,8 +224,63 @@ def parse_forecast(data: dict) -> list[Forecast]:
     return out
 
 
+SOIL_TEMP = {
+    "soil_temperature_0cm": "0 cm",
+    "soil_temperature_6cm": "6 cm",
+    "soil_temperature_18cm": "18 cm",
+    "soil_temperature_54cm": "54 cm",
+}
+SOIL_MOISTURE = {
+    "soil_moisture_0_to_1cm": "0-1 cm",
+    "soil_moisture_1_to_3cm": "1-3 cm",
+    "soil_moisture_3_to_9cm": "3-9 cm",
+    "soil_moisture_9_to_27cm": "9-27 cm",
+    "soil_moisture_27_to_81cm": "27-81 cm",
+}
+HOURLY = (*SOIL_TEMP, *SOIL_MOISTURE)
+JST = dt.timezone(dt.timedelta(hours=9))
+
+
+@dataclass
+class Soil:
+    time: str  # 2026-11-08T14:00（Asia/Tokyo）
+    temp: dict[str, float | None]  # 深さ → 地温 ℃
+    moisture: dict[str, float | None]  # 深さ → 水分 m³/m³
+
+
+def parse_soil(data: dict, now: dt.datetime | None = None) -> Soil | None:
+    """hourly から、今（Asia/Tokyo）以前で一番新しい時の土の値。hourly が無い・形が違えば None。"""
+    try:
+        hourly = data["hourly"]
+        times = hourly["time"]
+        cols = {k: hourly[k] for k in HOURLY}
+        if any(len(c) != len(times) for c in cols.values()):
+            return None
+        now = now or dt.datetime.now(JST).replace(tzinfo=None)
+        best = None
+        for i, tm in enumerate(times):
+            if dt.datetime.fromisoformat(tm) <= now:
+                best = i
+    except (KeyError, TypeError, ValueError):
+        return None
+    if best is None:
+        return None
+
+    def pick(names: dict[str, str]) -> dict[str, float | None]:
+        return {
+            label: (None if cols[k][best] is None else float(cols[k][best])) for k, label in names.items()
+        }
+
+    return Soil(times[best], pick(SOIL_TEMP), pick(SOIL_MOISTURE))
+
+
 def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Forecast]:
-    """Open-Meteo の予報を取る。座標は 2 桁に丸める。get は差し替え用（既定は httpx.get）。失敗は WeatherError。"""
+    """予報の日ごとだけ（fetch_week の前半）。"""
+    return fetch_week(lat, lon, days, get)[0]
+
+
+def fetch_week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecast], Soil | None]:
+    """Open-Meteo の予報と今の土の値を取る。座標は 2 桁に丸める。get は差し替え用（既定は httpx.get）。失敗は WeatherError。"""
     import httpx
 
     lat, lon = rounded(lat, lon)
@@ -233,6 +288,7 @@ def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Fore
         "latitude": f"{lat:.2f}",
         "longitude": f"{lon:.2f}",
         "daily": ",".join(FORECAST_DAILY),
+        "hourly": ",".join(HOURLY),
         "forecast_days": days,
         "timezone": TIMEZONE,
     }
@@ -247,7 +303,7 @@ def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Fore
         data = r.json()
     except ValueError:
         raise WeatherError("weather_bad_answer", "not JSON") from None
-    return parse_forecast(data)
+    return parse_forecast(data), parse_soil(data)
 
 
 # WMO の天気の符号 → 短い語（上から合う物）

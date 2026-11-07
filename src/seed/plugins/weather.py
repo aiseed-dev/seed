@@ -57,6 +57,20 @@ def row(f: weather.Forecast, language: str) -> ft.Control:
     return ft.Column([ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail)], tight=True, spacing=2)
 
 
+def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
+    if soil is None:
+        return []
+    t = app.t
+    temp = " · ".join(f"{k} {number(v, ' ℃')}" for k, v in soil.temp.items())
+    moist = " · ".join(f"{k} {'—' if v is None else f'{v:.2f}'}" for k, v in soil.moisture.items())
+    return [
+        theme.subheading(t("weather_soil", time=soil.time[-5:])),
+        ft.Text(f"{t('weather_soil_temp')}: {temp}", size=theme.BODY_SIZE),
+        ft.Text(f"{t('weather_soil_moist')}: {moist} m³/m³", size=theme.BODY_SIZE),
+        theme.muted(t("weather_soil_note")),
+    ]
+
+
 def build(app) -> list[ft.Control]:
     t, st = app.t, app.state
     c = centre(app)
@@ -73,9 +87,11 @@ def build(app) -> list[ft.Control]:
 
     button = ft.TextButton(t("weather_refresh"), icon=ft.Icons.REFRESH, on_click=refresh)
     if cached and cached[0] == key:
+        rows, soil = cached[1]
         return [
+            *soil_controls(app, soil),
             theme.subheading(TITLE.get(app.lang, TITLE["en"])),
-            ft.Column([row(f, app.lang) for f in cached[1]], spacing=8),
+            ft.Column([row(f, app.lang) for f in rows], spacing=8),
             theme.muted(t("weather_source")),
             button,
         ]
@@ -86,8 +102,8 @@ def build(app) -> list[ft.Control]:
 
         async def load() -> None:
             try:
-                rows = await asyncio.to_thread(weather.fetch_forecast, *c)
-                st["forecast"] = (key, rows)
+                got = await asyncio.to_thread(weather.fetch_week, *c)
+                st["forecast"] = (key, got)
             except weather.WeatherError as ex:
                 st["forecast_failed"] = (key, ex.detail or ex.word)
             except Exception as ex:  # noqa: BLE001

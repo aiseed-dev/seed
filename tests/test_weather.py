@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+
 import pytest
 
 from seed import weather as W
@@ -65,3 +67,36 @@ def test_weather_word():
     ]  # fmt: skip
     assert [W.weather_word(c, "en") for c in (0, 3, 63, 95)] == ["Clear", "Cloudy", "Rain", "Thunder"]
     assert W.weather_word(999, "ja") == "—"
+
+
+def soil_payload():
+    h = {"time": ["2026-11-08T13:00", "2026-11-08T14:00", "2026-11-08T15:00"]}
+    for i, k in enumerate(W.HOURLY):
+        h[k] = [1.0 + i, 2.0 + i, None]
+    return {**SAMPLE, "hourly": h}
+
+
+def test_parse_soil_picks_latest_hour_not_after_now():
+    s = W.parse_soil(soil_payload(), now=dt.datetime(2026, 11, 8, 14, 30))
+    assert s.time == "2026-11-08T14:00"
+    assert s.temp == {"0 cm": 2.0, "6 cm": 3.0, "18 cm": 4.0, "54 cm": 5.0}
+    assert s.moisture["0-1 cm"] == 6.0 and s.moisture["27-81 cm"] == 10.0
+    assert W.parse_soil(soil_payload(), now=dt.datetime(2026, 11, 8, 15, 0)).temp["0 cm"] is None
+    assert W.parse_soil(soil_payload(), now=dt.datetime(2026, 11, 8, 12, 0)) is None
+    assert W.parse_soil(SAMPLE) is None
+
+
+def test_fetch_week_asks_hourly_soil():
+    seen = {}
+
+    def get(url, params=None, timeout=None):
+        seen.update(params)
+        return Resp(soil_payload())
+
+    rows, soil = W.fetch_week(34.05, 134.25, get=get)
+    assert (
+        len(rows) == 2
+        and "soil_temperature_54cm" in seen["hourly"]
+        and "soil_moisture_27_to_81cm" in seen["hourly"]
+    )
+    assert soil is None or soil.time.startswith("2026-11-08")

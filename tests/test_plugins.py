@@ -115,6 +115,14 @@ def run_tasks(app):
         asyncio.run(app.page.tasks.pop(0)())
 
 
+def soil():
+    return W.Soil(
+        "2026-11-08T14:00",
+        {"0 cm": 15.2, "6 cm": 14.0, "18 cm": 15.4, "54 cm": 17.0},
+        {"0-1 cm": 0.31, "1-3 cm": 0.30, "3-9 cm": 0.29, "9-27 cm": 0.28, "27-81 cm": 0.27},
+    )
+
+
 def forecast_rows(n=7):
     return [W.Forecast(f"2026-11-{8 + i:02d}", 61, 18.4, 9.6, 2.5, 70) for i in range(n)]
 
@@ -132,7 +140,7 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     calls = []
     monkeypatch.setattr(land, "center", lambda folder: (34.051, 134.249))
     monkeypatch.setattr(
-        W, "fetch_forecast", lambda lat, lon, **k: calls.append((lat, lon)) or forecast_rows()
+        W, "fetch_week", lambda lat, lon, **k: calls.append((lat, lon)) or (forecast_rows(), soil())
     )
     app.page.route = "/p/weather"
     app.route_change(path="/p/weather")
@@ -140,6 +148,9 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     run_tasks(app)
     got = texts(app.page.views[-1])
     assert len([x for x in got if x.startswith("最高")]) == 7
+    assert "土（14:00 の値）" in got
+    assert "地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
+    assert "水分: 0-1 cm 0.31 · 1-3 cm 0.30 · 3-9 cm 0.29 · 9-27 cm 0.28 · 27-81 cm 0.27 m³/m³" in got
     assert "11/08（日）  雨" in got
     assert "最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
     assert "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
@@ -162,8 +173,23 @@ def test_weather_failure_and_no_coordinates(app, monkeypatch):
     def boom(*a, **k):
         raise W.WeatherError("weather_unreachable", "ConnectError")
 
-    monkeypatch.setattr(W, "fetch_forecast", boom)
+    monkeypatch.setattr(W, "fetch_week", boom)
     app.page.route = "/p/weather"
     app.route_change(path="/p/weather")
     run_tasks(app)
     assert "天気を取れませんでした（ConnectError）。" in texts(app.page.views[-1])
+
+
+def test_weather_without_soil(app, monkeypatch):
+    from seed import land
+
+    monkeypatch.setattr(land, "center", lambda folder: (34.05, 134.25))
+    monkeypatch.setattr(W, "fetch_week", lambda *a, **k: (forecast_rows(), None))
+    app.page.route = "/p/weather"
+    app.route_change(path="/p/weather")
+    run_tasks(app)
+    got = texts(app.page.views[-1])
+    assert (
+        not any(x.startswith("土（") for x in got)
+        and "出典: Open-Meteo（座標は小数 2 桁に丸めて送ります）" in got
+    )
