@@ -991,7 +991,36 @@ def test_viewer_zooms_and_pictures_fit_a_narrow_page(app, seedfolder, tmp_path):
     assert t.width <= 360
 
 
-def test_settings_gear_opens_the_card_without_claude(app, seedfolder):
-    """上の端の歯車で、Claude に繋がっていなくても設定の札が出る（PC を探す、招待コードはここから）。"""
-    run(app.show_settings())
-    assert talk.talk_state(app)[-1].get("card") == "settings"
+def test_settings_gear_opens_the_form_without_claude(app, seedfolder):
+    """上の端の歯車で、Claude に繋がっていなくても設定のフォームが開く（PC を探す、招待コード）。"""
+    app.show_settings()
+    assert isinstance(app.page.dialogs[-1], ft.AlertDialog)  # フォームが開く
+
+
+def test_settings_form_saves_url_invite_and_route(app, seedfolder, monkeypatch):
+    """歯車のフォーム: PC を探す → URL が入る → 招待コードと読む所を入れて保存。鍵と招待コードは伏せ字の欄。"""
+    from seed import discover
+
+    monkeypatch.setattr(discover, "find_home", lambda *a, **k: "http://192.0.2.5:8800/")
+    app.show_settings()
+    dlg = app.page.dialogs[-1]
+    fields = [c for c in dlg.content.controls if isinstance(c, ft.TextField)]
+    url, invite, key = fields
+    assert invite.password and key.password
+    find = next(c for c in dlg.content.controls if isinstance(c, ft.FilledTonalButton))
+    run(find.on_click(None))
+    assert url.value == "http://192.0.2.5:8800"
+    invite.value = " 483 271 "
+    save = dlg.actions[-1]
+    save.on_click(None)
+    assert app.settings.server_url == "http://192.0.2.5:8800"
+    assert app.settings.invite == "483271" and app.settings.read == "server"
+    assert invite.value == "" and key.value == ""  # 値を部品に残さない
+
+
+def test_settings_form_refuses_bad_values():
+    from seed.app import settings_form
+
+    assert settings_form.check("192.0.2.5:8800", "", "") == ["server_url_bad"]
+    assert settings_form.check("", "", "short") == ["talk_key_bad_shape"]
+    assert settings_form.check("http://192.0.2.5:8800", "483271", "") == []
