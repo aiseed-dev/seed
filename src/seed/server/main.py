@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -401,6 +402,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "usage": usage or {},
             "markdown": RD.markdown(model, lines, data),
         }
+
+    @app.post("/api/video")
+    async def api_video(request: Request, field: str | None = None):
+        """動画を受ける（家のサーバーだけ。設計書 §5.13）。本体はそのままの MP4、招待コードと時と所は頭の行。
+
+        大きいのでメモリに貯めず、畑の中の一時のファイルに書いてから videos/<日>/ に移す。
+        """
+        if home is None:
+            return _error(404, "not_found")
+        if (closed := _paused(settings)) is not None:
+            return closed
+        who = _invite(settings, request.headers.get("x-seed-invite"), "video")
+        if not isinstance(who, str):
+            return who
+        if int(request.headers.get("content-length") or 0) > H.VIDEO_MAX:
+            return _error(413, "too_large", detail="動画は 2 GB まで")
+        st = await run_in_threadpool(H.project, home)
+        folder = H.folder_for(st, field)
+        folder.root.mkdir(parents=True, exist_ok=True)
+        tmp = folder.root / f".video-{secrets.token_hex(6)}.part"
+        try:
+            head = b""
+            with tmp.open("wb") as f:
+                async for chunk in _counted(request.stream(), H.VIDEO_MAX):
+                    if len(head) < 12:
+                        head += chunk[: 12 - len(head)]
+                    await run_in_threadpool(f.write, chunk)
+            if not H.is_mp4(head):
+                return _error(415, "mp4_only")
+            where = H.where_of(request.headers.get("x-seed-where"))
+            path = await run_in_threadpool(H.keep_video, folder, tmp, where)
+        except TooLarge:
+            return _error(413, "too_large", detail="動画は 2 GB まで")
+        finally:
+            tmp.unlink(missing_ok=True)
+        log.info("video home bytes=%d", path.stat().st_size)
+        return {"path": path.relative_to(folder.root).as_posix()}
 
     async def _talk_home(body: dict, who: str, code: str | None) -> JSONResponse | dict:
         """家のサーバーの話す。最後の本人の言葉を、その畑のフォルダーで PC の Claude Code に渡す。"""

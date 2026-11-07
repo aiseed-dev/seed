@@ -18,6 +18,8 @@ from .records import Line, Observation, render_lines
 
 TIMEOUT = httpx.Timeout(180.0, connect=10.0)  # 読みは Claude を待つので長め
 HEALTH_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+VIDEO_TIMEOUT = httpx.Timeout(300.0, connect=10.0)  # 動画は大きい。一つの塊を書く・答えを待つ間
+VIDEO_CHUNK = 1024 * 1024
 _HOME: dict[str, bool] = {}  # サーバーの URL → 家のサーバーか（/health の home。設計書 §5.13）。一度だけ聞く
 
 
@@ -235,6 +237,39 @@ class Client:
         if field:
             body["field"] = field
         return self._json(self._call("POST", "/api/talk", json=body))
+
+    def video(self, path, where: dict | None = None, field: str | None = None) -> str:
+        """動画を家のサーバーへ送る（POST /api/video）。ファイルから少しずつ流す。PC の上の置き場（畑からの道）を返す。
+
+        招待コードと時と所は頭の行で送る（URL に秘密を載せない）。field は送る畑の名。
+        """
+        import json
+        from pathlib import Path
+
+        path = Path(path)
+        size = path.stat().st_size
+
+        def chunks():
+            with path.open("rb") as f:
+                while b := f.read(VIDEO_CHUNK):
+                    yield b
+
+        headers = {
+            "content-type": "video/mp4",
+            "content-length": str(size),
+            "x-seed-where": json.dumps(where or {}, ensure_ascii=True),
+        }
+        if self.invite:
+            headers["x-seed-invite"] = self.invite
+        r = self._call(
+            "POST",
+            "/api/video",
+            params={"field": field} if field else None,
+            content=chunks(),
+            headers=headers,
+            timeout=VIDEO_TIMEOUT,
+        )
+        return str(self._json(r).get("path") or "")
 
     def health(self) -> dict:
         """/health。"""

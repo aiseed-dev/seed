@@ -532,3 +532,81 @@ def test_find_pc_not_found_says_so(seedfolder, monkeypatch):
     asyncio.run(talk.find_home(app))
     assert app.state["talk"][-1]["text"] == app.t("home_not_found")
     assert not app.state.get("await_invite") and app.settings.server == before
+
+
+# ---------------------------------------------------------------- 動画（作者 11-07「動画のほうがアップできていません」）
+
+MP4 = b"\0\0\0\x18ftypmp42" + b"\0" * 4096
+
+
+def post_video(c: TestClient, code: str | None, data: bytes, where: str = "{}", **params):
+    headers = {"x-seed-where": where, "content-type": "video/mp4"}
+    if code is not None:
+        headers["x-seed-invite"] = code
+    return c.post("/api/video", content=data, headers=headers, params=params)
+
+
+def test_video_is_kept_in_the_field_with_where(tmp_path):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    where = '{"taken": "2026-11-07T15:04:05", "lat": 34.1, "lon": 134.5, "secret": "x"}'
+    r = post_video(c, code, MP4, where)
+    assert r.status_code == 200 and r.json()["path"] == "videos/2026-11-07/150405.mp4"
+    got = proj / "videos" / "2026-11-07" / "150405.mp4"
+    assert got.read_bytes() == MP4
+    side = got.with_suffix(".json").read_text(encoding="utf-8")
+    assert '"lat": 34.1' in side and "secret" not in side
+    # 同じ時刻の二本目は上書きしない
+    assert post_video(c, code, MP4, where).json()["path"] == "videos/2026-11-07/150405-2.mp4"
+    assert not list(proj.glob(".video-*"))  # 一時のファイルは残らない
+
+
+def test_video_picks_the_field(tmp_path):
+    proj = multi(tmp_path)
+    c, code = server(tmp_path, proj)
+    assert post_video(c, code, MP4, field="a").status_code == 200
+    assert list((proj / "fields" / "a" / "videos").rglob("*.mp4"))
+
+
+def test_video_needs_the_code_and_an_mp4(tmp_path):
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    assert post_video(c, None, MP4).status_code == 403
+    assert post_video(c, "wrong", MP4).status_code == 403
+    r = post_video(c, code, b"not a video at all")
+    assert r.status_code == 415
+    assert not (proj / "videos").exists() and not list(proj.glob(".video-*"))
+
+
+def test_video_is_only_for_the_home_server(tmp_path):
+    other = Settings(
+        api_key=None,
+        public_dir=tmp_path / "pub",
+        daily_usd=1.0,
+        daily_reads=1,
+        per_token_reads=1,
+        per_ip_reads=1,
+        model="m",
+        skill_dir=tmp_path / "no-skill",
+        invites_path=tmp_path / "inv.toml",
+    )
+    assert TestClient(create_app(other)).post("/api/video", content=MP4).status_code == 404
+
+
+def test_client_video_streams_with_the_code_in_a_header(tmp_path):
+    seen = {}
+
+    def handler(req):
+        seen["headers"] = req.headers
+        seen["url"] = str(req.url)
+        seen["body"] = req.read()
+        return httpx.Response(200, json={"path": "videos/2026-11-07/150405.mp4"})
+
+    f = tmp_path / "150405.mp4"
+    f.write_bytes(MP4)
+    c = Client("http://pc.test", "tok", "ja", transport=httpx.MockTransport(handler), invite="123456")
+    got = c.video(f, {"taken": "2026-11-07T15:04:05"}, field="畑")
+    assert got == "videos/2026-11-07/150405.mp4"
+    assert seen["body"] == MP4 and seen["headers"]["x-seed-invite"] == "123456"
+    assert "123456" not in seen["url"] and "field=" in seen["url"]
+    assert seen["headers"]["content-length"] == str(len(MP4))

@@ -134,3 +134,28 @@ def test_keep_video_writes_mp4_and_where(tmp_path, monkeypatch):
     where = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
     assert where["taken"] == "2026-11-07T16:05:09" and where["lat"] == 34.08 and where["accuracy"] == 5.0
     assert (pics / "2026-11-07" / "160509.mp4").read_bytes() == b"mp4-bytes"
+
+
+def test_send_video_home_sends_the_where_and_the_field(tmp_path):
+    from contextlib import contextmanager
+
+    seen = {}
+
+    class FakeClient:
+        def video(self, path, where, field=None):
+            seen.update(path=path, where=where, field=field)
+            return "videos/2026-11-07/150405.mp4"
+
+    class FakeApp:
+        field_name = "畑"
+
+        @contextmanager
+        def client(self):
+            yield FakeClient()
+
+    path = capture.keep_video(
+        tmp_path, b"\0\0\0\x18ftypmp42", {"lat": 34.1, "lon": 134.5}, dt.datetime(2026, 11, 7, 15, 4, 5)
+    )
+    assert capture.send_video_home(FakeApp(), path) == "videos/2026-11-07/150405.mp4"
+    assert seen["path"] == path and seen["field"] == "畑"
+    assert seen["where"] == {"taken": "2026-11-07T15:04:05", "lat": 34.1, "lon": 134.5}

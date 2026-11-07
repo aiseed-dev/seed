@@ -20,6 +20,8 @@ from ..records import Folder, Line, Observation
 
 PHOTO_MAX = 12 * 1024 * 1024  # 元のまま（座標入り）の一枚
 PHOTOS_TOTAL_MAX = 60 * 1024 * 1024
+VIDEO_MAX = 2 * 1024 * 1024 * 1024  # 動画の一本（スマートフォンの最大の画質で十数分）
+WHERE_KEYS = ("lat", "lon", "accuracy", "heading")
 HOME_FILE = "home.toml"  # 招待コード（秘密。公開しない）
 PUBLIC_DIR = "public-home"  # 家のサーバーの公開の置き場（手元で公開を試せるように）
 TALK_MODEL = "claude-code"
@@ -75,6 +77,56 @@ def store(
     obs.ask = list(dict.fromkeys([*obs.ask, *ask]))
     obs.write(folder.observation_path(obs))
     return obs
+
+
+def is_mp4(head: bytes) -> bool:
+    """MP4 / MOV の頭（4 バイト目から ftyp）。"""
+    return len(head) >= 12 and head[4:8] == b"ftyp"
+
+
+def where_of(raw: str | None) -> dict:
+    """スマートフォンが付けた撮った時と所（JSON）。読めない物、知らない鍵は捨てる。"""
+    import json
+
+    try:
+        got = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(got, dict):
+        return {}
+    out: dict = {}
+    taken = got.get("taken")
+    if isinstance(taken, str):
+        try:
+            out["taken"] = dt.datetime.fromisoformat(taken).isoformat(timespec="seconds")
+        except ValueError:
+            pass
+    for k in WHERE_KEYS:
+        v = got.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = v
+    return out
+
+
+def keep_video(folder: Folder, tmp: Path, where: dict) -> Path:
+    """受けた動画（畑の中の一時のファイル）を videos/<日>/<時刻>.mp4 に移し、同じ名の .json に時と所を書く。
+
+    名は撮った時（無ければ受けた時）。同じ名が在れば -2、-3 … を付ける（上書きしない）。
+    """
+    import json
+
+    when = dt.datetime.fromisoformat(where["taken"]) if where.get("taken") else dt.datetime.now()
+    where = {**where, "taken": when.isoformat(timespec="seconds")}
+    day = folder.root / "videos" / when.strftime("%Y-%m-%d")
+    day.mkdir(parents=True, exist_ok=True)
+    stem = when.strftime("%H%M%S")
+    path, n = day / f"{stem}.mp4", 1
+    while path.exists():
+        n += 1
+        path = day / f"{stem}-{n}.mp4"
+    tmp.replace(path)
+    path.with_suffix(".json").write_text(json.dumps(where, ensure_ascii=False, indent=1), encoding="utf-8")
+    return path
 
 
 def add_data(folder: Folder, obs: Observation, data: list[Line]) -> None:
