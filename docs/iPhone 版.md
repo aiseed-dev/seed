@@ -8,7 +8,7 @@
 - 撮った写真に座標・時刻・向き・誤差を書く（`photos.stamp`）。後はスマートフォンのカメラの写真と同じ道。
 - 読み取りと話す（言葉で頼む細かい作業）は、本人の Claude の鍵でスマートフォンから直に、か seed のサーバー経由（`src/seed/direct.py`。設定の札の「読み取りと話す」）。どちらも無ければ、本人の言葉として書き留める。
 - スマートフォンの幅に合わせる。
-- 入口 `src/seed_mobile.py`、設定は `pyproject.toml` の `[tool.flet]`。
+- 入口 `src/main.py`、設定は `pyproject.toml` の `[tool.flet]`。
 
 ## Mac でビルドする
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""スマートフォンのアプリ（iPhone 版、Android 版）の入口。`flet build ipa` がこれを包む（docs/iPhone 版.md）。"""
+"""アプリの入口。`flet run`（PC、`--android`、`--ios`）と `flet build`（apk、ipa）がこれを開く。"""
 
 import os
 import sys

@@ -69,7 +69,7 @@ Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHu
 ### 開く
 
 ```bash
-.venv/bin/flet run src/seed_mobile.py
+.venv/bin/flet run
 ```
 
 アプリの画面が開きます。写真を送ると Claude が読みます。記録は `~/seed/` に出来ます（下の「プロジェクトフォルダー」）。Claude Code と同じで、seed のフォルダーの中で開けばそのフォルダーが開き、上の端にその名が出ます。コードを直すと、開いたままの画面がその場で変わります。
@@ -79,7 +79,7 @@ Windows では `.venv\Scripts\pip install -e ".[app]"`。**配布はこの GitHu
 PC とスマートフォンを同じ Wi-Fi に置き、スマートフォンに Google Play か App Store の「Flet」アプリを入れて、端末に出る QR を読みます（iPhone は `--ios`）。
 
 ```bash
-.venv/bin/flet run --android src/seed_mobile.py
+.venv/bin/flet run --android
 ```
 
 ### アプリにする

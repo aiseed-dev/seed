@@ -49,7 +49,7 @@ build_number = 1
 
 [tool.flet.app]
 path = "src"
-module = "seed_mobile.py"
+module = "main.py"
 exclude = ["kagi", "seed/server", "seed_farm.egg-info"]
 
 [tool.flet.ios]

@@ -702,7 +702,7 @@ class Block:
 
 
 sys.meta_path.insert(0, Block())
-from seed.app.main import make_main  # seed_mobile.py と同じ道（ft.run は呼ばない）
+from seed.app.main import make_main  # src/main.py と同じ道（ft.run は呼ばない）
 
 assert callable(make_main())
 for m in ("seed.app.talk", "seed.app.cards", "seed.app.gallery", "seed.app.photo",
