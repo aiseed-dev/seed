@@ -427,6 +427,30 @@ async def send_draft(app: App, item: dict) -> None:
     app.refresh()
 
 
+def ask_server(app: App) -> None:
+    """サーバーの URL を頼む（家のサーバー、seed home。設計書 §5.13）。次に送られた一行を URL として保存する。"""
+    app.state.pop("await_invite", None)
+    app.state.pop("await_key", None)
+    app.state["await_server"] = True
+    say(app, app.t("talk_server_ask"))
+
+
+async def take_server(app: App, text: str) -> None:
+    """サーバーの URL を seed.toml の server_url に保存する。その一行はやり取りに残さない。"""
+    url = text.strip()
+    if not url.startswith(("http://", "https://")) or any(c.isspace() for c in url):
+        say(app, app.t("server_url_bad"))  # 待ったまま。もう一度貼れる
+        return
+    url = url.rstrip("/")
+    app.state["await_server"] = False
+    app.settings.server_url = url
+    app.settings.save()
+    client.forget_home(url)
+    app.state.pop("home_asked", None)  # 設定の札でもう一度聞く
+    app.state.pop("direct_messages", None)
+    say(app, app.t("server_url_set", url=url))
+
+
 async def take_invite(app: App, code: str) -> None:
     """招待コードを保存する。その一行はやり取りに残さない。まだ読めていない観察があれば読む。"""
     app.state["await_invite"] = False
@@ -479,6 +503,9 @@ async def send(app: App, text: str, paths: list[Path] | None = None, as_example:
         return
     if app.state.get("await_key") and text and not paths:
         await take_key(app, text)
+        return
+    if app.state.get("await_server") and text and not paths:
+        await take_server(app, text)
         return
     if app.state.get("await_invite") and text and not paths:
         await take_invite(app, text)
@@ -1102,6 +1129,8 @@ def composer(app: App) -> ft.Control:
     secret = bool(app.state.get("await_key"))
     if secret:
         hint = t("talk_hint_key")
+    elif app.state.get("await_server"):
+        hint = t("talk_hint_server")
     elif app.state.get("await_invite"):
         hint = t("talk_hint_invite")
     elif to:
@@ -1113,7 +1142,7 @@ def composer(app: App) -> ft.Control:
         expand=True,
         border_radius=24,
         dense=True,
-        autocorrect=not (app.state.get("await_invite") or secret),
+        autocorrect=not (app.state.get("await_invite") or app.state.get("await_server") or secret),
         password=secret,  # 鍵は画面に出さない
         shift_enter=not secret,
         min_lines=1,

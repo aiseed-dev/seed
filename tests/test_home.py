@@ -362,3 +362,49 @@ def test_app_keeps_only_a_small_copy_when_sending_home(seedfolder, tmp_path, mon
     assert not (seedfolder / "originals").exists()
     assert got == [[src]]  # 元は送る側へ
     assert settings_mod.load(seedfolder).keep == "research"  # seed.toml は変えない
+
+
+def phone_app(seedfolder):
+    from test_app import FakePage
+
+    from seed.app.main import App
+
+    app = App(FakePage(), str(seedfolder))
+    app.lang = "ja"
+    return app
+
+
+def test_change_server_url_from_the_settings_card(seedfolder, monkeypatch):
+    """設定の「サーバーを変える」→ 次の一行が URL なら seed.toml の server_url に。やり取りには残さない。"""
+    from test_app import texts
+
+    from seed.app import cards, talk
+
+    monkeypatch.delenv("SEED_SERVER_URL", raising=False)
+    app = phone_app(seedfolder)
+    card = cards.settings_card(app)
+    button = next(
+        c
+        for c in card
+        if getattr(c, "content", None) == "サーバーを変える" or getattr(c, "text", None) == "サーバーを変える"
+    )
+    button.on_click(None)
+    assert app.state["await_server"] and app.state["talk"][-1]["text"] == app.t("talk_server_ask")
+    assert app.t("talk_hint_server") in texts(talk.view(app))
+    # URL でない物は断り、待ったまま
+    asyncio.run(talk.send(app, "pc の番地"))
+    assert app.state["await_server"] and app.state["talk"][-1]["text"] == app.t("server_url_bad")
+    seed_client._HOME["http://192.168.1.5:8800"] = False  # 前の覚えは消える
+    url = "http://192.168.1.5:8800/"
+    asyncio.run(talk.send(app, url))
+    assert not app.state["await_server"]
+    assert app.state["talk"][-1]["text"] == "サーバーを http://192.168.1.5:8800 にしました。"
+    assert app.settings.server == "http://192.168.1.5:8800"
+    assert settings_mod.load(seedfolder).server_url == "http://192.168.1.5:8800"
+    assert "http://192.168.1.5:8800" not in seed_client._HOME
+    assert not any(i.get("who") == "me" and url.rstrip("/") in str(i.get("text")) for i in app.state["talk"])
+    for p in (seedfolder / "observations").glob("*.md"):
+        assert "192.168.1.5" not in p.read_text(encoding="utf-8")
+    # その後の言葉は、ふだんの言葉
+    asyncio.run(talk.send(app, "http://example.test"))
+    assert settings_mod.load(seedfolder).server_url == "http://192.168.1.5:8800"

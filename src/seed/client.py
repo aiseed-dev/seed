@@ -266,6 +266,11 @@ def is_home(server_url: str, transport: httpx.BaseTransport | None = None) -> bo
     return home
 
 
+def forget_home(server_url: str) -> None:
+    """覚えを消す（サーバーの URL を変えた時。次に聞き直す）。"""
+    _HOME.pop(server_url.rstrip("/"), None)
+
+
 def known_home(server_url: str) -> bool:
     """もう聞いてあって家のサーバーだったか（画面から。網には出ない）。"""
     return _HOME.get(server_url.rstrip("/"), False)

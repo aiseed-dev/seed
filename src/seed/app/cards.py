@@ -543,6 +543,14 @@ def settings_card(app: App) -> list[ft.Control]:
     if client.known_home(app.settings.server):
         out.append(theme.muted(t("set_home", url=app.settings.server)))
     out.append(theme.muted(t("set_server", server=app.settings.server, version=__version__)))
+
+    def change_server(e) -> None:
+        from seed.app.talk import ask_server
+
+        ask_server(app)
+        app.refresh()
+
+    out.append(ft.TextButton(t("set_server_change"), on_click=change_server))
     out.append(
         ft.Row(
             [
