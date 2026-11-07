@@ -260,7 +260,70 @@ SOIL_MOISTURE = {
     "soil_moisture_27_to_81cm": "27-81 cm",
 }
 HOURLY = (*SOIL_TEMP, *SOIL_MOISTURE)
+HOURLY_WEATHER = (
+    "temperature_2m",
+    "relative_humidity_2m",
+    "dew_point_2m",
+    "precipitation",
+    "precipitation_probability",
+    "weather_code",
+    "wind_speed_10m",
+    "wind_gusts_10m",
+    "wind_direction_10m",
+)
 JST = dt.timezone(dt.timedelta(hours=9))
+
+
+@dataclass
+class Hour:
+    time: str  # 2026-11-08T06:00（Asia/Tokyo）
+    code: int | None
+    temp: float | None
+    humidity: int | None
+    dewpoint: float | None
+    rain: float | None
+    rain_prob: int | None
+    wind: float | None
+    gust: float | None
+    wind_dir: int | None
+
+
+def parse_hours(data: dict, days: int = 7) -> dict[str, list[Hour]]:
+    """hourly を日付ごとの時の並びに（最初の days 日だけ）。無い列は None、hourly が無ければ空。"""
+    try:
+        hourly = data["hourly"]
+        times = hourly["time"]
+    except (KeyError, TypeError):
+        return {}
+
+    def col(name: str) -> list:
+        c = hourly.get(name)
+        return c if isinstance(c, list) and len(c) == len(times) else [None] * len(times)
+
+    def num(v, kind):
+        return None if v is None else kind(v)
+
+    t, h, d, r, p, c, w, g, wd = (col(k) for k in HOURLY_WEATHER)
+    out: dict[str, list[Hour]] = {}
+    for i, tm in enumerate(times):
+        date = str(tm)[:10]
+        if date not in out and len(out) >= days:
+            continue
+        out.setdefault(date, []).append(
+            Hour(
+                str(tm),
+                num(c[i], int),
+                num(t[i], float),
+                num(h[i], int),
+                num(d[i], float),
+                num(r[i], float),
+                num(p[i], int),
+                num(w[i], float),
+                num(g[i], float),
+                num(wd[i], int),
+            )
+        )
+    return out
 
 
 @dataclass
@@ -331,16 +394,20 @@ def fetch_forecast(lat: float, lon: float, days: int = 7, get=None) -> list[Fore
     return _week(lat, lon, days, get)[0]
 
 
-def fetch_week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecast], Soil | None]:
-    """予報、土の値、それに ECMWF の地表面温度（二つ目の問い合わせ。取れなくても他は返す）。"""
-    rows, soil = _week(lat, lon, days, get)
+def fetch_week(
+    lat: float, lon: float, days: int = 16, get=None
+) -> tuple[list[Forecast], Soil | None, dict[str, list[Hour]]]:
+    """予報、土の値、時間ごとの値、それに ECMWF の地表面温度（二つ目の問い合わせ。取れなくても他は返す）。"""
+    rows, soil, hours = _week(lat, lon, days, get)
     surface = fetch_surface(lat, lon, get)
     if surface:
         soil = replace(soil, surface=surface) if soil else Soil("", {}, {}, surface)
-    return rows, soil
+    return rows, soil, hours
 
 
-def _week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecast], Soil | None]:
+def _week(
+    lat: float, lon: float, days: int = 7, get=None
+) -> tuple[list[Forecast], Soil | None, dict[str, list[Hour]]]:
     """Open-Meteo の予報と今の土の値を取る。座標は 2 桁に丸める。get は差し替え用（既定は httpx.get）。失敗は WeatherError。"""
     import httpx
 
@@ -350,7 +417,7 @@ def _week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecas
         "longitude": f"{lon:.2f}",
         "daily": ",".join((*FORECAST_DAILY, *EXTRA_DAILY)),
         "wind_speed_unit": "ms",
-        "hourly": ",".join(HOURLY),
+        "hourly": ",".join((*HOURLY_WEATHER, *HOURLY)),
         "forecast_days": days,
         "timezone": TIMEZONE,
     }
@@ -365,7 +432,7 @@ def _week(lat: float, lon: float, days: int = 7, get=None) -> tuple[list[Forecas
         data = r.json()
     except ValueError:
         raise WeatherError("weather_bad_answer", "not JSON") from None
-    return parse_forecast(data), parse_soil(data)
+    return parse_forecast(data), parse_soil(data), parse_hours(data)
 
 
 # WMO の天気の符号 → 短い語（上から合う物）

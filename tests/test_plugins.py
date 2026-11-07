@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 import flet as ft
 import pytest
@@ -125,7 +126,16 @@ def soil():
     )
 
 
-def forecast_rows(n=7):
+def hours():
+    return {
+        "2026-11-08": [
+            W.Hour(f"2026-11-08T{h:02d}:00", 0, 9.4, 85, 7.2, 0.0, 10, 2.1, 5.0, 315) for h in range(24)
+        ],
+        "2026-11-09": [W.Hour("2026-11-09T06:00", 61, 8.0, 90, 6.0, 1.2, 80, 3.0, 6.0, 90)],
+    }
+
+
+def forecast_rows(n=16):
     return [
         W.Forecast(f"2026-11-{8 + i:02d}", 61, 18.4, 9.6, 2.5, 70, 18720.0 / 3600, 2.14, 3.2, 8.1, 315)
         for i in range(n)
@@ -145,7 +155,7 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     calls = []
     monkeypatch.setattr(land, "center", lambda folder: (34.051, 134.249))
     monkeypatch.setattr(
-        W, "fetch_week", lambda lat, lon, **k: calls.append((lat, lon)) or (forecast_rows(), soil())
+        W, "fetch_week", lambda lat, lon, **k: calls.append((lat, lon)) or (forecast_rows(), soil(), hours())
     )
     app.page.route = "/p/weather"
     app.route_change(path="/p/weather")
@@ -197,9 +207,57 @@ def test_weather_without_soil(app, monkeypatch):
     from seed import land
 
     monkeypatch.setattr(land, "center", lambda folder: (34.05, 134.25))
-    monkeypatch.setattr(W, "fetch_week", lambda *a, **k: (forecast_rows(), None))
+    monkeypatch.setattr(W, "fetch_week", lambda *a, **k: (forecast_rows(), None, {}))
     app.page.route = "/p/weather"
     app.route_change(path="/p/weather")
     run_tasks(app)
     got = texts(app.page.views[-1])
     assert not any(x.startswith("土（") for x in got) and "Open-Meteo 天気予報 API" in got
+
+
+def test_weather_hours_open_today_and_toggle(app, monkeypatch):
+    from seed import land
+    from seed.plugins import weather as P
+
+    monkeypatch.setattr(land, "center", lambda folder: (34.05, 134.25))
+    monkeypatch.setattr(W, "fetch_week", lambda *a, **k: (forecast_rows(), soil(), hours()))
+    monkeypatch.setattr(P, "now", lambda: __import__("datetime").datetime(2026, 11, 8, 7, 30))
+    app.page.route = "/p/weather"
+    app.route_change(path="/p/weather")
+    run_tasks(app)
+
+    def lines():
+        return [x for x in texts(app.page.views[-1]) if re.match(r"\d\d:\d\d  ", x)]
+
+    got = texts(app.page.views[-1])
+    for h in ("土（14:00 の値）", "今日と明日（1 時間ごと）", "一週間", "二週間先まで"):
+        assert h in got
+    assert len([x for x in got if x.startswith("11/") and "最高" in x]) == 9  # 8〜16 日目は一行ずつ
+    assert (
+        "11/15（日）  雨" not in got and "11/16（月）  雨  最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
+    )
+    assert len(lines()) == 17 + 1 + 24  # 今日の 07〜23 時と明日の 1 行、今日を開いた 24 行
+    assert "07:00  雨 0.0 mm（10 %）  快晴  9 ℃  風 2 m/s 北西  湿度 85 %" in lines()
+    assert not any(x.startswith("06:00  雨") and "11-" in x for x in lines())  # 過ぎた時は出ない
+    colour = {
+        c.value: c.color
+        for c in walk(app.page.views[-1])
+        if isinstance(c, ft.Text) and c.value and c.value.startswith(("07:00  雨", "06:00  雨 1.2"))
+    }
+    assert colour["07:00  雨 0.0 mm（10 %）  快晴  9 ℃  風 2 m/s 北西  湿度 85 %"] is not None  # 雨 0 は薄い
+    assert colour["06:00  雨 1.2 mm（80 %）  雨  8 ℃  風 3 m/s 東  湿度 90 %"] is None  # 雨のある時は普通の色
+    assert "06:00  快晴  9 ℃  湿度 85 %  露点 7 ℃  雨 0.0 mm（10 %）  風 2 m/s 北西" in lines()
+
+    def tap(date_text):
+        for c in walk(app.page.views[-1]):
+            if isinstance(c, ft.Container) and c.on_click and date_text in texts(c):
+                c.on_click(None)
+                return
+        raise AssertionError(date_text)
+
+    tap("11/08（日）  雨")
+    assert len(lines()) == 18
+    tap("11/09（月）  雨")
+    assert len(lines()) == 19
+    tap("11/08（日）  雨")
+    assert len(lines()) == 43

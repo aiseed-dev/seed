@@ -19,6 +19,14 @@ ECMWF_URL = "https://open-meteo.com/en/docs/ecmwf-api"
 WEEKDAYS = {"ja": "月火水木金土日", "en": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")}
 
 
+def now() -> dt.datetime:
+    return dt.datetime.now()
+
+
+def today() -> dt.date:
+    return now().date()
+
+
 def centre(app) -> tuple[float, float] | None:
     """畑の座標。プロジェクト全体の時は、座標のある最初の畑。"""
     if getattr(app, "whole", False):
@@ -45,8 +53,52 @@ def number(v: float | None, unit: str) -> str:
     return "—" if v is None else f"{v:.0f}{unit}"
 
 
-def row(f: weather.Forecast, language: str) -> ft.Control:
-    """一日 = 二行。一行目は日と天気、二行目は小さく気温と降水。"""
+def far_line(f: weather.Forecast, language: str) -> ft.Control:
+    """二週間先までの一日 = 一行。"""
+    rain = "—" if f.rain is None else f"{f.rain:.1f} mm"
+    prob = number(f.rain_prob, " %")
+    tmax, tmin = number(f.tmax, " ℃"), number(f.tmin, " ℃")
+    head = f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}"
+    if language == "ja":
+        return ft.Text(f"{head}  最高 {tmax} / 最低 {tmin}  降水 {rain}（{prob}）", size=theme.BODY_SIZE)
+    return ft.Text(f"{head}  max {tmax} / min {tmin}  rain {rain} ({prob})", size=theme.BODY_SIZE)
+
+
+def short_hour_line(h: weather.Hour, language: str) -> ft.Control:
+    """今日と明日の一時間の行（雨が先。雨のある時は薄くしない）。"""
+    ja = language == "ja"
+    word = "—" if h.code is None else weather.weather_word(h.code, language)
+    rain = "—" if h.rain is None else f"{h.rain:.1f} mm"
+    prob = number(h.rain_prob, " %")
+    wind = number(h.wind, " m/s")
+    if h.wind_dir is not None:
+        wind += f" {weather.wind_name(h.wind_dir, language)}"
+    temp, rh = number(h.temp, " ℃"), number(h.humidity, " %")
+    if ja:
+        text = f"{h.time[-5:]}  雨 {rain}（{prob}）  {word}  {temp}  風 {wind}  湿度 {rh}"
+    else:
+        text = f"{h.time[-5:]}  rain {rain} ({prob})  {word}  {temp}  wind {wind}  RH {rh}"
+    if h.rain:
+        return ft.Text(text, size=13, selectable=True)
+    return theme.muted(text)
+
+
+def hourly_now(app, hours: dict[str, list[weather.Hour]]) -> list[ft.Control]:
+    """今の時から明日の終わりまで、一時間ごとの行。"""
+    n = now()
+    out: list[ft.Control] = []
+    for date, first in ((n.date(), n.hour), (n.date() + dt.timedelta(days=1), 0)):
+        picked = [h for h in hours.get(date.isoformat(), []) if int(h.time[11:13]) >= first]
+        if picked:
+            out += [
+                theme.muted(day_label(date.isoformat(), app.lang)),
+                *(short_hour_line(h, app.lang) for h in picked),
+            ]
+    return out
+
+
+def row(f: weather.Forecast, language: str) -> list[ft.Control]:
+    """一日 = 三行。一行目は日と天気、二行目は気温と降水、三行目は日照・蒸発散・風。"""
     ja = language == "ja"
     rain = "—" if f.rain is None else f"{f.rain:.1f} mm"
     prob = number(f.rain_prob, " %")
@@ -66,9 +118,7 @@ def row(f: weather.Forecast, language: str) -> ft.Control:
         farm = f"日照 {sun}  蒸発散 {et0}  風 {wind}（突風 {gust}）"
     else:
         farm = f"sun {sun}  ET₀ {et0}  wind {wind} (gusts {gust})"
-    return ft.Column(
-        [ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail), theme.muted(farm)], tight=True, spacing=2
-    )
+    return [ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail), theme.muted(farm)]
 
 
 def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
@@ -88,6 +138,22 @@ def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
             ft.Text(f"{t('weather_soil_moist')}: {moist} m³/m³", size=theme.BODY_SIZE),
         ]
     return out
+
+
+def hour_line(h: weather.Hour, language: str) -> ft.Control:
+    ja = language == "ja"
+    word = "—" if h.code is None else weather.weather_word(h.code, language)
+    rain = "—" if h.rain is None else f"{h.rain:.1f} mm"
+    prob = number(h.rain_prob, " %")
+    wind = number(h.wind, " m/s")
+    if h.wind_dir is not None:
+        wind += f" {weather.wind_name(h.wind_dir, language)}"
+    temp, dew, rh = number(h.temp, " ℃"), number(h.dewpoint, " ℃"), number(h.humidity, " %")
+    if ja:
+        text = f"{h.time[-5:]}  {word}  {temp}  湿度 {rh}  露点 {dew}  雨 {rain}（{prob}）  風 {wind}"
+    else:
+        text = f"{h.time[-5:]}  {word}  {temp}  RH {rh}  dew {dew}  rain {rain} ({prob})  wind {wind}"
+    return theme.muted(text)
 
 
 def credits(app) -> list[ft.Control]:
@@ -114,7 +180,7 @@ def build(app) -> list[ft.Control]:
     c = centre(app)
     if c is None:
         return [ft.Text(t("weather_need_photo"), size=theme.BODY_SIZE)]
-    key = (*c, dt.date.today().isoformat())
+    key = (*c, today().isoformat())
     cached = st.get("forecast")
     failed = st.get("forecast_failed")
 
@@ -125,11 +191,41 @@ def build(app) -> list[ft.Control]:
 
     button = ft.TextButton(t("weather_refresh"), icon=ft.Icons.REFRESH, on_click=refresh)
     if cached and cached[0] == key:
-        rows, soil = cached[1]
+        rows, soil, hours = cached[1]
+        opened = st.get("weather_open", {today().isoformat()})  # 触るまでは今日が開いている
+
+        def toggler(date: str):
+            def h(e) -> None:
+                now = set(st.get("weather_open", {today().isoformat()}))
+                now ^= {date}
+                st["weather_open"] = now
+                app.refresh()
+
+            return h
+
+        days = [
+            ft.Container(
+                ft.Column(
+                    [
+                        *row(f, app.lang),
+                        *(hour_line(x, app.lang) for x in hours.get(f.date, []) if f.date in opened),
+                    ],
+                    tight=True,
+                    spacing=2,
+                ),
+                on_click=toggler(f.date),
+            )
+            for f in rows[:7]
+        ]
+        far = rows[7:]
         return [
             *soil_controls(app, soil),
-            theme.subheading(TITLE.get(app.lang, TITLE["en"])),
-            ft.Column([row(f, app.lang) for f in rows], spacing=8),
+            theme.subheading(t("weather_h_hourly")),
+            *hourly_now(app, hours),
+            theme.subheading(t("weather_h_week")),
+            ft.Column(days, spacing=8),
+            *([theme.subheading(t("weather_h_far"))] if far else []),
+            *(far_line(f, app.lang) for f in far),
             *credits(app),
             button,
         ]

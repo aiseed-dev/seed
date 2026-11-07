@@ -94,7 +94,7 @@ def test_fetch_week_asks_hourly_soil():
             seen.update(params)
         return Resp(soil_payload())
 
-    rows, soil = W.fetch_week(34.05, 134.25, get=get)
+    rows, soil, _hours = W.fetch_week(34.05, 134.25, get=get)
     assert (
         len(rows) == 2
         and "soil_temperature_54cm" in seen["hourly"]
@@ -135,7 +135,7 @@ def test_fetch_week_includes_surface():
             return Resp({"hourly": {"time": ["2000-01-01T00:00"], "surface_temperature": [7.5]}})
         return Resp(SAMPLE)  # hourly の無い答え
 
-    rows, soil = W.fetch_week(34.05, 134.25, get=get)
+    rows, soil, _hours = W.fetch_week(34.05, 134.25, get=get)
     assert len(rows) == 2 and soil.surface == ("2000-01-01T00:00", 7.5) and soil.temp == {}
 
 
@@ -172,3 +172,50 @@ def test_wind_name():
         "北", "北北東", "北東", "東", "南", "北西", "北", "北",
     ]  # fmt: skip
     assert [W.wind_name(d, "en") for d in (0, 45, 202, 315, 349)] == ["N", "NE", "SSW", "NW", "N"]
+
+
+def test_parse_hours_groups_by_date_and_keeps_none():
+    data = {
+        "hourly": {
+            "time": ["2026-11-08T23:00", "2026-11-09T00:00"],
+            "temperature_2m": [9.4, None],
+            "relative_humidity_2m": [85, 80],
+            "weather_code": [0, 61],
+            "wind_direction_10m": [315, None],
+        }
+    }
+    got = W.parse_hours(data)
+    assert list(got) == ["2026-11-08", "2026-11-09"]
+    a, b = got["2026-11-08"][0], got["2026-11-09"][0]
+    assert (a.time, a.code, a.temp, a.humidity, a.wind_dir) == ("2026-11-08T23:00", 0, 9.4, 85, 315)
+    assert a.dewpoint is None and b.temp is None and b.wind_dir is None and b.code == 61
+    assert W.parse_hours(SAMPLE) == {}
+
+
+def test_fetch_week_returns_hours_and_asks_for_them():
+    seen = {}
+
+    def get(url, params=None, timeout=None):
+        if url == W.FORECAST_URL:
+            seen.update(params)
+        return Resp({**SAMPLE, "hourly": {"time": ["2026-11-08T06:00"], "temperature_2m": [9.0]}})
+
+    _rows, _soil, hours = W.fetch_week(34.05, 134.25, get=get)
+    assert hours["2026-11-08"][0].temp == 9.0
+    assert "relative_humidity_2m" in seen["hourly"] and "soil_temperature_0cm" in seen["hourly"]
+
+
+def test_parse_hours_limits_days_and_week_asks_16_days():
+    times = [f"2026-11-{d:02d}T00:00" for d in range(8, 18)]
+    assert list(W.parse_hours({"hourly": {"time": times}}, days=7)) == [
+        f"2026-11-{d:02d}" for d in range(8, 15)
+    ]
+    seen = {}
+
+    def get(url, params=None, timeout=None):
+        if url == W.FORECAST_URL:
+            seen.update(params)
+        return Resp(SAMPLE)
+
+    W.fetch_week(34.05, 134.25, get=get)
+    assert seen["forecast_days"] == 16
