@@ -7,7 +7,7 @@
 
 <p align="center">
 <img src="docs/images/app-talk.jpg" width="280" alt="話す: Claude の読み、問い、次の一枚">
-<img src="docs/images/field-2026-11-03.jpg" width="280" alt="畑の写真">
+<img src="docs/images/field-2026-11-02.jpg" width="280" alt="セイタカアワダチソウとオギに覆われた耕作放棄地">
 </p>
 
 ![撮る → 話す → 記録 → 公開](docs/images/flow.svg)
