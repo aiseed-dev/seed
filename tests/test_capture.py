@@ -159,3 +159,33 @@ def test_send_video_home_sends_the_where_and_the_field(tmp_path):
     assert capture.send_video_home(FakeApp(), path) == "videos/2026-11-07/150405.mp4"
     assert seen["path"] == path and seen["field"] == "畑"
     assert seen["where"] == {"taken": "2026-11-07T15:04:05", "lat": 34.1, "lon": 134.5}
+    assert '"sent"' in path.with_suffix(".json").read_text(encoding="utf-8")
+
+
+def test_unsent_videos_are_sent_once(tmp_path):
+    """送れた動画は .json に sent が付き、次からは送らない。送っていない物は古い順に残る。"""
+    from contextlib import contextmanager
+
+    seen = []
+
+    class FakeClient:
+        def video(self, path, where, field=None):
+            assert "sent" not in where
+            seen.append(path.name)
+            return f"videos/2026-11-07/{path.name}"
+
+    class FakeApp:
+        field_name = None
+
+        @contextmanager
+        def client(self):
+            yield FakeClient()
+
+    root = tmp_path / "rec"
+    a = capture.keep_video(root, b"a", None, dt.datetime(2026, 11, 7, 17, 19, 51))
+    b = capture.keep_video(root, b"b", None, dt.datetime(2026, 11, 7, 17, 20, 43))
+    assert capture.unsent_videos(root) == [a, b]
+    capture.send_video_home(FakeApp(), a)
+    assert capture.unsent_videos(root) == [b]
+    assert '"sent": "videos/2026-11-07/171951.mp4"' in a.with_suffix(".json").read_text(encoding="utf-8")
+    assert capture.unsent_videos(tmp_path / "none") == []

@@ -556,8 +556,8 @@ def test_video_is_kept_in_the_field_with_where(tmp_path):
     assert got.read_bytes() == MP4
     side = got.with_suffix(".json").read_text(encoding="utf-8")
     assert '"lat": 34.1' in side and "secret" not in side
-    # 同じ時刻の二本目は上書きしない
-    assert post_video(c, code, MP4, where).json()["path"] == "videos/2026-11-07/150405-2.mp4"
+    # 同じ時刻の別の動画（大きさが違う）は上書きしない
+    assert post_video(c, code, MP4 + b"x", where).json()["path"] == "videos/2026-11-07/150405-2.mp4"
     assert not list(proj.glob(".video-*"))  # 一時のファイルは残らない
 
 
@@ -610,3 +610,14 @@ def test_client_video_streams_with_the_code_in_a_header(tmp_path):
     assert seen["body"] == MP4 and seen["headers"]["x-seed-invite"] == "123456"
     assert "123456" not in seen["url"] and "field=" in seen["url"]
     assert seen["headers"]["content-length"] == str(len(MP4))
+
+
+def test_video_sent_again_is_not_kept_twice(tmp_path):
+    """前の答えが届かずに送り直した時は、同じ物を二本にしない（大きさが違えば別の動画として -2）。"""
+    proj = single(tmp_path)
+    c, code = server(tmp_path, proj)
+    where = '{"taken": "2026-11-07T17:19:51"}'
+    assert post_video(c, code, MP4, where).json()["path"] == "videos/2026-11-07/171951.mp4"
+    assert post_video(c, code, MP4, where).json()["path"] == "videos/2026-11-07/171951.mp4"
+    assert post_video(c, code, MP4 + b"x", where).json()["path"] == "videos/2026-11-07/171951-2.mp4"
+    assert not list(proj.glob(".video-*"))

@@ -112,6 +112,7 @@ def keep_video(folder: Folder, tmp: Path, where: dict) -> Path:
     """受けた動画（畑の中の一時のファイル）を videos/<日>/<時刻>.mp4 に移し、同じ名の .json に時と所を書く。
 
     名は撮った時（無ければ受けた時）。同じ名が在れば -2、-3 … を付ける（上書きしない）。
+    同じ名で同じ大きさの物が在れば、送り直し（前の答えが届かなかった）とみなし、在る物の道を返す。
     """
     import json
 
@@ -120,8 +121,12 @@ def keep_video(folder: Folder, tmp: Path, where: dict) -> Path:
     day = folder.root / "videos" / when.strftime("%Y-%m-%d")
     day.mkdir(parents=True, exist_ok=True)
     stem = when.strftime("%H%M%S")
+    size = tmp.stat().st_size
     path, n = day / f"{stem}.mp4", 1
     while path.exists():
+        if path.stat().st_size == size:
+            tmp.unlink()
+            return path
         n += 1
         path = day / f"{stem}-{n}.mp4"
     tmp.replace(path)

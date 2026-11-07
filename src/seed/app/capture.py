@@ -140,15 +140,31 @@ def keep_video(root: Path, data: bytes, position: dict | None, now: dt.datetime 
     return path
 
 
-def send_video_home(app: App, path: Path) -> str:
-    """動画と、同じ名の .json（撮った時と所）を家のサーバーへ。PC の上の置き場を返す。"""
+def _side(path: Path) -> dict:
     side = path.with_suffix(".json")
     try:
-        where = json.loads(side.read_text(encoding="utf-8")) if side.exists() else {}
-    except ValueError:
-        where = {}
+        got = json.loads(side.read_text(encoding="utf-8")) if side.exists() else {}
+    except (OSError, ValueError):
+        return {}
+    return got if isinstance(got, dict) else {}
+
+
+def unsent_videos(root: Path) -> list[Path]:
+    """記録の videos/ の中で、まだ PC へ送っていない動画（.json に sent が無い物）。古い順。"""
+    base = Path(root) / "videos"
+    if not base.is_dir():
+        return []
+    return sorted(p for p in base.glob("*/*.mp4") if not _side(p).get("sent"))
+
+
+def send_video_home(app: App, path: Path) -> str:
+    """動画と、同じ名の .json（撮った時と所）を家のサーバーへ。送れたら .json に sent（PC の上の置き場）を書く。"""
+    where = _side(path)
     with app.client() as c:
-        return c.video(path, where, field=app.field_name or None)
+        got = c.video(path, {k: v for k, v in where.items() if k != "sent"}, field=app.field_name or None)
+    where["sent"] = got or True
+    path.with_suffix(".json").write_text(json.dumps(where, ensure_ascii=False, indent=1), encoding="utf-8")
+    return got
 
 
 def accuracy_text(app: App, pos: dict | None) -> str:
@@ -181,6 +197,8 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
     opener = ft.FilledButton(t("capture_open"), icon=ft.Icons.PHOTO_CAMERA_OUTLINED)
     kept_note = theme.muted("")
     kept_note.visible = False
+    video_note = theme.body("")  # 動画を残した・送った（写真の数で隠さない。録画のボタンのすぐ下に出す）
+    video_note.visible = False
     # 倍率（カメラを開いてから、その機種の最小〜最大で）
     zoom = ft.Slider(min=1, max=1, value=1, divisions=None, label="{value}×", visible=False, expand=True)
     zoom_text = theme.muted("")
@@ -278,6 +296,7 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
                 zoom.min = zoom.max = 1.0
             if sess.position is None:
                 say(t("capture_no_position"))
+            app.page.run_task(send_videos)
         except Exception as ex:  # noqa: BLE001  許しが無い、カメラが無い、を本人に見せる
             opener.disabled = False
             say(str(ex) or t("capture_no_camera"))
@@ -340,29 +359,42 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
                 data = await camera.stop_video_recording()
                 mode["recording"] = False
                 path = await asyncio.to_thread(keep_video, app.folder.root, data, sess.position)
-                kept_note.value, kept_note.visible = (
+                video_note.value, video_note.visible = (
                     t("capture_video_kept", path=path.relative_to(app.folder.root).as_posix()),
                     True,
                 )
-                app.page.run_task(send_video, path)
+                app.page.run_task(send_videos)
         except Exception as ex:  # noqa: BLE001  録れない機種、許しが無い、を本人に見せる
             mode["recording"] = False
             say(str(ex) or t("capture_no_camera"))
         redraw()
 
-    async def send_video(path: Path) -> None:
-        """家のサーバー（seed home）に繋いでいれば、動画も PC へ送る。写真と同じく元のままで。"""
+    async def send_videos() -> None:
+        """家のサーバー（seed home）に繋いでいれば、まだ送っていない動画を古い順に PC へ送る。元のままで。
+
+        畑で網が無くて送れなかった物も、次に繋がった時にここで送る。送れなかった物はスマートフォンに残り、次に回す。
+        """
         from seed.app.talk import home_server
 
-        if not await home_server(app):
+        if mode.get("sending"):
             return
-        kept_note.value = t("capture_video_sending")
-        app.page.update()
+        pending = await asyncio.to_thread(unsent_videos, app.folder.root)
+        if not pending or not await home_server(app):
+            return
+        mode["sending"] = True
+        sent: list[str] = []
         try:
-            where = await asyncio.to_thread(send_video_home, app, path)
-            kept_note.value = t("capture_video_sent", path=where)
+            for i, path in enumerate(pending, 1):
+                video_note.value, video_note.visible = t("capture_video_sending", i=i, n=len(pending)), True
+                app.page.update()
+                sent.append(await asyncio.to_thread(send_video_home, app, path))
+            video_note.value = t("capture_video_sent", n=len(sent), path=sent[-1])
         except Exception as ex:  # noqa: BLE001  届かない、断られた、を本人に見せる（動画はスマートフォンに残る）
-            kept_note.value = t("capture_video_not_sent", why=getattr(ex, "message", None) or str(ex))
+            why = str(ex).split(": ", 1)[0] or type(ex).__name__
+            video_note.value = t("capture_video_not_sent", n=len(pending) - len(sent), why=why)
+        finally:
+            mode["sending"] = False
+        video_note.visible = True
         app.page.update()
 
     zoom.on_change_end = set_zoom
@@ -383,6 +415,7 @@ def view(app: App, on_done, on_cancel) -> list[ft.Control]:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
         ft.Row([opener, shutter, record, to_video, to_photo], wrap=True),
+        video_note,
         status,
         ft.Row(
             [
