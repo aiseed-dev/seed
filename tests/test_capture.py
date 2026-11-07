@@ -96,8 +96,11 @@ def test_keep_on_device(tmp_path, monkeypatch):
     shot = sess.add(jpeg(), {"lat": 34.05, "lon": 134.25}, now)
     assert shot.kept == out / "2026-11-07" / "20261107-093000-1.jpg"
     assert shot.kept.read_bytes() == shot.path.read_bytes()
+    # 消すと Pictures/seed の写しも消える（作者 11-07「失敗した写真や動画を簡単に消せない」）。元に戻せる
     sess.remove(shot)
-    assert not shot.path.exists() and shot.kept.exists()
+    assert not shot.path.exists() and not shot.kept.exists() and sess.shots == []
+    sess.undo(shot)
+    assert shot.path.exists() and shot.kept.exists() and sess.shots == [shot]
 
 
 def test_keep_on_device_failure(tmp_path, monkeypatch):
@@ -189,3 +192,65 @@ def test_unsent_videos_are_sent_once(tmp_path):
     assert capture.unsent_videos(root) == [b]
     assert '"sent": "videos/2026-11-07/171951.mp4"' in a.with_suffix(".json").read_text(encoding="utf-8")
     assert capture.unsent_videos(tmp_path / "none") == []
+
+
+def test_deleted_video_goes_with_its_where_and_copy_and_is_never_sent(tmp_path, monkeypatch):
+    pics = tmp_path / "pics"
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(pics))
+    root = tmp_path / "rec"
+    sess = capture.Session(dir=tmp_path / "tmp")
+    try:
+        path = capture.keep_video(root, b"v", None, dt.datetime(2026, 11, 7, 18, 30, 0))
+        shot = sess.add_video(path)
+        assert shot.kind == "video" and shot.kept == pics / "2026-11-07" / "183000.mp4"
+        assert sess.paths() == []  # 動画は観察の写真に入らない
+        assert capture.unsent_videos(root) == [path]
+        sess.remove(shot)
+        assert not path.exists() and not path.with_suffix(".json").exists() and not shot.kept.exists()
+        assert capture.unsent_videos(root) == []  # 消した物は PC へ送らない
+        sess.undo(shot)
+        assert path.exists() and path.with_suffix(".json").exists() and shot.kept.exists()
+        sess.remove(shot)
+    finally:
+        sess.close()
+    assert not path.exists()  # カメラを出たら、消した物は本当に消える
+
+
+def test_videos_do_not_count_toward_the_photo_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("SEED_DEVICE_PICTURES", str(tmp_path / "pics"))
+    sess = capture.Session(dir=tmp_path / "tmp")
+    sess.dir.mkdir()
+    try:
+        here = capture.position_fields(pos())
+        sess.add_video(capture.keep_video(tmp_path / "rec", b"v", here, dt.datetime(2026, 11, 7, 18, 0, 0)))
+        for i in range(capture.MAX_SHOTS):
+            sess.add(jpeg(), here, dt.datetime(2026, 11, 7, 18, 1, i))
+        assert len(sess.paths()) == capture.MAX_SHOTS and len(sess.shots) == capture.MAX_SHOTS + 1
+    finally:
+        sess.close()
+
+
+def test_zoom_steps_like_the_standard_camera():
+    assert capture.zoom_steps(0.5, 10.0) == [0.5, 1.0, 2.0, 5.0, 10.0]
+    assert capture.zoom_steps(1.0, 8.0) == [1.0, 2.0, 5.0]
+    assert capture.zoom_steps(0.6, 4.0) == [0.6, 1.0, 2.0]  # 最小が 0.5 でない機種は最小を出す
+    assert capture.zoom_steps(1.0, 1.0) == []  # 倍率を持たない機種は印を出さない
+    assert capture.zoom_label(1.0) == "1×" and capture.zoom_label(2.5) == "2.5×"
+    assert capture.clamp(12, 0.5, 10) == 10 and capture.clamp(0.1, 0.5, 10) == 0.5
+
+
+def test_landscape_and_clock():
+    assert capture.is_landscape(2400, 1080) and not capture.is_landscape(1080, 2400)
+    assert not capture.is_landscape(None, None)
+    assert capture.clock(0) == "0:00" and capture.clock(75.9) == "1:15"
+
+
+def test_capture_strings_exist_in_both_languages():
+    from seed.app.strings import s
+
+    for word in (
+        "capture_back", "capture_photo", "capture_video", "capture_review", "capture_delete",
+        "capture_deleted", "capture_undo", "capture_leave_drop", "capture_pos_ok_short",
+    ):  # fmt: skip
+        assert s(word, "ja") != word and s(word, "en") != word
+    assert "3" in s("capture_leave", "ja", n=3) and "46" in s("capture_pos_m", "en", m=46)

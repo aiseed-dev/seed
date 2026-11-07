@@ -1215,7 +1215,7 @@ def composer(app: App) -> ft.Control:
 def view(app: App) -> ft.View:
     if app.state.get("capture") is not None:  # 撮っている間は、撮る画面だけ
         done = end_capture(app)
-        return app.view("/", capture.view(app, done, done))
+        return capture.view(app, done, done)  # 画面いっぱいのカメラ（上の帯も出さない）
     # 新しい物が下。reverse で下から積み、開いた時から一番新しい所が見える
     lines = ft.ListView(
         list(reversed(conversation(app))),
@@ -1235,12 +1235,13 @@ def end_capture(app: App):
         sess = app.state.pop("capture", None)
         app.state.pop("capture_parts", None)
         text = app.state.pop("capture_text", "")
+        app.page.run_task(capture.send_pending_videos, app)  # 撮った動画は、カメラを出た時に PC へ
         if paths:
             await send(app, text, paths)  # 取り込みが済んでから、一時の場所を消す
         else:
             app.refresh()
         if sess is not None:
-            sess.close()
+            sess.close()  # 消した物（一時のごみ箱）もここで本当に消える
 
     return done
 
