@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import flet as ft
 
-from seed import __version__, local
+from seed import __version__, client, local
 from seed import fields as fields_mod
 from seed import highlights as H
 from seed import records as R
@@ -529,6 +529,19 @@ def settings_card(app: App) -> list[ft.Control]:
     if pc and local.available():
         out += remote_rows(app)
 
+    # 家のサーバー（seed home。設計書 §5.13）に送っているなら一行。まだ聞いていなければ一度だけ聞きに行く
+    if route(app) == "server" and app.settings.invite and not st.get("home_asked"):
+        st["home_asked"] = True
+
+        async def ask_home() -> None:
+            import asyncio
+
+            if await asyncio.to_thread(client.is_home, app.settings.server):
+                app.refresh()
+
+        app.page.run_task(ask_home)
+    if client.known_home(app.settings.server):
+        out.append(theme.muted(t("set_home", url=app.settings.server)))
     out.append(theme.muted(t("set_server", server=app.settings.server, version=__version__)))
     out.append(
         ft.Row(

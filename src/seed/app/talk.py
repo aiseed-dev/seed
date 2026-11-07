@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 import yaml
 
-from seed import album, direct, land, local, photos
+from seed import album, client, direct, land, local, photos
 from seed import highlights as H
 from seed.app import capture, cards, photo, theme
 from seed.app.strings import error_text
@@ -219,10 +219,11 @@ def forget_key(app: App) -> None:
     say(app, app.t("talk_key_removed"))
 
 
-async def read_obs(app: App, obs: Observation) -> bool:
+async def read_obs(app: App, obs: Observation, sources: list[Path] | None = None) -> bool:
     """観察を読む（読み方は設定の通り）。読めたら True。招待コードが要れば頼む。
 
     サーバーの Claude を呼ぶのは、写真の読み取り（/api/read）と、言葉で頼む作業（/api/talk）。
+    sources は撮った元の写真。家のサーバー（設計書 §5.13）にはそれを縮めずに送る。
     """
     via = read_via(app)
     if via == "server" and not app.settings.invite:
@@ -234,7 +235,8 @@ async def read_obs(app: App, obs: Observation) -> bool:
         elif via == "key":
             await asyncio.to_thread(read_with_key, app.settings, app.folder, obs)
         else:
-            await asyncio.to_thread(read_on_server, app.settings, app.folder, obs)
+            extra = (sources,) if sources else ()  # 家のサーバーの時だけ撮った元を添える
+            await asyncio.to_thread(read_on_server, app.settings, app.folder, obs, *extra)
     except (ClientError, photos.PhotoError) as ex:
         say(app, error_text(ex, app.lang, server=app.settings.server))
         return False
@@ -242,9 +244,19 @@ async def read_obs(app: App, obs: Observation) -> bool:
     return True
 
 
+async def home_server(app: App) -> bool:
+    """写真を家のサーバー（seed home。設計書 §5.13）に送るか。サーバーで読む時だけ聞く（URL ごとに一度）。"""
+    if read_via(app) != "server" or not app.settings.invite:
+        return False
+    return await asyncio.to_thread(client.is_home, app.settings.server)
+
+
 async def send_photos(app: App, paths: list[Path], text: str) -> None:
+    # 家のサーバーへ送る時は、スマートフォンには読み用の小さな写しだけを残す（元は PC へ。seed.toml は変えない）
+    home = await home_server(app)
+    keep = "text" if home else app.settings.keep
     try:
-        rel = await asyncio.to_thread(photos.import_photos, app.folder, paths, app.settings.keep)
+        rel = await asyncio.to_thread(photos.import_photos, app.folder, paths, keep)
         obs = await asyncio.to_thread(photos.observation_for, app.folder, rel, app.lang)
     except photos.PhotoError as ex:
         say(app, error_text(ex, app.lang))
@@ -257,7 +269,7 @@ async def send_photos(app: App, paths: list[Path], text: str) -> None:
     if text:
         obs.say("said", text.replace("\n", " "))
     obs.write(app.folder.observation_path(obs))
-    await read_obs(app, obs)
+    await read_obs(app, obs, list(paths) if home else None)
     if obs.location and not app.folder.place_data():
         await place_data(app, quiet=True)  # 初めての位置の入った写真: 土地の成り立ちを調べておく（AI 無し）
 
@@ -318,7 +330,7 @@ def transport(app: App, via: str):
     if via == "key":
         skill = app.folder.skill if (app.folder.skill / "SKILL.md").is_file() else package_skill()
         return direct.KeyTransport(app.settings.anthropic_key, app.settings.model, skill, app.lang)
-    return direct.ServerTransport(app.settings)
+    return direct.ServerTransport(app.settings, field=app.field_name or "")
 
 
 STOP_WORDS = {

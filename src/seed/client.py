@@ -258,7 +258,7 @@ def is_home(server_url: str, transport: httpx.BaseTransport | None = None) -> bo
     if base in _HOME:
         return _HOME[base]
     try:
-        with Client(base, "", transport=transport) as c:
+        with Client(base, "", "en", transport=transport) as c:
             home = bool(c.health().get("home"))
     except ClientError:
         return False

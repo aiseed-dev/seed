@@ -349,9 +349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         st = await run_in_threadpool(H.project, home)
         folder = H.folder_for(st, field)
         try:
-            obs = await run_in_threadpool(
-                H.store, st, folder, photos, R.parse_lines(record or ""), ask
-            )
+            obs = await run_in_threadpool(H.store, st, folder, photos, R.parse_lines(record or ""), ask)
         except PH.PhotoError:
             return _error(415, "jpeg_only")
         path = folder.observation_path(obs)

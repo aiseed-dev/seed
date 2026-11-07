@@ -589,8 +589,6 @@ def cmd_home(st: Settings, args) -> int:
     lg = st.language
     try:
         import uvicorn
-
-        from .server import main as server_main
     except ModuleNotFoundError:
         _err(s("home_need_server", lg))
         return 1
@@ -600,6 +598,11 @@ def cmd_home(st: Settings, args) -> int:
     os.environ.pop("SEED_OPEN", None)
     for k, v in HOME_LIMITS.items():
         os.environ.setdefault(k, v)
+    try:
+        from .server import main as server_main  # 環境変数を揃えてから読む（設定は読み込みの時に決まる）
+    except ModuleNotFoundError:
+        _err(s("home_need_server", lg))
+        return 1
     hosts = [lan_ip()] if args.host in ("0.0.0.0", "::") else [args.host]
     _out(s("home_start", lg, project=project))
     for h in hosts:
@@ -608,6 +611,7 @@ def cmd_home(st: Settings, args) -> int:
     _out(s("home_how", lg))
     if local.available() is None:
         _err(s("home_no_claude", lg))
+    sys.stdout.flush()  # uvicorn は戻らないので、ここまでの案内を先に出す（端末でない時も）
     uvicorn.run(server_main.create_app(), host=args.host, port=args.port, log_level="warning")
     return 0
 

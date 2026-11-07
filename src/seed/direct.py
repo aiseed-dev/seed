@@ -138,15 +138,18 @@ class ServerTransport:
 
     via = "server"
 
-    def __init__(self, settings: Settings, http: httpx.BaseTransport | None = None) -> None:
+    def __init__(
+        self, settings: Settings, http: httpx.BaseTransport | None = None, field: str | None = None
+    ) -> None:
         self.settings = settings
         self.http = http
+        self.field = field  # 家のサーバー（設計書 §5.13）で話す畑の名
         self.model = "server"
 
     def send(self, messages: list[dict]) -> Reply:
         st = self.settings
         with Client(st.server, st.token, st.language, invite=st.invite, transport=self.http) as c:
-            data = c.talk(messages)
+            data = c.talk(messages, field=self.field)
         self.model = str(data.get("model") or self.model)
         return Reply(
             [b for b in data.get("content") or [] if isinstance(b, dict)],

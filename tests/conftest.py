@@ -39,3 +39,14 @@ def photo(tmp_path):
     from test_photos import make_jpeg
 
     return make_jpeg(tmp_path / "in" / "IMG_0012.jpg")
+
+
+@pytest.fixture(autouse=True)
+def no_home_server(monkeypatch):
+    """家のサーバーか（client.is_home）を聞きに網へ出ない。使うテストは上書きする。覚えもテストごとに空に。"""
+    from seed import client
+
+    client._HOME.clear()
+    monkeypatch.setattr(client, "is_home", lambda *a, **k: False)
+    yield
+    client._HOME.clear()
