@@ -21,7 +21,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "connections_n": "繋がり {n}",
         "observations_n": "観察 {n}",
         # 観察
-        "choose_photos": "写真を選ぶ",
+        "choose_photos": "写真・動画・zip を選ぶ",
+        "bundle_videos": "動画 {n} 本を置きました: {where}（撮った時と所は同じ名の .json に）",
+        "bundle_groups": "写真 {photos} 枚を、撮った日ごとに {n} 回に分けて読みます。",
+        "bundle_skipped": "写真でも動画でもない物 {n} 個は入れませんでした: {names}",
+        "bundle_nothing": "写真も動画も見つかりませんでした。",
+        "bundle_bad": "zip を開けませんでした（{why}）。",
         # 撮る画面（iPhone 版、Android 版）
         "capture_title": "撮る",
         "capture_hint": "撮った所と時刻を写真に書き込みます。",
@@ -658,7 +663,12 @@ STRINGS: dict[str, dict[str, str]] = {
         "loading": "Loading…",
         "connections_n": "{n} connections",
         "observations_n": "{n} observations",
-        "choose_photos": "Choose photos",
+        "choose_photos": "Choose photos, videos or a zip",
+        "bundle_videos": "Placed {n} video(s): {where} (time and place in the .json of the same name)",
+        "bundle_groups": "Reading {photos} photos in {n} rounds, grouped by the day they were taken.",
+        "bundle_skipped": "Left out {n} file(s) that are neither photos nor videos: {names}",
+        "bundle_nothing": "No photos or videos found.",
+        "bundle_bad": "Could not open the zip ({why}).",
         # capture screen (iPhone, Android)
         "capture_title": "Take photos",
         "capture_hint": "The place and time are written into each photo.",

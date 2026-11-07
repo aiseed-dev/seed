@@ -44,6 +44,8 @@ PHOTO_EXTENSIONS = [
     "HEIC",
     "HEIF",
 ]  # HEIC は拒む理由を言うため
+# 「写真を足す」で選べる物: 写真、動画（作者 11-07「動画は単独でいれることもあるので、mp4に対応して」）、zip
+PICK_EXTENSIONS = PHOTO_EXTENSIONS + [x for e in ("mp4", "mov", "m4v", "zip") for x in (e, e.upper())]
 
 
 @dataclass
@@ -354,18 +356,18 @@ class App:
 
     # --- 写真を選ぶ
     async def pick_photos(self) -> list[Path]:
-        """写真を選び、その道を返す。道が無い（ブラウザで開いた）物は使えない。"""
+        """写真・動画・zip を選び、その道を返す。道が無い（ブラウザで開いた）物は使えない。
+
+        数は絞らない（多い写真は bundle.photo_groups が 6 枚ずつの観察に分ける）。
+        """
         files = await self.picker.pick_files(
             dialog_title=self.t("choose_photos"),
             allow_multiple=True,
             file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=PHOTO_EXTENSIONS,
+            allowed_extensions=PICK_EXTENSIONS,
         )
         if not files:
             return []
-        if len(files) > MAX_PHOTOS:
-            files = files[:MAX_PHOTOS]
-            self.toast(self.t("too_many_photos"))
         paths = [Path(f.path) for f in files if f.path]
         if not paths:
             self.toast(self.t("pc_only"))

@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -516,7 +517,54 @@ async def add_photos(app: App, text: str) -> None:
         app.refresh()
         return
     if paths:
-        await send(app, text, paths)
+        await add_picked(app, text, paths)
+
+
+async def add_picked(app: App, text: str, paths: list[Path]) -> None:
+    """選んだ写真・動画・zip を入れる。動画は videos/ に置き、写真は日ごとに 6 枚ずつの観察にして順に読む。
+
+    zip は記録のフォルダーの中の一時の場所に取り出し、終われば消す（作者 11-07「zipでまとめていれたいので」）。
+    """
+    import shutil
+    import tempfile
+
+    from seed import bundle
+
+    app.folder.root.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=".unzip-", dir=app.folder.root))
+    try:
+        try:
+            picked = await asyncio.to_thread(bundle.unpack, paths, tmp)
+        except (bundle.TooBig, zipfile.BadZipFile, OSError) as ex:
+            say(app, app.t("bundle_bad", why=str(ex)))
+            app.refresh()
+            return
+        placed = []
+        for v in picked.videos:
+            placed.append(
+                await asyncio.to_thread(bundle.place_video, app.folder.root, v, v.is_relative_to(tmp))
+            )
+        if placed:
+            rel = [p.relative_to(app.folder.root).as_posix() for p in placed]
+            say(
+                app,
+                app.t(
+                    "bundle_videos", n=len(placed), where=", ".join(rel[:3]) + (" …" if len(rel) > 3 else "")
+                ),
+            )
+        if picked.skipped:
+            names = ", ".join(picked.skipped[:5]) + (" …" if len(picked.skipped) > 5 else "")
+            say(app, app.t("bundle_skipped", n=len(picked.skipped), names=names))
+        groups = await asyncio.to_thread(bundle.photo_groups, picked.photos)
+        if len(groups) > 1:
+            say(app, app.t("bundle_groups", photos=len(picked.photos), n=len(groups)))
+        if not groups and not placed:
+            say(app, app.t("bundle_nothing"))
+        app.refresh()
+        for i, g in enumerate(groups):
+            await send(app, text if i == 0 else "", g)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 async def send(app: App, text: str, paths: list[Path] | None = None, as_example: bool = True) -> None:
