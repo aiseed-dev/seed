@@ -142,7 +142,7 @@ def run(coro):
 def test_screens_build_on_every_version(app, seedfolder, tmp_path, web, platform):
     observe(seedfolder, tmp_path, NEW_READING)
     app.page.web, app.page.platform = web, platform
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/weather"]
+    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/procedure", "/p/weather"]
     for path in ("/", "/photos", "/p/land"):
         app.route_change(path=path)
         v = app.page.views[-1]

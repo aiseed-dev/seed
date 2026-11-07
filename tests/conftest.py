@@ -50,3 +50,11 @@ def no_home_server(monkeypatch):
     monkeypatch.setattr(client, "is_home", lambda *a, **k: False)
     yield
     client._HOME.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_weather_fill(monkeypatch):
+    """気象の穴埋め（網に出る）は、使うテスト以外では何もしない。"""
+    from seed import weather
+
+    monkeypatch.setattr(weather, "fill_missing", lambda *a, **k: 0)

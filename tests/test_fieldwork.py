@@ -168,7 +168,7 @@ def test_weather_fetch_writes_rounded_and_replaces(seedfolder, monkeypatch, caps
     assert str(seen[0].url).startswith(weather.ARCHIVE_URL)
     assert q["latitude"] == "34.05" and q["longitude"] == "134.25"  # 2 桁に丸めて送る
     assert q["timezone"] == "Asia/Tokyo" and q["start_date"] == "2026-11-05" and q["end_date"] == "2026-11-06"
-    assert q["daily"] == "temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration"
+    assert q["daily"] == ",".join(weather.DAILY) and q["wind_speed_unit"] == "ms"
     assert "0512" not in str(seen[0].url) and "2534" not in str(seen[0].url)
 
     path = seedfolder / "weather" / "2026-11.md"

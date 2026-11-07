@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""天気。畑の座標の、この一週間の予報（Open-Meteo。AI 無し）。"""
+"""天気。畑の座標の、二週間の予報と土の図（Open-Meteo。AI 無し）。"""
 
 from __future__ import annotations
 
@@ -8,15 +8,13 @@ import datetime as dt
 
 import flet as ft
 
-from seed import land, weather
+from seed import chart, land, weather
 from seed.app import theme
 
 TITLE = {"ja": "天気", "en": "Weather"}
 ICON = "WB_SUNNY_OUTLINED"
 API_URL = "https://open-meteo.com/en/docs"
 ECMWF_URL = "https://open-meteo.com/en/docs/ecmwf-api"
-
-WEEKDAYS = {"ja": "月火水木金土日", "en": ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")}
 
 
 def now() -> dt.datetime:
@@ -38,122 +36,36 @@ def centre(app) -> tuple[float, float] | None:
     return land.center(app.folder)
 
 
-def day_label(date: str, language: str) -> str:
-    try:
-        d = dt.date.fromisoformat(date)
-    except ValueError:
-        return date
-    wd = WEEKDAYS["ja" if language == "ja" else "en"][d.weekday()]
-    if language == "ja":
-        return f"{d:%m/%d}（{wd}）"
-    return f"{wd} {d:%m/%d}"
-
-
 def number(v: float | None, unit: str) -> str:
     return "—" if v is None else f"{v:.0f}{unit}"
 
 
-def far_line(f: weather.Forecast, language: str) -> ft.Control:
-    """二週間先までの一日 = 一行。"""
-    rain = "—" if f.rain is None else f"{f.rain:.1f} mm"
-    prob = number(f.rain_prob, " %")
-    tmax, tmin = number(f.tmax, " ℃"), number(f.tmin, " ℃")
-    head = f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}"
-    if language == "ja":
-        return ft.Text(f"{head}  最高 {tmax} / 最低 {tmin}  降水 {rain}（{prob}）", size=theme.BODY_SIZE)
-    return ft.Text(f"{head}  max {tmax} / min {tmin}  rain {rain} ({prob})", size=theme.BODY_SIZE)
-
-
-def short_hour_line(h: weather.Hour, language: str) -> ft.Control:
-    """今日と明日の一時間の行（雨が先。雨のある時は薄くしない）。"""
-    ja = language == "ja"
-    word = "—" if h.code is None else weather.weather_word(h.code, language)
-    rain = "—" if h.rain is None else f"{h.rain:.1f} mm"
-    prob = number(h.rain_prob, " %")
-    wind = number(h.wind, " m/s")
-    if h.wind_dir is not None:
-        wind += f" {weather.wind_name(h.wind_dir, language)}"
-    temp, rh = number(h.temp, " ℃"), number(h.humidity, " %")
-    if ja:
-        text = f"{h.time[-5:]}  雨 {rain}（{prob}）  {word}  {temp}  風 {wind}  湿度 {rh}"
-    else:
-        text = f"{h.time[-5:]}  rain {rain} ({prob})  {word}  {temp}  wind {wind}  RH {rh}"
-    if h.rain:
-        return ft.Text(text, size=13, selectable=True)
-    return theme.muted(text)
-
-
-def hourly_now(app, hours: dict[str, list[weather.Hour]]) -> list[ft.Control]:
-    """今の時から明日の終わりまで、一時間ごとの行。"""
-    n = now()
-    out: list[ft.Control] = []
-    for date, first in ((n.date(), n.hour), (n.date() + dt.timedelta(days=1), 0)):
-        picked = [h for h in hours.get(date.isoformat(), []) if int(h.time[11:13]) >= first]
-        if picked:
-            out += [
-                theme.muted(day_label(date.isoformat(), app.lang)),
-                *(short_hour_line(h, app.lang) for h in picked),
-            ]
-    return out
-
-
-def row(f: weather.Forecast, language: str) -> list[ft.Control]:
-    """一日 = 三行。一行目は日と天気、二行目は気温と降水、三行目は日照・蒸発散・風。"""
-    ja = language == "ja"
-    rain = "—" if f.rain is None else f"{f.rain:.1f} mm"
-    prob = number(f.rain_prob, " %")
-    tmax, tmin = number(f.tmax, " ℃"), number(f.tmin, " ℃")
-    if ja:
-        detail = f"最高 {tmax} / 最低 {tmin}  降水 {rain}（{prob}）"
-    else:
-        detail = f"max {tmax} / min {tmin}  rain {rain} ({prob})"
-    head = f"{day_label(f.date, language)}  {weather.weather_word(f.code, language)}"
-    sun = "—" if f.sunshine_h is None else f"{f.sunshine_h:.1f} h"
-    et0 = "—" if f.et0 is None else f"{f.et0:.1f} mm"
-    wind = number(f.wind, " m/s")
-    if f.wind_dir is not None:
-        wind += f" {weather.wind_name(f.wind_dir, language)}"
-    gust = number(f.gust, "")
-    if ja:
-        farm = f"日照 {sun}  蒸発散 {et0}  風 {wind}（突風 {gust}）"
-    else:
-        farm = f"sun {sun}  ET₀ {et0}  wind {wind} (gusts {gust})"
-    return [ft.Text(head, size=theme.BODY_SIZE), theme.muted(detail), theme.muted(farm)]
+def picture(app, svg: str) -> list[ft.Control]:
+    """図。縮めず自分の幅で出し、横に動かして見る。"""
+    if not svg:
+        return []
+    w, h = chart.size(svg)
+    data = chart.png(svg) or svg.encode("utf-8")
+    return [ft.Row([ft.Image(src=data, width=w, height=h, fit=ft.BoxFit.CONTAIN)], scroll=ft.ScrollMode.AUTO)]
 
 
 def soil_controls(app, soil: weather.Soil | None) -> list[ft.Control]:
+    """土: 今の値は一行（地表面と地温）、あとは図。"""
     if soil is None:
         return []
     t = app.t
     when = soil.time or (soil.surface[0] if soil.surface else "")
-    out: list[ft.Control] = [theme.subheading(t("weather_soil", time=when[-5:]))]
+    parts = []
     if soil.surface:
         tm, v = soil.surface
-        out.append(ft.Text(t("weather_surface", value=f"{v:.0f}", time=tm[-5:]), size=theme.BODY_SIZE))
+        parts.append(t("weather_surface", value=f"{v:.0f}", time=tm[-5:]))
     if soil.temp:
         temp = " · ".join(f"{k} {number(v, ' ℃')}" for k, v in soil.temp.items())
-        moist = " · ".join(f"{k} {'—' if v is None else f'{v:.2f}'}" for k, v in soil.moisture.items())
-        out += [
-            ft.Text(f"{t('weather_soil_temp')}: {temp}", size=theme.BODY_SIZE),
-            ft.Text(f"{t('weather_soil_moist')}: {moist} m³/m³", size=theme.BODY_SIZE),
-        ]
-    return out
-
-
-def hour_line(h: weather.Hour, language: str) -> ft.Control:
-    ja = language == "ja"
-    word = "—" if h.code is None else weather.weather_word(h.code, language)
-    rain = "—" if h.rain is None else f"{h.rain:.1f} mm"
-    prob = number(h.rain_prob, " %")
-    wind = number(h.wind, " m/s")
-    if h.wind_dir is not None:
-        wind += f" {weather.wind_name(h.wind_dir, language)}"
-    temp, dew, rh = number(h.temp, " ℃"), number(h.dewpoint, " ℃"), number(h.humidity, " %")
-    if ja:
-        text = f"{h.time[-5:]}  {word}  {temp}  湿度 {rh}  露点 {dew}  雨 {rain}（{prob}）  風 {wind}"
-    else:
-        text = f"{h.time[-5:]}  {word}  {temp}  RH {rh}  dew {dew}  rain {rain} ({prob})  wind {wind}"
-    return theme.muted(text)
+        parts.append(f"{t('weather_soil_temp')}: {temp}")
+    out: list[ft.Control] = [theme.subheading(t("weather_soil", time=when[-5:]))]
+    if parts:
+        out.append(ft.Text("  ".join(parts), size=theme.BODY_SIZE))
+    return [*out, *picture(app, chart.soil_svg(soil.hourly, app.lang))]
 
 
 def credits(app) -> list[ft.Control]:
@@ -192,40 +104,14 @@ def build(app) -> list[ft.Control]:
     button = ft.TextButton(t("weather_refresh"), icon=ft.Icons.REFRESH, on_click=refresh)
     if cached and cached[0] == key:
         rows, soil, hours = cached[1]
-        opened = st.get("weather_open", {today().isoformat()})  # 触るまでは今日が開いている
-
-        def toggler(date: str):
-            def h(e) -> None:
-                now = set(st.get("weather_open", {today().isoformat()}))
-                now ^= {date}
-                st["weather_open"] = now
-                app.refresh()
-
-            return h
-
-        days = [
-            ft.Container(
-                ft.Column(
-                    [
-                        *row(f, app.lang),
-                        *(hour_line(x, app.lang) for x in hours.get(f.date, []) if f.date in opened),
-                    ],
-                    tight=True,
-                    spacing=2,
-                ),
-                on_click=toggler(f.date),
-            )
-            for f in rows[:7]
-        ]
-        far = rows[7:]
         return [
             *soil_controls(app, soil),
             theme.subheading(t("weather_h_hourly")),
-            *hourly_now(app, hours),
-            theme.subheading(t("weather_h_week")),
-            ft.Column(days, spacing=8),
-            *([theme.subheading(t("weather_h_far"))] if far else []),
-            *(far_line(f, app.lang) for f in far),
+            *picture(app, chart.hourly_svg(hours, now(), app.lang)),
+            theme.subheading(t("weather_h_days")),
+            *picture(app, chart.daily_svg(rows, app.lang)),
+            theme.subheading(t("weather_h_work")),
+            *picture(app, chart.work_svg(rows, app.lang)),
             *credits(app),
             button,
         ]
@@ -244,6 +130,11 @@ def build(app) -> list[ft.Control]:
                 st["forecast_failed"] = (key, type(ex).__name__)
             st.pop("forecast_loading", None)
             app.refresh()
+            if st.get("weather_filled") != key[2]:  # 実績の記録の穴埋めは、一日に一度
+                st["weather_filled"] = key[2]
+                folders = app.fields if getattr(app, "whole", False) else [app.folder]
+                for f in folders:
+                    await asyncio.to_thread(weather.fill_missing, f, app.lang)
 
         app.page.run_task(load)
     return [theme.muted(t("weather_fetching"))]

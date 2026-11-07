@@ -348,3 +348,21 @@ def nochi_3jo(folder: Folder) -> Result:
 
 
 PROCEDURES = {SLUG: nochi_3jo}
+
+
+def toggle(folder: Folder, slug: str, key: str, done: bool) -> bool:
+    """checklist.md の key の行の [ ] / [x] だけ書き換える（ほかの行はそのまま）。変えたら True。"""
+    path = folder.root / "procedures" / slug / "checklist.md"
+    if not path.is_file():
+        return False
+    lines = path.read_text(encoding="utf-8").split("\n")
+    changed = False
+    for i, raw in enumerate(lines):
+        m = CHECK_RE.match(raw)
+        if m and m["key"] == key:
+            lines[i] = f"- [{'x' if done else ' '}] " + raw[len("- [ ] ") :]
+            changed = raw != lines[i]
+            break
+    if changed:
+        path.write_text("\n".join(lines), encoding="utf-8")
+    return changed

@@ -664,6 +664,15 @@ def cmd_prune(st: Settings, args) -> int:
     return 0
 
 
+def _fill_weather(folder: Folder, lg: str) -> None:
+    """観察のあと、気象の実績の穴を埋める（できなくても観察は済んでいる。一行だけ言う）。"""
+    from . import weather
+
+    n = weather.fill_missing(folder, lg)
+    if n:
+        _out(s("weather_filled", lg, n=n))
+
+
 def cmd_observe(st: Settings, args) -> int:
     from . import photos
     from .client import ClientError
@@ -709,6 +718,7 @@ def cmd_observe(st: Settings, args) -> int:
         _identify_and_report(st, folder, obs, None, None, quiet_if_unavailable=True)
     obs.write(path)
     _out(s("saved_to", lg, path=path))
+    _fill_weather(folder, lg)
     if obs.location:
         loc = obs.location
         _out(
@@ -1515,6 +1525,10 @@ def cmd_weather(st: Settings, args) -> int:
             return 0
         _out(text.rstrip("\n"))
         return 0
+    if args.act == "fill":
+        n = weather.fill_missing(folder, lg)
+        _out(s("weather_filled", lg, n=n) if n else s("weather_fill_none", lg))
+        return 0
     if (args.lat is None) != (args.lon is None):
         _err(s("weather_no_coord", lg))
         return 1
@@ -1954,6 +1968,12 @@ def parser() -> argparse.ArgumentParser:
         "--lat", type=float, help="緯度（無ければ place.md の center か、座標のある一番新しい観察）"
     )
     wf.add_argument("--lon", type=float, help="経度")
+    wfill = wesub.add_parser(
+        "fill",
+        parents=[common],
+        help="最初の観察の日から昨日までで記録の無い日を、過去データで埋める（網に繋ぐ）",
+    )
+    wfill.set_defaults(from_=None, to=None, lat=None, lon=None)
     ws = wesub.add_parser("show", parents=[common], help="月の気象の記録を見る")
     ws.add_argument("--month", required=True, help="YYYY-MM")
     ws.set_defaults(readonly=True)

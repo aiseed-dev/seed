@@ -1,23 +1,42 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """気象の記録 weather/<YYYY-MM>.md（docs/記録の形.md §17）。
 
-畑の座標の日ごとの気象（最高・最低気温、降水、日照）を Open-Meteo の過去データから引き、
-出典付きの Data の行として残す。網に繋ぐのは fetch だけ。座標は小数 2 桁に丸めて送る。
+畑の座標の日ごとの気象の実績（気温、降水、日照、蒸発散、風、地温と水分）を Open-Meteo の過去データから引き、
+出典付きの Data の行として残す。予報は残さない。座標は小数 2 桁に丸めて送る。
+網に繋ぐのは fetch、fetch_recent、fill_missing。
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .records import EMPTY, Folder, Observation, split_sections
 
+log = logging.getLogger("seed.weather")
+
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 OPEN_METEO_URL = "https://open-meteo.com/"
 JMA_URL = "https://www.data.jma.go.jp/stats/etrn/"
-DAILY = ("temperature_2m_max", "temperature_2m_min", "precipitation_sum", "sunshine_duration")
+REQUIRED = ("temperature_2m_max", "temperature_2m_min", "precipitation_sum", "sunshine_duration")
+LAYERS = ("0-7cm", "7-28cm", "28-100cm", "100-255cm")  # 過去データの土の四つの層
+SOIL_T_DAILY = tuple(f"soil_temperature_{l.replace('-', '_to_')}_mean" for l in LAYERS)
+SOIL_M_DAILY = tuple(f"soil_moisture_{l.replace('-', '_to_')}_mean" for l in LAYERS)
+DAILY = (
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "precipitation_sum",
+    "sunshine_duration",
+    "temperature_2m_mean",
+    "et0_fao_evapotranspiration",
+    "wind_speed_10m_max",
+    "wind_gusts_10m_max",
+    *SOIL_T_DAILY,
+    *SOIL_M_DAILY,
+)
 TIMEZONE = "Asia/Tokyo"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ECMWF_URL = "https://api.open-meteo.com/v1/ecmwf"
@@ -41,14 +60,36 @@ COORD_RE = re.compile(r"(-?\d{1,3}(?:\.\d+)?)\s*[,、]\s*(-?\d{1,3}(?:\.\d+)?)")
 
 TEXTS = {
     "ja": {
-        "line": "- {date}: 最高 {tmax} ℃、最低 {tmin} ℃、降水 {rain} mm、日照 {sun} h"
-        "（出典: Open-Meteo 過去データ {url} 、確認日 {checked}）",
+        "max": "最高 {v} ℃",
+        "min": "最低 {v} ℃",
+        "mean": "平均 {v} ℃",
+        "rain": "降水 {v} mm",
+        "sun": "日照 {v} h",
+        "et0": "蒸発散 {v} mm",
+        "wind": "風 {v} m/s",
+        "gust": "（突風 {v}）",
+        "soil_t": "地温 {v} ℃",
+        "soil_m": "水分 {v}",
+        "sep": "、",
+        "source": "（出典: Open-Meteo 過去データ {url} 、確認日 {checked}）",
+        "source_forecast": "（出典: Open-Meteo 予報の過去の値 {url} 、確認日 {checked}）",
         "jma": "見比べる一次資料: 気象庁 過去の気象データ検索 {url}",
         "none": "—",
     },
     "en": {
-        "line": "- {date}: max {tmax} °C, min {tmin} °C, precipitation {rain} mm, sunshine {sun} h"
-        " (source: Open-Meteo historical weather {url} , checked {checked})",
+        "max": "max {v} °C",
+        "min": "min {v} °C",
+        "mean": "mean {v} °C",
+        "rain": "precipitation {v} mm",
+        "sun": "sunshine {v} h",
+        "et0": "ET₀ {v} mm",
+        "wind": "wind {v} m/s",
+        "gust": " (gusts {v})",
+        "soil_t": "soil temp {v} °C",
+        "soil_m": "moisture {v}",
+        "sep": ", ",
+        "source": " (source: Open-Meteo historical weather {url} , checked {checked})",
+        "source_forecast": " (source: Open-Meteo past forecast values {url} , checked {checked})",
         "jma": "Primary source to compare: JMA historical weather data {url}",
         "none": "—",
     },
@@ -71,26 +112,45 @@ class Day:
     tmin: float | None
     rain: float | None
     sun_h: float | None
+    tavg: float | None = None
+    et0: float | None = None
+    wind: float | None = None
+    gust: float | None = None
+    soil_t: tuple[float | None, ...] = (None,) * 4  # 地温（LAYERS の順）
+    soil_m: tuple[float | None, ...] = (None,) * 4  # 水分
+    source: str = "archive"  # archive（過去データ）か forecast（予報の過去の値）
 
     @property
     def empty(self) -> bool:
-        return all(v is None for v in (self.tmax, self.tmin, self.rain, self.sun_h))
+        return all(
+            v is None
+            for v in (self.tmax, self.tmin, self.rain, self.sun_h, self.tavg, self.et0, self.wind, self.gust)
+        ) and all(v is None for v in (*self.soil_t, *self.soil_m))
 
     def render(self, language: str, checked: str) -> str:
         t = TEXTS.get(language, TEXTS["en"])
 
-        def f(v: float | None) -> str:
-            return t["none"] if v is None else f"{v:.1f}"
+        def f(v: float | None, digits: int = 1) -> str:
+            return t["none"] if v is None else f"{v:.{digits}f}"
 
-        return t["line"].format(
-            date=self.date,
-            tmax=f(self.tmax),
-            tmin=f(self.tmin),
-            rain=f(self.rain),
-            sun=f(self.sun_h),
-            url=OPEN_METEO_URL,
-            checked=checked,
-        )
+        def layers(vals, digits: int) -> str:
+            return " / ".join(f"{name} {f(v, digits)}" for name, v in zip(LAYERS, vals, strict=True))
+
+        parts = [t["max"].format(v=f(self.tmax)), t["min"].format(v=f(self.tmin))]
+        if self.tavg is not None:
+            parts.append(t["mean"].format(v=f(self.tavg)))
+        parts += [t["rain"].format(v=f(self.rain)), t["sun"].format(v=f(self.sun_h))]
+        if self.et0 is not None:
+            parts.append(t["et0"].format(v=f(self.et0)))
+        if self.wind is not None:
+            gust = "" if self.gust is None else t["gust"].format(v=f(self.gust))
+            parts.append(t["wind"].format(v=f(self.wind)) + gust)
+        if any(v is not None for v in self.soil_t):
+            parts.append(t["soil_t"].format(v=layers(self.soil_t, 1)))
+        if any(v is not None for v in self.soil_m):
+            parts.append(t["soil_m"].format(v=layers(self.soil_m, 2)))
+        key = "source_forecast" if self.source == "forecast" else "source"
+        return f"- {self.date}: " + t["sep"].join(parts) + t[key].format(url=OPEN_METEO_URL, checked=checked)
 
 
 def rounded(lat: float, lon: float) -> tuple[float, float]:
@@ -127,55 +187,57 @@ def check_range(start: str, end: str, today: dt.date | None = None) -> tuple[dt.
     return a, b
 
 
-def parse_daily(data: dict) -> list[Day]:
-    """Open-Meteo の daily を日ごとに。形が違えば WeatherError。"""
+def _num(v) -> float | None:
+    return None if v is None else float(v)
+
+
+def parse_daily(data: dict, source: str = "archive") -> list[Day]:
+    """Open-Meteo の daily を日ごとに。四つの基本の列が無ければ WeatherError、足した列は無くてもよい（None）。"""
     try:
         daily = data["daily"]
         dates = daily["time"]
-        cols = [daily[k] for k in DAILY]
-        if any(len(c) != len(dates) for c in cols):
+        cols = {k: daily[k] for k in REQUIRED}
+        if any(len(c) != len(dates) for c in cols.values()):
             raise ValueError("lengths")
     except (KeyError, TypeError, ValueError) as e:
         raise WeatherError("weather_bad_answer", str(e)) from None
+
+    def col(name: str, i: int):
+        c = daily.get(name)
+        return c[i] if isinstance(c, list) and len(c) == len(dates) else None
+
     out = []
     for i, date in enumerate(dates):
-        tmax, tmin, rain, sun_s = (c[i] for c in cols)
-        sun_h = None if sun_s is None else float(sun_s) / 3600
+        sun_s = cols["sunshine_duration"][i]
         out.append(
             Day(
                 str(date),
-                None if tmax is None else float(tmax),
-                None if tmin is None else float(tmin),
-                None if rain is None else float(rain),
-                sun_h,
+                _num(cols["temperature_2m_max"][i]),
+                _num(cols["temperature_2m_min"][i]),
+                _num(cols["precipitation_sum"][i]),
+                None if sun_s is None else float(sun_s) / 3600,
+                _num(col("temperature_2m_mean", i)),
+                _num(col("et0_fao_evapotranspiration", i)),
+                _num(col("wind_speed_10m_max", i)),
+                _num(col("wind_gusts_10m_max", i)),
+                tuple(_num(col(k, i)) for k in SOIL_T_DAILY),
+                tuple(_num(col(k, i)) for k in SOIL_M_DAILY),
+                source,
             )
         )
     return out
 
 
-def fetch(
-    lat: float,
-    lon: float,
-    start: dt.date,
-    end: dt.date,
-    transport=None,
-    timeout: float = 30.0,
-) -> list[Day]:
-    """Open-Meteo の過去データを取る。座標はここで 2 桁に丸める。失敗は WeatherError。"""
+def _request(url: str, params: dict, transport=None, timeout: float = 30.0, get=None) -> dict:
+    """一回の問い合わせ。get（差し替え用）か httpx。失敗は WeatherError。"""
     import httpx
 
-    lat, lon = rounded(lat, lon)
-    params = {
-        "latitude": f"{lat:.2f}",
-        "longitude": f"{lon:.2f}",
-        "start_date": start.isoformat(),
-        "end_date": end.isoformat(),
-        "daily": ",".join(DAILY),
-        "timezone": TIMEZONE,
-    }
     try:
-        with httpx.Client(transport=transport, timeout=timeout) as http:
-            r = http.get(ARCHIVE_URL, params=params)
+        if get is not None:
+            r = get(url, params=params, timeout=timeout)
+        else:
+            with httpx.Client(transport=transport, timeout=timeout) as http:
+                r = http.get(url, params=params)
     except httpx.HTTPError as e:
         raise WeatherError("weather_unreachable", type(e).__name__) from None
     if r.status_code != 200:
@@ -186,10 +248,40 @@ def fetch(
             pass
         raise WeatherError("weather_http", f"HTTP {r.status_code}{' ' + reason if reason else ''}")
     try:
-        data = r.json()
+        return r.json()
     except ValueError:
         raise WeatherError("weather_bad_answer", "not JSON") from None
-    return parse_daily(data)
+
+
+def _params(lat: float, lon: float) -> dict:
+    lat, lon = rounded(lat, lon)  # 座標はここで 2 桁に丸める
+    return {
+        "latitude": f"{lat:.2f}",
+        "longitude": f"{lon:.2f}",
+        "daily": ",".join(DAILY),
+        "wind_speed_unit": "ms",
+        "timezone": TIMEZONE,
+    }
+
+
+def fetch(
+    lat: float,
+    lon: float,
+    start: dt.date,
+    end: dt.date,
+    transport=None,
+    timeout: float = 30.0,
+    get=None,
+) -> list[Day]:
+    """Open-Meteo の過去データを取る。座標はここで 2 桁に丸める。失敗は WeatherError。"""
+    params = {**_params(lat, lon), "start_date": start.isoformat(), "end_date": end.isoformat()}
+    return parse_daily(_request(ARCHIVE_URL, params, transport, timeout, get))
+
+
+def fetch_recent(lat: float, lon: float, get=None, days: int = 7, timeout: float = 30.0) -> list[Day]:
+    """過去データがまだ無い直近の日を、予報の API の過去の値（past_days）で取る。"""
+    params = {**_params(lat, lon), "past_days": days, "forecast_days": 1}
+    return parse_daily(_request(FORECAST_URL, params, None, timeout, get), source="forecast")
 
 
 @dataclass
@@ -332,6 +424,9 @@ class Soil:
     temp: dict[str, float | None]  # 深さ → 地温 ℃
     moisture: dict[str, float | None]  # 深さ → 水分 m³/m³
     surface: tuple[str, float] | None = None  # ECMWF の地表面温度（時, ℃）
+    hourly: list[tuple[str, dict, dict]] = field(
+        default_factory=list
+    )  # 最初の 7 日の時ごと（時, 地温, 水分）
 
 
 def parse_soil(data: dict, now: dt.datetime | None = None) -> Soil | None:
@@ -357,7 +452,18 @@ def parse_soil(data: dict, now: dt.datetime | None = None) -> Soil | None:
             label: (None if cols[k][best] is None else float(cols[k][best])) for k, label in names.items()
         }
 
-    return Soil(times[best], pick(SOIL_TEMP), pick(SOIL_MOISTURE))
+    series: list[tuple[str, dict, dict]] = []
+    dates: list[str] = []
+    for i, tm in enumerate(times):
+        if tm[:10] not in dates:
+            dates.append(tm[:10])
+        if len(dates) > 7:
+            break
+        row = lambda names, i=i: {
+            label: (None if cols[k][i] is None else float(cols[k][i])) for k, label in names.items()
+        }
+        series.append((tm, row(SOIL_TEMP), row(SOIL_MOISTURE)))
+    return Soil(times[best], pick(SOIL_TEMP), pick(SOIL_MOISTURE), None, series)
 
 
 def fetch_surface(
@@ -553,3 +659,104 @@ def day_lines(root: Path, month: str) -> list[str]:
     """その月の日の行（観察に Data として引くときに使う）。"""
     text = show(root, month) or ""
     return [raw for raw in text.splitlines() if DAY_LINE_RE.match(raw)]
+
+
+NUM = r"(-?\d+(?:\.\d+)?|—)"
+
+
+def _f(v: str) -> float | None:
+    return None if v == "—" else float(v)
+
+
+def parse_line(raw: str) -> Day | None:
+    """日の行（ja か en、古い形も新しい形も）を Day に。日の行でなければ None。"""
+    m = DAY_LINE_RE.match(raw)
+    if not m:
+        return None
+
+    def one(pattern: str) -> float | None:
+        got = re.search(pattern, raw)
+        return _f(got[1]) if got else None
+
+    def layers(label: str, end: str) -> tuple[float | None, ...]:
+        got = re.search(label + r" ([^、,（(]*?)" + end, raw)
+        vals = dict(re.findall(r"(\d+-\d+cm) " + NUM, got[1])) if got else {}
+        return tuple(_f(vals[name]) if name in vals else None for name in LAYERS)
+
+    wind = re.search(r"(?:風|wind) " + NUM + r" m/s ?(?:[（(](?:突風|gusts) " + NUM + r"[）)])?", raw)
+    forecast = "予報の過去の値" in raw or "past forecast values" in raw
+    return Day(
+        m["date"],
+        one(r"(?:最高|max) " + NUM),
+        one(r"(?:最低|min) " + NUM),
+        one(r"(?:降水|precipitation) " + NUM + " mm"),
+        one(r"(?:日照|sunshine) " + NUM + " h"),
+        one(r"(?:平均|mean) " + NUM),
+        one(r"(?:蒸発散|ET₀) " + NUM + " mm"),
+        _f(wind[1]) if wind else None,
+        _f(wind[2]) if wind and wind[2] else None,
+        layers(r"(?:地温|soil temp)", r" (?:℃|°C)"),
+        layers(r"(?:水分|moisture)", r"(?:[（(]出典| \(source|$)"),
+        "forecast" if forecast else "archive",
+    )
+
+
+def recorded(root: Path, start: dt.date, end: dt.date) -> dict[str, Day]:
+    """start〜end の、記録に在る日の行（日付 → Day）。"""
+    out: dict[str, Day] = {}
+    month = dt.date(start.year, start.month, 1)
+    while month <= end:
+        for raw in day_lines(root, f"{month:%Y-%m}"):
+            day = parse_line(raw)
+            if day:
+                out[day.date] = day
+        month = (month.replace(day=28) + dt.timedelta(days=4)).replace(day=1)
+    return out
+
+
+def first_day(folder: Folder) -> dt.date | None:
+    """記録の最初の日（一番古い観察の日）。"""
+    paths = folder.list_observations()
+    try:
+        return dt.date.fromisoformat(paths[0].name[:10]) if paths else None
+    except ValueError:
+        return None
+
+
+def fill_missing(
+    folder: Folder, language: str, get=None, today: dt.date | None = None, transport=None
+) -> int:
+    """最初の観察の日から昨日までで、記録の無い日（と予報の過去の値の日）を過去データで埋める。
+
+    過去データの来ない直近の日は、予報の API の過去の値で一旦書き、過去データが来たら置き換える。
+    書いた日数を返す。網が無くても投げない（警告を一行）。予報そのものは書かない。
+    """
+    today = today or dt.date.today()
+    start, end = first_day(folder), today - dt.timedelta(days=1)
+    center = place_center(folder)
+    if start is None or center is None or start > end:
+        return 0
+    have = recorded(folder.root, start, end)
+    dates = [(start + dt.timedelta(days=i)).isoformat() for i in range((end - start).days + 1)]
+    missing = [d for d in dates if d not in have or have[d].source == "forecast"]
+    if not missing:
+        return 0
+    written = 0
+    try:
+        a, b = dt.date.fromisoformat(missing[0]), dt.date.fromisoformat(missing[-1])
+        got = {d.date: d for d in fetch(*center, a, b, transport=transport, get=get) if not d.empty}
+        if got:
+            write_days(folder.root, list(got.values()), language)
+            written += len(got)
+        gap = [d for d in missing if d not in got and d not in have]  # 予報の過去の値は、まだ無い日にだけ
+        if gap:
+            recent = {d.date: d for d in fetch_recent(*center, get=get) if not d.empty}
+            days = [recent[d] for d in gap if d in recent]
+            if days:
+                write_days(folder.root, days, language)
+                written += len(days)
+    except WeatherError as e:
+        log.warning("気象の記録を足せなかった: %s %s", e.word, e.detail)
+    except Exception as e:  # noqa: BLE001
+        log.warning("気象の記録を足せなかった: %s", type(e).__name__)
+    return written

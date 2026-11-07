@@ -51,13 +51,20 @@ def put(folder, name, body):
 def test_shipped_land_is_found(app):
     (land,) = [p for p in plugins.load(app.folder) if p.name == "land"]
     assert land.route == "/p/land" and land.title["ja"] == "この土地"
-    assert [p.name for p in app.plugins] == ["land", "weather"]
+    assert [p.name for p in app.plugins] == ["land", "procedure", "weather"]
 
 
 def test_own_plugin_comes_after_shipped(app, seedfolder):
     put(seedfolder, "harvest", GOOD)
     app.open_folder(str(seedfolder))
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/weather", "/p/harvest"]
+    assert [sc.route for sc in app.screens()] == [
+        "/",
+        "/photos",
+        "/p/land",
+        "/p/procedure",
+        "/p/weather",
+        "/p/harvest",
+    ]
     app.route_change(path="/p/harvest")
     v = app.page.views[-1]
     assert v.route == "/p/harvest" and "seed — 収穫" in texts(v) and "収穫の画面です" in texts(v)
@@ -74,7 +81,7 @@ def test_broken_plugins_are_skipped(app, seedfolder, caplog):
     put(seedfolder, "ok", GOOD)
     with caplog.at_level(logging.WARNING, logger="seed.app"):
         got = plugins.load(app.folder)
-    assert [p.name for p in got] == ["land", "weather", "ok"]
+    assert [p.name for p in got] == ["land", "procedure", "weather", "ok"]
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 3
 
 
@@ -92,7 +99,7 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     app.open_folder(str(other))
-    assert [p.name for p in app.plugins] == ["land", "weather"]
+    assert [p.name for p in app.plugins] == ["land", "procedure", "weather"]
     app2 = App(FakePage(), str(seedfolder))
     assert "harvest" in [p.name for p in app2.plugins]
 
@@ -100,7 +107,7 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
 def test_plugins_written_while_running_are_picked_up(app, seedfolder):
     import os
 
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/weather"]
+    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/procedure", "/p/weather"]
     put(seedfolder, "harvest", GOOD)
     app.refresh()
     assert "/p/harvest" in [sc.route for sc in app.screens()]
@@ -123,6 +130,14 @@ def soil():
         {"0 cm": 15.2, "6 cm": 14.0, "18 cm": 15.4, "54 cm": 17.0},
         {"0-1 cm": 0.31, "1-3 cm": 0.30, "3-9 cm": 0.29, "9-27 cm": 0.28, "27-81 cm": 0.27},
         ("2026-11-08T14:00", 16.4),
+        [
+            (
+                f"2026-11-{8 + i // 24:02d}T{i % 24:02d}:00",
+                {"0 cm": 15.0 + i % 24 / 4, "6 cm": 14.0},
+                {"0-1 cm": 0.3},
+            )
+            for i in range(48)
+        ],
     )
 
 
@@ -144,7 +159,7 @@ def forecast_rows(n=16):
 
 def test_weather_plugin_after_land(app):
     got = [p.name for p in plugins.load(app.folder)]
-    assert got.index("weather") == got.index("land") + 1
+    assert got.index("land") < got.index("weather")
     (w,) = [p for p in plugins.load(app.folder) if p.name == "weather"]
     assert w.title["ja"] == "天気" and w.route == "/p/weather"
 
@@ -153,6 +168,9 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     from seed import land
 
     calls = []
+    from seed.plugins import weather as P
+
+    monkeypatch.setattr(P, "now", lambda: __import__("datetime").datetime(2026, 11, 8, 7, 30))
     monkeypatch.setattr(land, "center", lambda folder: (34.051, 134.249))
     monkeypatch.setattr(
         W, "fetch_week", lambda lat, lon, **k: calls.append((lat, lon)) or (forecast_rows(), soil(), hours())
@@ -162,14 +180,17 @@ def test_weather_renders_week_and_caches(app, monkeypatch):
     assert "取って来ています…" in texts(app.page.views[-1])
     run_tasks(app)
     got = texts(app.page.views[-1])
-    assert len([x for x in got if x.startswith("最高")]) == 7
-    assert "土（14:00 の値）" in got
-    assert "地表面 16 ℃（ECMWF、14:00）" in got
-    assert "地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
-    assert "水分: 0-1 cm 0.31 · 1-3 cm 0.30 · 3-9 cm 0.29 · 9-27 cm 0.28 · 27-81 cm 0.27 m³/m³" in got
-    assert "11/08（日）  雨" in got
-    assert got.count("日照 5.2 h  蒸発散 2.1 mm  風 3 m/s 北西（突風 8）") == 7
-    assert "最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
+    for h in ("土（14:00 の値）", "今日と明日", "二週間", "作業の目安"):
+        assert h in got
+    assert "地表面 16 ℃（ECMWF、14:00）  地温: 0 cm 15 ℃ · 6 cm 14 ℃ · 18 cm 15 ℃ · 54 cm 17 ℃" in got
+    # 字の一覧は無く、四つの図が横に動かせる行に入っている
+    assert not any(re.match(r"\d\d:\d\d  ", x) or x.startswith(("最高", "日照")) for x in got)
+    images = [c for c in walk(app.page.views[-1]) if isinstance(c, ft.Image)]
+    assert len(images) == 4
+    for c in walk(app.page.views[-1]):
+        if isinstance(c, ft.Row) and any(isinstance(x, ft.Image) for x in c.controls):
+            assert c.scroll == ft.ScrollMode.AUTO
+    assert all(img.width and img.width > 400 and isinstance(img.src, bytes) for img in images)
     assert "Open-Meteo 天気予報 API" in got and "地表面: ECMWF IFS（Open-Meteo）" in got
     assert any(x.startswith("計算: 畑の座標") for x in got)
     assert not any("実測" in x for x in got)
@@ -215,48 +236,24 @@ def test_weather_without_soil(app, monkeypatch):
     assert not any(x.startswith("土（") for x in got) and "Open-Meteo 天気予報 API" in got
 
 
-def test_weather_hours_open_today_and_toggle(app, monkeypatch):
+def test_weather_plugin_fills_record_once_a_day(app, monkeypatch):
     from seed import land
     from seed.plugins import weather as P
 
+    calls = []
     monkeypatch.setattr(land, "center", lambda folder: (34.05, 134.25))
     monkeypatch.setattr(W, "fetch_week", lambda *a, **k: (forecast_rows(), soil(), hours()))
+    monkeypatch.setattr(W, "fill_missing", lambda folder, lg, **k: calls.append(folder.root) or 0)
     monkeypatch.setattr(P, "now", lambda: __import__("datetime").datetime(2026, 11, 8, 7, 30))
     app.page.route = "/p/weather"
     app.route_change(path="/p/weather")
     run_tasks(app)
-
-    def lines():
-        return [x for x in texts(app.page.views[-1]) if re.match(r"\d\d:\d\d  ", x)]
-
-    got = texts(app.page.views[-1])
-    for h in ("土（14:00 の値）", "今日と明日（1 時間ごと）", "一週間", "二週間先まで"):
-        assert h in got
-    assert len([x for x in got if x.startswith("11/") and "最高" in x]) == 9  # 8〜16 日目は一行ずつ
-    assert (
-        "11/15（日）  雨" not in got and "11/16（月）  雨  最高 18 ℃ / 最低 10 ℃  降水 2.5 mm（70 %）" in got
-    )
-    assert len(lines()) == 17 + 1 + 24  # 今日の 07〜23 時と明日の 1 行、今日を開いた 24 行
-    assert "07:00  雨 0.0 mm（10 %）  快晴  9 ℃  風 2 m/s 北西  湿度 85 %" in lines()
-    colour = {
-        c.value: c.color
-        for c in walk(app.page.views[-1])
-        if isinstance(c, ft.Text) and c.value and c.value.startswith(("07:00  雨", "06:00  雨 1.2"))
-    }
-    assert colour["07:00  雨 0.0 mm（10 %）  快晴  9 ℃  風 2 m/s 北西  湿度 85 %"] is not None  # 雨 0 は薄い
-    assert colour["06:00  雨 1.2 mm（80 %）  雨  8 ℃  風 3 m/s 東  湿度 90 %"] is None  # 雨のある時は普通の色
-    assert "06:00  快晴  9 ℃  湿度 85 %  露点 7 ℃  雨 0.0 mm（10 %）  風 2 m/s 北西" in lines()
-
-    def tap(date_text):
-        for c in walk(app.page.views[-1]):
-            if isinstance(c, ft.Container) and c.on_click and date_text in texts(c):
-                c.on_click(None)
-                return
-        raise AssertionError(date_text)
-
-    tap("11/08（日）  雨")
-    assert len(lines()) == 18
-    tap("11/09（月）  雨")
-    assert len(lines()) == 19
-    tap("11/08（日）  雨")
-    assert len(lines()) == 43
+    assert len(calls) == 1
+    app.state.pop("forecast")  # 取り直しても、同じ日は埋め直さない
+    app.refresh()
+    run_tasks(app)
+    assert len(calls) == 1
+    monkeypatch.setattr(P, "now", lambda: __import__("datetime").datetime(2026, 11, 9, 7, 30))
+    app.refresh()
+    run_tasks(app)
+    assert len(calls) == 2

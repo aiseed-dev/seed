@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-app = ["flet[all]==1.1.0", "pillow", "httpx", "pillow-heif", "qrcode"]                # 本人のアプリ（Web 版も）。iPhone の HEIC を読む
+app = ["flet[all]==1.1.0", "pillow", "httpx", "pillow-heif", "qrcode", "resvg-py"]                # 本人のアプリ（Web 版も）。iPhone の HEIC を読む
 origin = ["pillow", "httpx", "imageio-ffmpeg"]                                   # seed origin（地図と空中写真の動画。mp4 は imageio-ffmpeg）
 grow = ["pillow", "httpx", "resvg-py"]                                          # seed grow --draw（図を PNG にして halo で絵に。resvg は wheel だけ）
 heic = ["pillow-heif"]                                                          # HEIC だけ要るとき
