@@ -71,7 +71,7 @@ description: 自給農の畑の写真と場所の資料から、出典付きの�
 全体を開いている時）は、記録が畑ごとに在るので、`seed observe`、`say`、`mark`、`publish`、`photos`、`plan`、
 `identify`、`marks`、`lot`、`ledger`、`weather`、`procedure`、`grow`、`origin`、`prune` は止まり、畑の名を言います。
 命令に `--field <畑の名>` を付けるか、`--folder <プロジェクトの根>/fields/<畑の名>` で畑を指します（`seed field use <畑の名>`
-で選んでおくこともできます）。
+で選んでおくこともできます）。畑の中の `skill/` は根の物と合わさらず、在ればそれだけが使われます。フォルダーの形を見直す、写真や資料の置き場を決める、この手引きの写しを新しくする時は、seed の `skill-folder/` を読みます（clone した seed の中。`python -c "from seed.cli import package_skill; print(package_skill())"` の一つ上のフォルダー）。
 
 写真を多く入れたとき（PC のアプリで多く選んだとき、zip でまとめて入れたとき）は、撮った日ごとに 6 枚までの組に
 分かれ、組ごとに一つの観察になります。続きの組では、同じ日の前の組が「前の観察」として渡ることがあります。
