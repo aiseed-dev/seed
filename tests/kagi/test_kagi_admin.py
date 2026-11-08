@@ -252,8 +252,8 @@ def test_load_all_and_rows(tmp_path):
     assert cmds[
         read
     ] == [  # 鍵は root だけが読めるファイルに（無い時だけ作る。systemd が seed.service にだけ渡す）
-        "sudo install -d -o root -g root -m 700 /etc/seed/keys",
-        "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
+        "sudo install -d -o root -g root -m 700 /etc/credstore",
+        "sudo test -e /etc/credstore/seed.anthropic || sudo sh -c 'umask 077; cat > /etc/credstore/seed.anthropic'",
         "sudo systemctl restart seed",
     ]
     assert any("25 回" in t for t in texts) and any("上限" in t for t in texts)

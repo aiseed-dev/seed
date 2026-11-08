@@ -16,12 +16,13 @@ WorkingDirectory=/opt/seed
 EnvironmentFile=/etc/seed/env
 # 鍵は root だけが読めるファイル（600 root）。systemd がこのサービスにだけ、$CREDENTIALS_DIRECTORY の下に渡す
 # （K-03。環境変数に出さない）。サーバーは在ればそれを読み、無ければ環境変数を読む（server/settings.py）
-# 記録（SEED_AUDIT）の署名の鍵。置いていなければこの行を # にする（記録は書かれず、/health の audit が off）
+# 記録（SEED_AUDIT）の署名の鍵。0-1 で必ず作る。LoadCredential= はファイルが無いと起動しない（status=243/CREDENTIALS）
 LoadCredential=kagi-log-key:/etc/seed/log-key
-# Claude の鍵（/api/read と /api/talk）。置いていなければこの行を # にする（その二つが 503）
-LoadCredential=anthropic:/etc/seed/keys/anthropic
-# Pl@ntNet の鍵（/api/identify）。置いていなければこの行を # にする（/api/identify が 503）
-LoadCredential=plantnet:/etc/seed/keys/plantnet
+# Claude の鍵（/api/read と /api/talk）と Pl@ntNet の鍵（/api/identify）。/etc/credstore/seed.anthropic、
+# /etc/credstore/seed.plantnet（root 600）。ImportCredential= は無い物を飛ばすので、鍵が無くてもサービスは起き、
+# その口が 503「準備中です」。置いたら systemctl restart seed。systemd 254 から（Debian 13 は 257）
+ImportCredential=seed.anthropic
+ImportCredential=seed.plantnet
 # --no-access-log: /api/lookup は招待コードを query で受けるので、uvicorn の一行のログ（journald）にコードが残る（11-05 に手元で見た）
 # uvicorn は 127.0.0.1（Caddy）からの X-Forwarded-For と X-Forwarded-Proto を既定で信じる（返す url が https://seed.aiseed.dev/ になる。11-05 に手元で確かめた）
 ExecStart=/opt/seed/.venv/bin/uvicorn seed.server.main:app --host 127.0.0.1 --port 8010 --no-access-log

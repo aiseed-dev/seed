@@ -98,6 +98,26 @@ def test_errors_carry_detail(status, word):
     assert e.value.word == word and e.value.detail == "今日はここまで" and e.value.status == status
 
 
+@pytest.mark.parametrize(
+    ("error", "word", "ja", "en"),
+    [
+        ("read_unavailable", "server_read_not_ready", "Claude の読み取りは準備中です", "not ready yet"),
+        ("talk_unavailable", "server_talk_not_ready", "Claude と話すのは準備中です", "not ready yet"),
+        ("identify_unavailable", "server_identify_not_ready", "草の名の照会は準備中です", "not ready yet"),
+    ],
+)
+def test_not_ready_on_server(error, word, ja, en):
+    """サーバーに鍵が無い口の 503 は、本人の言語で「準備中です」（サーバーの日本語の文は重ねない）。"""
+    from seed.app.strings import error_text
+
+    c = client(lambda req: httpx.Response(503, json={"error": error, "detail": "準備中"}))
+    with pytest.raises(ClientError) as e:
+        c.read([b"x"])
+    assert e.value.word == word and e.value.status == 503
+    assert error_text(e.value, "ja") == f"このサーバーでは、{ja}。"
+    assert en in error_text(e.value, "en") and "準備中" not in error_text(e.value, "en")
+
+
 def test_unreachable():
     def handler(req):
         raise httpx.ConnectError("refused", request=req)

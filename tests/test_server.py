@@ -93,12 +93,35 @@ def post_read(c: TestClient, photos=(JPEG,), **fields):
 # ---------------------------------------------------------------- 起動、入口
 
 
-def test_health_without_key_and_read_is_503(settings):
+def test_health_without_key_and_read_is_503(settings, monkeypatch):
+    from seed import identify as I
+
+    monkeypatch.delenv(I.ENV_KEY, raising=False)
     c = client_for(replace(settings, api_key=None))
     h = c.get("/health").json()
-    assert h["read"] is False and h["lookup"] is False and h["talk"] is False
+    assert h["read"] is False and h["lookup"] is False and h["talk"] is False and h["identify"] is False
     assert h["remaining"] == {"reads": 200, "talks": 300, "usd": 20.0}
-    assert post_read(c).status_code == 503
+    r = post_read(c)
+    assert r.status_code == 503 and r.json()["error"] == "read_unavailable"
+    assert r.json()["detail"] == "Claude の読み取りは準備中です"
+    # 入口に一行。鍵が無くても公開された記録は読める（設計書 §5.1）
+    line = "Claude の読み取りと話す、草の名の照会は準備中です。公開された記録は読めます。"
+    assert line in c.get("/").text
+    assert line in (settings.site_dir / "index.html").read_text(encoding="utf-8")
+
+
+def test_entry_page_says_nothing_when_keys_are_there(settings, monkeypatch):
+    from seed import identify as I
+
+    monkeypatch.setenv(I.ENV_KEY, "k-server")
+    c = client_for(settings)
+    assert c.get("/health").json()["identify"] is True
+    assert "準備中" not in c.get("/").text
+    assert "準備中" not in (settings.site_dir / "index.html").read_text(encoding="utf-8")
+    # Pl@ntNet の鍵だけ無ければ、その口だけ言う
+    monkeypatch.delenv(I.ENV_KEY)
+    assert "草の名の照会は準備中です。公開された記録は読めます。" in client_for(settings).get("/").text
+    assert "Claude の読み取りと話す" not in client_for(settings).get("/").text
 
 
 def test_entry_page_empty(settings):
@@ -756,7 +779,8 @@ def test_identify_endpoint(settings, calls, monkeypatch):
     c = client_for(settings)
     files = [("photos", ("1.jpg", JPEG, "image/jpeg"))]
     monkeypatch.delenv(I.ENV_KEY, raising=False)
-    assert c.post("/api/identify", data={"token": TOKEN}, files=files).status_code == 503
+    r = c.post("/api/identify", data={"token": TOKEN}, files=files)
+    assert r.status_code == 503 and r.json()["detail"] == ["草の名の照会は準備中です"]
     monkeypatch.setenv(I.ENV_KEY, "k-server")
     seen = {}
 

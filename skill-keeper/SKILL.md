@@ -16,8 +16,8 @@ description: 畑のアプリ seed を人に使ってもらう形で動かす人�
 ## 守ること
 
 1. **鍵、token、パスワードの値を見ません。書きません。会話に出しません。** 値を扱う作業（鍵を作る、
-   `/etc/seed/keys/` に鍵を置く、招待コードを書く・渡す、token を相手に渡す、招待コードを端末に出す `seed home` を立てる）は、
-   人が自分の端末で打ちます。値の入ったファイル（`/etc/seed/keys/` の中、`/etc/seed/invites.toml`、`/etc/seed/log-key`
+   `/etc/credstore/` に鍵を置く、招待コードを書く・渡す、token を相手に渡す、招待コードを端末に出す `seed home` を立てる）は、
+   人が自分の端末で打ちます。値の入ったファイル（`/etc/credstore/seed.*`、`/etc/seed/invites.toml`、`/etc/seed/log-key`
    （サーバーの記録の署名の鍵）、`~/.config/kagi/log-key`（kagi の記録の署名の鍵）、`<プロジェクト>/home.toml`、作業の場所の
    `seed-admin.json`（管理者の token が平文で入る。`src/kagi/admin.py`））は開きません。値が会話に貼られたら、
    写さず、使わず、その値を取り消して作り直す手（02、05）を出します。kagi に渡すのは `.pub` だけです

@@ -2,9 +2,10 @@
 """サーバーの設定。環境変数と、systemd が渡す鍵のファイルから読む。
 
 .env は読まない。deb2 では、秘密でない設定を systemd の EnvironmentFile（/etc/seed/env）が入れ、
-Claude と Pl@ntNet の鍵は root だけが読めるファイル（/etc/seed/keys/*）を LoadCredential= が
-このサービスにだけ渡す（$CREDENTIALS_DIRECTORY/anthropic、…/plantnet）。在ればそれを、無ければ環境変数を読む
-（手元で動かす時とテスト）。鍵はここにだけ入り、ログにも応答にも出さない。
+Claude と Pl@ntNet の鍵は root だけが読めるファイル（/etc/credstore/seed.anthropic、…/seed.plantnet）を
+ImportCredential= がこのサービスにだけ渡す（$CREDENTIALS_DIRECTORY/seed.anthropic、…/seed.plantnet）。
+ファイルが無ければ systemd は飛ばし、サービスは鍵無しで起きる（その口が 503 で準備中）。
+在ればそれを、無ければ環境変数を読む（手元で動かす時とテスト）。鍵はここにだけ入り、ログにも応答にも出さない。
 """
 
 from __future__ import annotations
@@ -29,9 +30,9 @@ def _int(name: str, default: int) -> int:
     return int(v) if v else default
 
 
-ENV_CREDENTIALS_DIR = "CREDENTIALS_DIRECTORY"  # systemd が LoadCredential= の物を置く所
-CRED_ANTHROPIC = "anthropic"  # LoadCredential=anthropic:/etc/seed/keys/anthropic
-CRED_PLANTNET = "plantnet"
+ENV_CREDENTIALS_DIR = "CREDENTIALS_DIRECTORY"  # systemd が LoadCredential=、ImportCredential= の物を置く所
+CRED_ANTHROPIC = "seed.anthropic"  # ImportCredential=seed.anthropic（/etc/credstore/seed.anthropic）
+CRED_PLANTNET = "seed.plantnet"
 
 
 def credential(name: str, env: str) -> str | None:

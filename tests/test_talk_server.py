@@ -120,7 +120,8 @@ def test_talk_paused_and_closed(settings, calls, tmp_path):
     assert r.status_code == 503 and r.json()["error"] == "talk_closed"
     assert c.get("/health").json()["talk"] is False
     c = TestClient(create_app(replace(settings, api_key=None)))
-    assert c.post("/api/talk", json=hello(invite=INVITE)).json()["error"] == "talk_unavailable"
+    r = c.post("/api/talk", json=hello(invite=INVITE)).json()
+    assert r["error"] == "talk_unavailable" and r["detail"] == ["Claude と話すのは準備中です"]
     assert calls.kwargs == []
 
 
@@ -231,15 +232,15 @@ def test_talk_journal_one_line_without_content(settings, calls, tmp_path, monkey
     assert "北の角" not in text and INVITE not in text
 
 
-# ---------------------------------------------------------------- 鍵の置き方（systemd の LoadCredential=）
+# ---------------------------------------------------------------- 鍵の置き方（systemd の ImportCredential=）
 
 
 def test_keys_from_credentials_directory_then_env(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.DEBUG)
     creds = tmp_path / "creds"
     creds.mkdir()
-    (creds / "anthropic").write_text("sk-from-credential-file-000\n", encoding="utf-8")
-    (creds / "plantnet").write_text("pn-from-credential-file-000", encoding="utf-8")
+    (creds / "seed.anthropic").write_text("sk-from-credential-file-000\n", encoding="utf-8")
+    (creds / "seed.plantnet").write_text("pn-from-credential-file-000", encoding="utf-8")
     monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-from-env-000")
     monkeypatch.setenv("PLANTNET_API_KEY", "pn-from-env-000")
@@ -251,8 +252,8 @@ def test_keys_from_credentials_directory_then_env(tmp_path, monkeypatch, caplog)
     h = c.get("/health")
     assert h.json()["read"] is True and "sk-from" not in h.text and "pn-from" not in h.text
     # 無ければ環境変数（手元で動かす時、テスト）
-    (creds / "anthropic").unlink()
-    (creds / "plantnet").unlink()
+    (creds / "seed.anthropic").unlink()
+    (creds / "seed.plantnet").unlink()
     st = Settings.from_env()
     assert st.api_key == "sk-from-env-000" and st.plantnet_key == "pn-from-env-000"
     monkeypatch.delenv("CREDENTIALS_DIRECTORY")
@@ -260,9 +261,9 @@ def test_keys_from_credentials_directory_then_env(tmp_path, monkeypatch, caplog)
     assert Settings.from_env().api_key is None
     # 読めない鍵のファイルは、値を出さずに一行
     monkeypatch.setenv("CREDENTIALS_DIRECTORY", str(creds))
-    (creds / "anthropic").mkdir()
-    assert S.credential("anthropic", "NO_SUCH_ENV") is None
-    assert "鍵 anthropic を読めない" in caplog.text
+    (creds / "seed.anthropic").mkdir()
+    assert S.credential("seed.anthropic", "NO_SUCH_ENV") is None
+    assert "鍵 seed.anthropic を読めない" in caplog.text
     assert "sk-from" not in caplog.text and "pn-from" not in caplog.text
 
 

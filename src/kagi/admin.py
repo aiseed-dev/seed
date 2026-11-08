@@ -397,8 +397,8 @@ def attention(o: dict, audit_: dict | None = None) -> list[tuple[str, list[str]]
         warn(
             "写真を読み取れず、話す口も使えません。Claude の鍵が入っていません。サーバーで次を打ちます。"
             "二行目で鍵を貼り、Enter の後に Ctrl-D で終えます（鍵がもう在る時は作り直しません）。",
-            "sudo install -d -o root -g root -m 700 /etc/seed/keys",
-            "sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'",
+            "sudo install -d -o root -g root -m 700 /etc/credstore",
+            "sudo test -e /etc/credstore/seed.anthropic || sudo sh -c 'umask 077; cat > /etc/credstore/seed.anthropic'",
             "sudo systemctl restart seed",
         )
     if o.get("audit") == "off":

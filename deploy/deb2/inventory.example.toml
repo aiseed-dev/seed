@@ -6,25 +6,25 @@
 [[secret]]
 id = "deb2-anthropic-key"
 kind = "token"
-where = "deb2:/etc/seed/keys/anthropic（root:root 600。systemd の LoadCredential= が seed.service にだけ渡す。dev も seed も直には読めない）"
+where = "deb2:/etc/credstore/seed.anthropic（root:root 600。systemd の ImportCredential= が seed.service にだけ渡す。dev も seed も直には読めない）"
 holder = "yniji"
 role = "seed のサーバーが Claude を呼ぶ（/api/read、/api/talk）。他には使わない（K-01）"
 # made = 2026-11-XX
 # expires = 2027-02-XX
 rotate_days = 90
-lost = "Anthropic の Console で新しい鍵を作り、/etc/seed/keys/anthropic を置き換えて（root:root 600）systemctl restart seed"
+lost = "Anthropic の Console で新しい鍵を作り、/etc/credstore/seed.anthropic を置き換えて（root:root 600）systemctl restart seed"
 leaked = "Console で失効 → Console の使用量で範囲を知る → 新しい鍵を置く → 知らせる → 書く（K-15）"
 
 [[secret]]
 id = "deb2-plantnet-key"
 kind = "token"
-where = "deb2:/etc/seed/keys/plantnet（root:root 600。LoadCredential= で seed.service にだけ渡す）"
+where = "deb2:/etc/credstore/seed.plantnet（root:root 600。ImportCredential= で seed.service にだけ渡す）"
 holder = "yniji"
 role = "seed のサーバーが Pl@ntNet に草の名を尋ねる（/api/identify）"
 # made = 2026-11-XX
 # expires = 2027-11-XX
 rotate_days = 365
-lost = "my.plantnet.org で新しい鍵を作り、/etc/seed/keys/plantnet を置き換えて（root:root 600）systemctl restart seed"
+lost = "my.plantnet.org で新しい鍵を作り、/etc/credstore/seed.plantnet を置き換えて（root:root 600）systemctl restart seed"
 leaked = "my.plantnet.org で失効 → 使用量で範囲を知る → 新しい鍵を置く → 書く"
 
 [[secret]]

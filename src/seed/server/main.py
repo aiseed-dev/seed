@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """seed.aiseed.dev の FastAPI（設計書 §7.1）。
 
-API キーが無くても起きる（/api/read と /api/talk が 503）。CORS の許可は付けない（同一オリジンだけ）。
+鍵が無くても起きる（/api/read と /api/talk、/api/identify が 503 で「準備中です」。入口に一行）。CORS の許可は付けない（同一オリジンだけ）。
 Web に出すのは入口（/）と公開された記録の閲覧（/p/<id>）と「一言を送る」だけ（設計書 §3、§6）。
 観察・記録・公開の画面は出さない。データは本人の PC にある。HTML はテンプレート無しの文字列で、
 本人の文はすべてエスケープする。
@@ -36,6 +36,11 @@ from . import read as RD
 from . import talk as TK
 from .limits import PHOTO_MAX, PHOTOS_MAX, PHOTOS_TOTAL_MAX, LimitReached, Limits
 from .settings import Settings
+
+# 鍵が無い口の 503 の文（来た人がアプリやブラウザーで見る）。error の語（read_unavailable など）は変えない
+READ_NOT_READY = "Claude の読み取りは準備中です"
+TALK_NOT_READY = "Claude と話すのは準備中です"
+IDENTIFY_NOT_READY = "草の名の照会は準備中です"
 
 log = logging.getLogger("seed.server")
 
@@ -261,6 +266,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "version": __version__,
             "read": can_read(),
             "talk": can_read() and settings.daily_talks > 0,  # 話す口（/api/talk）が使えるか
+            "identify": bool(_plantnet()),  # 草の名（/api/identify）。Pl@ntNet の鍵が在るか
             "lookup": L.available(),
             "model": settings.model,
             "remaining": limits.remaining(),
@@ -297,7 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (closed := _paused(settings)) is not None:
             return closed
         if not can_read():
-            return _error(503, "read_unavailable", detail="このサーバーには API キーが無い")
+            return _error(503, "read_unavailable", detail=READ_NOT_READY)
         form, err = await _multipart(request)
         if err is not None:
             return err
@@ -544,7 +550,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return closed
         talk_home = home is not None and local.available() is not None
         if app.state.client is None and not talk_home:
-            return _error(503, "talk_unavailable", detail=["このサーバーには Claude の鍵が無い"])
+            return _error(503, "talk_unavailable", detail=[TALK_NOT_READY])
         if settings.daily_talks <= 0:
             return _error(503, "talk_closed", detail=["このサーバーは今、話す口を閉じている"])
         if int(request.headers.get("content-length") or 0) > TALK_BODY_MAX:
@@ -615,7 +621,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if (closed := _paused(settings)) is not None:
             return closed
         if not _plantnet():
-            return _error(503, "identify_unavailable", detail=["このサーバーには Pl@ntNet の鍵が無い"])
+            return _error(503, "identify_unavailable", detail=[IDENTIFY_NOT_READY])
         form, err = await _multipart(request)
         if err is not None:
             return err
@@ -1067,7 +1073,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
     async def entry():
-        return _html(await run_in_threadpool(lambda: pages.entry_html(pages.load_index(settings))))
+        idx = await run_in_threadpool(pages.load_index, settings)
+        return _html(pages.entry_html(idx, claude=can_read(), plantnet=bool(_plantnet())))
 
     @app.get("/robots.txt")
     async def robots():

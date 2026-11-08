@@ -9,10 +9,10 @@ seed のサーバー（入口の頁、公開された記録、招待コードで
 | アカウント | する事 | 読めない物 |
 |---|---|---|
 | `dev`（AI が動く） | `/opt/seed` にコードを置く（clone、pull、pip） | `/etc/seed` の下全部（鍵、招待コードの一覧、設定）、`/var/lib/seed` の台帳と記録 |
-| `seed`（サービス。ログインしない） | `seed.service` を動かす。`/var/lib/seed` の下を書く。`/opt/seed` は読むだけ | 鍵のファイルそのもの（`/etc/seed/keys/*`、`/etc/seed/log-key`） |
+| `seed`（サービス。ログインしない） | `seed.service` を動かす。`/var/lib/seed` の下を書く。`/opt/seed` は読むだけ | 鍵のファイルそのもの（`/etc/credstore/seed.*`、`/etc/seed/log-key`） |
 | root（作者） | 利用者を作る、鍵を置く、systemd、Caddy | — |
 
-鍵（Claude、Pl@ntNet、記録の署名）は鍵ごとに root だけが読めるファイル（600 root）に置き、systemd の `LoadCredential=` がサービスにだけ渡す。サーバーは `$CREDENTIALS_DIRECTORY` に鍵が在ればそれを、無ければ環境変数を読む（手元で動かす時とテスト）。`/etc/seed/env` には秘密でない設定（URL、置き場、上限、モデル）だけ。Web に出すのは入口、公開された記録、使い方の説明だけ（作者 11-06「Web 版は、マニュアル的なものだけにする」）。
+鍵（Claude、Pl@ntNet、記録の署名）は鍵ごとに root だけが読めるファイル（600 root）に置き、systemd がサービスにだけ渡す。記録の署名の鍵（`/etc/seed/log-key`、0-1 で必ず作る）は `LoadCredential=`、Claude と Pl@ntNet の鍵（`/etc/credstore/seed.anthropic`、`/etc/credstore/seed.plantnet`）は `ImportCredential=`。`ImportCredential=` は無いファイルを飛ばすので、鍵が無くてもサービスは起き、鍵の要る口（読み取り、話す、草の名）は 503 で「準備中です」、入口の頁に一行が出る。鍵は後から置き、置いたら restart（`ImportCredential=` は systemd 254 から。Debian 13 は 257。`systemctl --version` の一行目で見る）。サーバーは `$CREDENTIALS_DIRECTORY` に鍵が在ればそれを、無ければ環境変数を読む（手元で動かす時とテスト）。`/etc/seed/env` には秘密でない設定（URL、置き場、上限、モデル）だけ。Web に出すのは入口、公開された記録、使い方の説明だけ（作者 11-06「Web 版は、マニュアル的なものだけにする」）。
 
 
 ## 0. 手順（上から順に。コピーして打てる形）
@@ -34,12 +34,12 @@ sudo install -d -o dev -g dev -m 755 /opt/seed
 sudo install -d -o seed -g seed -m 755 /var/lib/seed /var/lib/seed/public
 sudo install -d -o seed -g seed -m 700 /var/lib/seed/audit /var/lib/seed/gate /var/lib/seed/pending
 sudo install -d -o root -g seed -m 750 /etc/seed
-sudo install -d -o root -g root -m 700 /etc/seed/keys
+sudo install -d -o root -g root -m 700 /etc/credstore
 sudo test -e /etc/seed/log-key || sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
-sudo ls -ld /opt/seed /var/lib/seed /var/lib/seed/* /etc/seed /etc/seed/keys /etc/seed/log-key
+sudo ls -ld /opt/seed /var/lib/seed /var/lib/seed/* /etc/seed /etc/credstore /etc/seed/log-key
 ```
 
-`seed` はログインしない利用者（`nologin`）。`/opt/seed` はコードで、`dev` が置き、`seed` は読むだけ。`/var/lib/seed` の下（公開、載せる前の待ち `pending/`、token の台帳 `gate/`、操作の記録 `audit/`）の持ち主は `seed`。`public` は Caddy（ユーザー caddy）が読むので 755、`pending`、`gate`、`audit` は 700（`pending` はサーバーの人が読む前の物なので、Caddy には見せない。設計書 §5.18）。`/etc/seed` は root:seed 750 で、`dev` は中を見られない。`keys/` と `log-key` は root だけ（鍵の置き方は 0-3）。
+`seed` はログインしない利用者（`nologin`）。`/opt/seed` はコードで、`dev` が置き、`seed` は読むだけ。`/var/lib/seed` の下（公開、載せる前の待ち `pending/`、token の台帳 `gate/`、操作の記録 `audit/`）の持ち主は `seed`。`public` は Caddy（ユーザー caddy）が読むので 755、`pending`、`gate`、`audit` は 700（`pending` はサーバーの人が読む前の物なので、Caddy には見せない。設計書 §5.18）。`/etc/seed` は root:seed 750 で、`dev` は中を見られない。`/etc/credstore` と `log-key` は root だけ（鍵の置き方は 0-3）。
 
 ### 0-2. [dev] clone、.venv、テスト
 
@@ -55,16 +55,18 @@ cd /opt/seed && python3 -m venv .venv && .venv/bin/pip install -q -e ".[server,l
 
 ### 0-3. [root] 鍵、設定、招待コードの一覧を置く
 
-鍵は一つずつ、root だけが読めるファイルに。**ここに本物を貼る（Claude は見ない）**: 次の一行を打つと入力を待つので、鍵を貼り、Enter、Ctrl-D。鍵は画面にも、シェルの履歴にも残らない。
+Claude と Pl@ntNet の鍵は、今無ければ飛ばしてよい（後から置ける。置き方は 0-5 の後の「鍵を後から置く」）。無い間も、サービスは起き、入口と公開された記録は出る。鍵の要る口は 503 で「準備中です」。
+
+鍵は一つずつ、root だけが読めるファイルに。**ここに本物を貼る（Claude は見ない）**: 次の一行を打つと入力を待つので、鍵を貼り、Enter、Ctrl-D。鍵は画面にも、シェルの履歴にも残らない。鍵がもう在る時は何も聞かずに終わる。
 
 ```bash
-sudo test -e /etc/seed/keys/anthropic || sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'
+sudo test -e /etc/credstore/seed.anthropic || sudo sh -c 'umask 077; cat > /etc/credstore/seed.anthropic'
 ```
 
-Pl@ntNet の鍵があれば同じく（無ければ `deploy/seed.service` の `LoadCredential=plantnet:` の行を `#` にする。`/api/identify` だけが 503）:
+Pl@ntNet の鍵があれば同じく:
 
 ```bash
-sudo test -e /etc/seed/keys/plantnet || sudo sh -c 'umask 077; cat > /etc/seed/keys/plantnet'
+sudo test -e /etc/credstore/seed.plantnet || sudo sh -c 'umask 077; cat > /etc/credstore/seed.plantnet'
 ```
 
 秘密でない設定と、招待コードの一覧:
@@ -91,21 +93,21 @@ sudoedit /etc/seed/invites.toml
 確かめ（持ち主と許可）:
 
 ```bash
-sudo ls -l /etc/seed/ /etc/seed/keys/
+sudo ls -l /etc/seed/ /etc/credstore/
 ```
 
-`env` と `invites.toml` は `-rw-r----- root seed`、`log-key` と `keys/` の中は `-rw------- root root`。
+`env` と `invites.toml` は `-rw-r----- root seed`、`log-key` と `/etc/credstore/` の中は `-rw------- root root`（鍵をまだ置いていなければ `/etc/credstore/` は空）。
 
 確かめ（鍵は dev からも seed からも直には読めない）:
 
 ```bash
-cat /etc/seed/keys/anthropic; cat /etc/seed/invites.toml; ls /etc/seed
+cat /etc/credstore/seed.anthropic; cat /etc/seed/invites.toml; ls /etc/seed
 ```
 
 `dev` で打つ。三つとも `Permission denied`。
 
 ```bash
-sudo -u seed cat /etc/seed/keys/anthropic; sudo -u seed cat /etc/seed/log-key
+sudo -u seed cat /etc/credstore/seed.anthropic; sudo -u seed cat /etc/seed/log-key
 ```
 
 二つとも `Permission denied`。鍵はサービスが動いている間だけ、systemd がそのサービスにだけ渡す（`$CREDENTIALS_DIRECTORY`）。サービスの中から読めた事は 0-5 の `/health` の `"read":true` で見る。
@@ -138,20 +140,71 @@ sudo -u seed /opt/seed/.venv/bin/seed token add "自分の呼び名" --scope adm
 
 ### 0-5. [root] systemd
 
+`ImportCredential=` を使うので、systemd の版を見る:
+
+```bash
+systemctl --version | head -1
+```
+
+`systemd 254` 以上なら次へ（Debian 13 は 257）。
+
+前に置いた unit（`LoadCredential=anthropic:` の行を `#` にした物）も、この unit で置き換える:
+
 ```bash
 sudo install -m 644 /opt/seed/deploy/seed.service /etc/systemd/system/
+```
+
+```bash
 sudo systemd-analyze verify /etc/systemd/system/seed.service
-sudo systemctl daemon-reload && sudo systemctl enable --now seed
+```
+
+何も出なければ次へ（ほかの unit の警告が出ても、`seed.service` の行が無ければよい）。
+
+```bash
+sudo systemctl daemon-reload
+```
+
+```bash
+sudo systemctl enable seed && sudo systemctl restart seed
+```
+
+```bash
 systemctl --no-pager status seed | head -20
+```
+
+`Active: active (running)` なら次へ。`status=243/CREDENTIALS` なら `/etc/seed/log-key` が無い（0-1 の `log-key` の行を打つ）。
+
+```bash
+curl -s http://127.0.0.1:8010/health; echo
+```
+
+`"lookup":true`（fieldnotes-farm が入った）、`"audit":"on"` なら次へ。鍵を置いていなければ `"read":false`、`"talk":false`、`"identify":false` で、それで正しい（その口が 503 で「準備中です」）。鍵の値は出ない。
+
+```bash
+ls /var/lib/seed/public/site
+```
+
+`index.html index.json p public robots.txt` があれば次へ（uvicorn が起きたときに書き出す）。
+
+```bash
+ps -o user= -C uvicorn
+```
+
+答えが `seed`。
+
+#### 鍵を後から置く
+
+0-3 の鍵の一行（`seed.anthropic`、Pl@ntNet なら `seed.plantnet`）を打ち、鍵を貼る。その後:
+
+```bash
+sudo systemctl restart seed
 ```
 
 ```bash
 curl -s http://127.0.0.1:8010/health; echo
-ls /var/lib/seed/public/site
-ps -o user= -C uvicorn
 ```
 
-`/health` は `"read":true` と `"talk":true`（鍵がサービスに届いた）、`"lookup":true`（fieldnotes-farm が入った）、`"audit":"on"`。鍵の値は出ない。`site/` に `index.html index.json p public robots.txt` があること（uvicorn が起きたときに書き出す）。`ps` の答えが `seed`。`LoadCredential=` の鍵のファイルが無いとサービスは起きない（`status` に `Failed to set up credentials`）。その時は 0-3 で置くか、その行を `#` にする。
+Claude の鍵なら `"read":true` と `"talk":true`、Pl@ntNet の鍵なら `"identify":true`。入口の頁の「準備中です」の一行は、restart の時に書き直されて消える。
 
 ### 0-6. Cloudflare の DNS（作者、Cloudflare の画面で）
 
@@ -183,7 +236,7 @@ sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-鍵を後にして紹介の頁だけ出す時は、`/etc/systemd/system/seed.service` の `LoadCredential=anthropic:` と `plantnet:` の行を `#` にして立てる（`/health` は `read:false`、読み取りと話すは 503、入口と公開の一覧は出る）。落ちたときに疑う所（Claude は手元に caddy が無く、目でしか見ていない）: `handle_errors` の中の `expression` と `respond` の番号の置き換え（古い Caddy）。その時は `deploy/Caddyfile` の `handle_errors { ... }` をまるごと元の `respond "見つからない（seed）" 404` だけに戻してよい。
+鍵を後にして紹介の頁だけ出す時も、unit はそのまま（鍵が無くても起きる。0-5）。落ちたときに疑う所（Claude は手元に caddy が無く、目でしか見ていない）: `handle_errors` の中の `expression` と `respond` の番号の置き換え（古い Caddy）。その時は `deploy/Caddyfile` の `handle_errors { ... }` をまるごと元の `respond "見つからない（seed）" 404` だけに戻してよい。
 
 客の IP: deb2 の Caddy の全体の設定（`/etc/caddy/Caddyfile` の先頭の `{ servers { trusted_proxies ... } }`）か `(cf)` に Cloudflare の範囲が書いてあるかを見る:
 
@@ -196,12 +249,12 @@ grep -n 'trusted_proxies\|client_ip_headers\|CF-Connecting-IP' /etc/caddy/Caddyf
 ### 0-8. Claude が外から打つ確かめ（作者が「置いた」と言ったら）
 
 ```bash
-curl -s https://seed.aiseed.dev/health; echo                                   # 200、read true、talk true、lookup true
+curl -s https://seed.aiseed.dev/health; echo                                   # 200、lookup true。鍵を置いていれば read、talk、identify も true
 curl -sI https://seed.aiseed.dev/ | grep -iE '^HTTP|content-type|content-security'   # 200、text/html、CSP
 curl -s https://seed.aiseed.dev/robots.txt                                     # User-agent: * / Allow: /
 curl -s -o /dev/null -w '%{http_code}\n' https://seed.aiseed.dev/index.json    # 200
 curl -s -w ' %{http_code}\n' 'https://seed.aiseed.dev/api/lookup?lat=0&lon=0'  # 403 invite_required
-curl -s -w ' %{http_code}\n' -F token=x https://seed.aiseed.dev/api/read       # 503 は鍵無し、400 か 403 なら鍵あり（招待コード無しの門）
+curl -s -w ' %{http_code}\n' -F token=x https://seed.aiseed.dev/api/read       # 503 は鍵無し（準備中です）、400 か 403 なら鍵あり（招待コード無しの門）
 curl -s -w ' %{http_code}\n' -H 'content-type: application/json' -d '{"messages":[]}' https://seed.aiseed.dev/api/talk   # 403 invite_required
 curl -s -o /dev/null -w '%{http_code}\n' https://seed.aiseed.dev/.owners.json  # 404（site/ の外）
 curl -s -o /dev/null -w '%{http_code}\n' https://seed.aiseed.dev/connections/  # 404
@@ -214,10 +267,10 @@ curl -s -o /dev/null -w '%{http_code}\n' https://seed.aiseed.dev/p/no-such-1   #
 
 - 更新: `cd /opt/seed && git pull --ff-only && .venv/bin/pip install -q -e ".[server,lookup]"` → root が `sudo systemctl restart seed`。`deploy/` の unit を変えたときは 0-5 の `install` と `daemon-reload` も。Caddyfile を変えたときは `/etc/caddy/Caddyfile` の seed のブロックを手で置き換えて 0-7 の `validate` と `reload`。
 - 招待コードの失効: root が `sudoedit /etc/seed/invites.toml` で行を消すだけ（次の要求から効く。再起動は要らない）。dev はこのファイルを読めない。
-- 鍵を替える: root が `/etc/seed/keys/<名>` を置き換え（`sudo sh -c 'umask 077; cat > /etc/seed/keys/anthropic'`）、`sudo systemctl restart seed`。
+- 鍵を替える: root が `/etc/credstore/seed.<名>` を置き換え（`sudo sh -c 'umask 077; cat > /etc/credstore/seed.anthropic'`）、`sudo systemctl restart seed`。
 
 ## 4. 注意
 
-- `/etc/seed` は root:seed 750、`env` と `invites.toml` は root:seed 640（サービスの利用者 seed だけが読める。dev は読めない）。鍵（`keys/anthropic`、`keys/plantnet`、`log-key`）は root:root 600 で、systemd の `LoadCredential=` がサービスにだけ渡す。鍵の値はログ、例外の文、`/health`、管理の画面に出ない（在るか無いかだけ）。`/var/lib/seed` の下は seed の物。
+- `/etc/seed` は root:seed 750、`env` と `invites.toml` は root:seed 640（サービスの利用者 seed だけが読める。dev は読めない）。鍵（`/etc/credstore/seed.anthropic`、`/etc/credstore/seed.plantnet`、`/etc/seed/log-key`）は root:root 600 で、systemd の `ImportCredential=` と `LoadCredential=` がサービスにだけ渡す。鍵の値はログ、例外の文、`/health`、管理の画面に出ない（在るか無いかだけ）。`/var/lib/seed` の下は seed の物。
 - Caddy が Cloudflare の `CF-Connecting-IP` から本当の客の IP を取り、`X-Forwarded-For` で uvicorn に渡す（`deploy/Caddyfile` の `header_up`。deb2 の全体の設定に `trusted_proxies` があればそれでも）。uvicorn は 127.0.0.1 からのそれを信じる（回数の上限の IP はこれ）。
 - 静的サイト `site/` は uvicorn が公開のたびに書き出す。uvicorn が落ちていても入口と記録は見える。

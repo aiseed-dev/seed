@@ -13,7 +13,7 @@ import json
 import shutil
 from pathlib import Path
 
-from .. import index, lang
+from .. import identify, index, lang, local
 from .. import records as R
 from .settings import Settings
 
@@ -31,6 +31,7 @@ a{color:var(--accent)}
 h1{font-size:1.6rem;margin:0 0 .25rem}
 h2{font-size:1.1rem;margin:2rem 0 .5rem;border-bottom:1px solid var(--line)}
 .lead{font-size:1.15rem}
+.notice{border-left:3px solid var(--accent);padding:.25rem .75rem}
 .muted,small{color:var(--muted)}
 ul.records{list-style:none;padding:0}
 ul.records li{border-top:1px solid var(--line);padding:.75rem 0;display:flow-root}
@@ -78,8 +79,32 @@ def load_index(settings: Settings) -> dict:
         return index.build_index(settings.public_dir, settings.connections_dir)
 
 
-def entry_html(idx: dict) -> str:
-    """入口（設計書 §6）。一行、何をする物か、約束、テスター募集、Discord、公開された記録の一覧。"""
+def not_ready_line(claude: bool = True, plantnet: bool = True) -> str:
+    """鍵の無い口を来た人に言う一行（設計書 §5.1）。全部在れば ""。"""
+    if claude and plantnet:
+        return ""
+    if not claude and not plantnet:
+        what = "Claude の読み取りと話す、草の名の照会は"
+    elif not claude:
+        what = "Claude の読み取りと話すは"
+    else:
+        what = "草の名の照会は"
+    return f"{what}準備中です。公開された記録は読めます。"
+
+
+def ready(settings: Settings) -> tuple[bool, bool]:
+    """（Claude の鍵が使えるか、Pl@ntNet の鍵が在るか）。/health の read と identify と同じ見方。"""
+    claude = settings.api_key is not None or (settings.home is not None and local.available() is not None)
+    return claude, bool(settings.plantnet_key or identify.key_from_env())
+
+
+def entry_html(idx: dict, claude: bool = True, plantnet: bool = True) -> str:
+    """入口（設計書 §6）。一行、何をする物か、約束、テスター募集、Discord、公開された記録の一覧。
+
+    claude、plantnet は鍵の有無。無い物があれば、頭に「準備中です」の一行を出す。
+    """
+    line = not_ready_line(claude, plantnet)
+    notice = f'<p class="notice">{_e(line)}</p>\n' if line else ""
     total = idx.get("total", {})
     items = []
     for r in idx.get("records", []):
@@ -103,7 +128,7 @@ def entry_html(idx: dict) -> str:
     )
     body = f"""<h1>seed — Claude と一緒に種を播く</h1>
 <p class="lead">{_e(LEAD)}</p>
-<p>Claude は「こうしなさい」とは言いません。写真に何が見えたか、次に何を見ると良さそうかを話してくれます。決めるのは畑です。</p>
+{notice}<p>Claude は「こうしなさい」とは言いません。写真に何が見えたか、次に何を見ると良さそうかを話してくれます。決めるのは畑です。</p>
 <p>畑は一枚ずつ違います。本に書いてある事より、みんなの畑の記録の方が役に立ちます。だから、見せてもよい所を持ち寄って、近い畑の人と繋がれるようにしました。</p>
 <p>写真と記録は、あなたの手元に残ります。ここに出るのは、<strong>あなたが見せてもよいと決めた写真と言葉だけ</strong>です。写真からは、撮った場所の情報を外してあります。</p>
 <p><strong>一緒に使ってくれる人を探しています。</strong>
@@ -192,7 +217,8 @@ def write_site(settings: Settings) -> Path:
     (site / "p").mkdir(parents=True, exist_ok=True)
     (site / "public").mkdir(parents=True, exist_ok=True)
     idx = load_index(settings)
-    (site / "index.html").write_text(entry_html(idx), encoding="utf-8")
+    claude, plantnet = ready(settings)
+    (site / "index.html").write_text(entry_html(idx, claude, plantnet), encoding="utf-8")
     (site / "index.json").write_text(json.dumps(idx, ensure_ascii=False, indent=1), encoding="utf-8")
     (site / "robots.txt").write_text("User-agent: *\nAllow: /\n", encoding="utf-8")
     keep: set[str] = set()

@@ -109,7 +109,9 @@ class Client:
                 word = _error_word(r)
                 if word == "paused":  # 動かす人が受け付けを止めている（設計書 §5.10）
                     raise ClientError("server_paused", "the server is not accepting requests now", None, 503)
-                if word in ("talk_unavailable", "talk_closed"):  # 話す口が無いか閉じている（設計書 §7.6）
+                if word in _NOT_READY:  # サーバーに鍵が無い口。準備中（設計書 §5.1）
+                    raise ClientError(_NOT_READY[word], "not ready yet on the server", None, 503)
+                if word == "talk_closed":  # 話す口を閉じている（設計書 §7.6）
                     raise ClientError("server_no_talk", "the server does not talk now", None, 503)
                 raise ClientError("server_busy", "the server is not reading now", detail, 503)
             if r.status_code in (401, 403):
@@ -334,6 +336,14 @@ def forget_home(server_url: str) -> None:
 def known_home(server_url: str) -> bool:
     """もう聞いてあって家のサーバーだったか（画面から。網には出ない）。"""
     return _HOME.get(server_url.rstrip("/"), False)
+
+
+# サーバーに鍵が無い口の error の語 → 本人に出す札（strings.py）
+_NOT_READY = {
+    "read_unavailable": "server_read_not_ready",
+    "talk_unavailable": "server_talk_not_ready",
+    "identify_unavailable": "server_identify_not_ready",
+}
 
 
 def _detail(r: httpx.Response) -> str | None:
