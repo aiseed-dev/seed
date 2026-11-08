@@ -1,0 +1,30 @@
+# seed のサーバーの口の表の見本（K-07）。kagi の形（[[port]] の並び）。
+# 使い方: 自分の作業の場所の ports.toml にこの中身を足し、機械にほかに載っている物の口も足す。
+#   kagi machine collect --host <機械> → kagi machine check --host <機械>
+# 配備の前は、8010 が「表にあって開いていない」と出る。それが残りの作業（docs/deb2 の配備.md）。
+# 外から届くのは Cloudflare を通る 443 だけにする。IP アドレスはこの表に書かない（127.0.0.1 は機械の中の意味なので書く）。
+# 作者の機械の本物の表は公開しない（ほかに載っている物の口が入るため）。
+
+[[port]]
+host = "deb2"
+port = 22
+proto = "tcp"
+service = "sshd"
+bind = "0.0.0.0"
+reason = "持ち主と dev の管理。鍵でだけ入る形にする"
+
+[[port]]
+host = "deb2"
+port = 443
+proto = "tcp"
+service = "caddy"
+bind = "*"
+reason = "Cloudflare の後ろ。seed の入口（ほかのサイトも同じ口）"
+
+[[port]]
+host = "deb2"
+port = 8010
+proto = "tcp"
+service = "seed（uvicorn）"
+bind = "127.0.0.1"
+reason = "seed の API。Caddy からだけ届く"

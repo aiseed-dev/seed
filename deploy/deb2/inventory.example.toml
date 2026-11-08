@@ -1,7 +1,7 @@
 # deb2 の seed の秘密の在庫（K-14、K-04、K-05）。kagi の在庫表の形。値は書かない（value の欄があると kagi は止まる。K-13）。
 # 使い方（手順.md の b）: 作者の在庫表（inventory.toml）に写し、made と expires を書いてから kagi check inventory。
 # made・expires を書かないうちは「抜け」と出る（それで正しい）。置いていない物の行は、置くまで写さない。
-# deb2 には seed の外の秘密もある（Cloudflare の origin 証明書の鍵、PocketBase、Forgejo、office）。それは作者が足す。
+# 機械に seed の外の秘密（Cloudflare の origin 証明書の鍵、ほかのサイトの物）があれば、それは持ち主が足す。
 
 [[secret]]
 id = "deb2-anthropic-key"

@@ -1,6 +1,6 @@
 # seed — /etc/systemd/system/seed.service（設計書 §7.4）。API と静的サイトの書き出し
 # 置いたら: systemctl daemon-reload && systemctl enable --now seed
-# 8000 は aiai（moushikomi）に取ってあるので 8010
+# 口は 8010（127.0.0.1 だけ。Caddy から届く）
 [Unit]
 Description=seed API (seed.aiseed.dev)
 After=network-online.target
