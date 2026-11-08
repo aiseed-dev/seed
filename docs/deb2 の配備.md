@@ -51,7 +51,7 @@ cd /opt/seed && git clone https://github.com/aiseed-dev/seed.git . && git log --
 cd /opt/seed && python3 -m venv .venv && .venv/bin/pip install -q -e ".[server,lookup]" && .venv/bin/pip install -q pytest && .venv/bin/python -m pytest -q
 ```
 
-`git log --oneline -1` が debpc の main の先頭と同じかを見る（push が済んでいるか）。テストは本物の鍵を使わない（Claude を呼ぶ所は差し替えてある）。サーバーには `flet`（アプリ）と `resvg_py`（図）と `qrcode` を入れないので、それらの要るテスト（test_app、capture、direct、loose、plugins、procedure_plugin、project は読み込めず、bundle・cli・home・grow・remote の一部が落ちる）はここでは通らない。サーバーのコードのテスト（test_server、test_talk_server、test_publish など）が通ればよい。11-08 の deb2: 568 通り、13 落ち（全部その理由）。pytest は `--basetemp=/var/tmp/seed-test -p no:cacheprovider` を付け、終わったら消す。
+`git log --oneline -1` が debpc の main の先頭と同じかを見る（push が済んでいるか）。`[server]` に使い方の頁の `markdown` が入る（`.venv/bin/python -c 'import markdown'` で確かめる）。テストは本物の鍵を使わない（Claude を呼ぶ所は差し替えてある）。サーバーには `flet`（アプリ）と `resvg_py`（図）と `qrcode` を入れないので、それらの要るテスト（test_app、capture、direct、loose、plugins、procedure_plugin、project は読み込めず、bundle・cli・home・grow・remote の一部が落ちる）はここでは通らない。サーバーのコードのテスト（test_server、test_talk_server、test_publish など）が通ればよい。11-08 の deb2: 568 通り、13 落ち（全部その理由）。pytest は `--basetemp=/var/tmp/seed-test -p no:cacheprovider` を付け、終わったら消す。
 
 ### 0-3. [root] 鍵、設定、招待コードの一覧を置く
 
@@ -265,7 +265,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://seed.aiseed.dev/p/no-such-1   #
 
 ## 3. 作る人（dev）の作業（更新のたび）
 
-- 更新: `cd /opt/seed && git pull --ff-only && .venv/bin/pip install -q -e ".[server,lookup]"` → root が `sudo systemctl restart seed`。`deploy/` の unit を変えたときは 0-5 の `install` と `daemon-reload` も。Caddyfile を変えたときは `/etc/caddy/Caddyfile` の seed のブロックを手で置き換えて 0-7 の `validate` と `reload`。
+- 更新: `cd /opt/seed && git pull --ff-only && .venv/bin/pip install -q -e ".[server,lookup]"` → root が `sudo systemctl restart seed`。restart の時に `site/`（入口、使い方の頁 `manual.html`、記録の頁）が書き直される。依存（`pyproject.toml` の extras）が変わった時は pip install が要る（11-08 夜の `markdown` もそう）。`deploy/` の unit を変えたときは 0-5 の `install` と `daemon-reload` も。Caddyfile を変えたときは `/etc/caddy/Caddyfile` の seed のブロックを手で置き換えて 0-7 の `validate` と `reload`。
 - 招待コードの失効: root が `sudoedit /etc/seed/invites.toml` で行を消すだけ（次の要求から効く。再起動は要らない）。dev はこのファイルを読めない。
 - 鍵を替える: root が `/etc/credstore/seed.<名>` を置き換え（`sudo sh -c 'umask 077; cat > /etc/credstore/seed.anthropic'`）、`sudo systemctl restart seed`。
 

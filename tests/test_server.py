@@ -137,6 +137,46 @@ def test_entry_page_empty(settings):
     assert "default-src 'none'" in r.headers["content-security-policy"]
 
 
+def test_entry_page_has_the_ways_out(settings):
+    # 入口の頭に行き先（動画、GitHub、使い方、Discord）と畑の写真。外の font・script・画像は無い（CSP）
+    from seed.server import pages as PG
+
+    page = client_for(settings).get("/").text
+    for url in (PG.VIDEO, PG.SOURCE, 'href="/manual"', PG.DISCORD):
+        assert url in page
+    assert 'src="/static/field.jpg"' in page and PG.PHOTO_ALT in page
+    assert "<script" not in page and not re.search(r'src="https?://', page)
+    assert re.search(r'<footer class="site">.*使い方.*</footer>', page, re.DOTALL)
+
+
+def test_site_has_static_photo_and_manual(settings):
+    from seed.server import pages as PG
+
+    site = PG.write_site(settings)
+    photo = site / "static" / "field.jpg"
+    assert photo.is_file() and photo.read_bytes() == (PG.STATIC / "field.jpg").read_bytes()
+    assert photo.stat().st_size <= 200_000
+    manual = (site / "manual.html").read_text(encoding="utf-8")
+    assert (site / "manual" / "index.html").read_text(encoding="utf-8") == manual
+    assert "<title>使い方 — seed</title>" in manual and "利用マニュアル" in manual
+    assert '<nav class="toc">' in manual and "目次" in manual and 'href="#1-seed-は何をする物か"' in manual
+    assert 'id="1-seed-は何をする物か"' in manual
+    # 相対リンクは GitHub へ、表は横に溢れたら横に送る、文の中の <URL> は字のまま
+    assert 'href="https://github.com/aiseed-dev/seed/blob/main/docs/設計書.md"' in manual
+    assert not re.search(r'href="(?!https?:|/|#)', manual)
+    assert '<div class="table"><table>' in manual and "&lt;URL&gt;" in manual
+    c = client_for(settings)
+    assert c.get("/manual").status_code == 200 and c.get("/static/field.jpg").status_code == 200
+
+
+def test_site_without_markdown_skips_manual(settings, monkeypatch):
+    from seed.server import pages as PG
+
+    monkeypatch.setitem(sys.modules, "markdown", None)
+    site = PG.write_site(settings)
+    assert not (site / "manual.html").exists() and (site / "index.html").is_file()
+
+
 # ---------------------------------------------------------------- 読み
 
 
@@ -573,7 +613,7 @@ def test_entry_lists_records_escaped(settings):
     r = c.post("/api/publish", json={"token": TOKEN, "markdown": public_md(id_="a-1", word="藍の跡地 & 草")})
     assert r.status_code == 200
     page = c.get("/").text
-    assert '<a href="/p/a-1">' in page and "藍の跡地 &amp; 草" in page
+    assert '<a href="/p/a-1" class="name">' in page and "藍の跡地 &amp; 草" in page
     assert "公開された記録 1 件" in page
 
 
@@ -901,10 +941,16 @@ def test_pages_and_index_have_no_fine_coords(settings, tmp_path):
     assert not FINE.search(PG.record_html(coarse, 0))
     # 静的サイトにも /p/ にも出ない
     site = PG.write_site(settings)
+    manual = ("manual.html", "manual")
     for rid in ("fine-1", "fine-2"):
         assert not (site / "p" / f"{rid}.html").exists() and not (site / "public" / f"{rid}.md").exists()
     for path in site.rglob("*"):
-        if path.is_file():
+        # 入口の写真と使い方の頁（マニュアルの例の番地）は記録から来ない
+        if (
+            path.is_file()
+            and path.parent != site / "static"
+            and path.relative_to(site).parts[0] not in manual
+        ):
             assert not FINE.search(path.read_text(encoding="utf-8")), path
     c = client_for(settings)
     assert c.get("/p/fine-1").status_code == 404 and c.get("/p/fine-2").status_code == 404

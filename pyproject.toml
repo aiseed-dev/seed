@@ -22,7 +22,7 @@ app = ["flet[all]==1.1.0", "pillow", "httpx", "pillow-heif", "qrcode", "resvg-py
 origin = ["pillow", "httpx", "imageio-ffmpeg"]                                   # seed origin（地図と空中写真の動画。mp4 は imageio-ffmpeg）
 grow = ["pillow", "httpx", "resvg-py"]                                          # seed grow --draw（図を PNG にして halo で絵に。resvg は wheel だけ）
 heic = ["pillow-heif"]                                                          # HEIC だけ要るとき
-server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pillow", "httpx"]  # seed.aiseed.dev
+server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pillow", "httpx", "markdown>=3.5"]  # seed.aiseed.dev（markdown は /manual）
 # 座標からの照会（fieldnotes.lookup だけを呼ぶ）。fieldnotes-farm は同じ作者の別の包み。
 # PyPI の 0.2.0（2026-11-05 10:43 JST 公開、タグ v0.2.0 = aiseed-dev/fieldnotes の 604dcd6）に固定する
 # （作者 2026-11-05。前は期間前のコミット 2bc2c4f）。記録の一行の形は仕様（fieldnotes の docs/records.md）で
@@ -69,6 +69,10 @@ dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# 公開サイトの画像（write_site が site/static/ に写す）
+[tool.setuptools.package-data]
+"seed.server" = ["static/*"]
 
 # 共通の手引き。seed init が <prefix>/share/seed-farm/skill から ~/seed/skill/ に写す（記録の形 §9）
 [tool.setuptools.data-files]

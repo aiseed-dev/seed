@@ -1076,6 +1076,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         idx = await run_in_threadpool(pages.load_index, settings)
         return _html(pages.entry_html(idx, claude=can_read(), plantnet=bool(_plantnet())))
 
+    @app.api_route("/manual", methods=["GET", "HEAD"], response_class=HTMLResponse)
+    async def manual():
+        """使い方（開発中の確認用。本番は Caddy が site/manual.html を配る）。"""
+        page = await run_in_threadpool(pages.manual_html)
+        return _html(page) if page else _html(pages.not_found_html(), 404)
+
+    @app.get("/static/{name}")
+    async def static_file(name: str):
+        """入口の写真（開発中の確認用。本番は Caddy が site/static/ を配る）。"""
+        path = pages.STATIC / name
+        if "/" in name or name.startswith(".") or not path.is_file():
+            return _error(404, "not_found")
+        return FileResponse(path)
+
     @app.get("/robots.txt")
     async def robots():
         return HTMLResponse("User-agent: *\nAllow: /\n", media_type="text/plain")
