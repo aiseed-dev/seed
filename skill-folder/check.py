@@ -8,83 +8,34 @@ seed の venv の python で走らせます: <seed の venv>/bin/python skill-fo
 from __future__ import annotations
 
 import argparse
-import hashlib
-import os
 import shutil
 import sys
 import tempfile
 import zipfile
 from collections import Counter, defaultdict
-from collections.abc import Iterator
 from pathlib import Path
 
 from seed import photos
-from seed.records import split_front
+from seed.loose import (  # アプリの「畑に入っていない写真」（設計書 §5.17）と同じ物を使う
+    CHUNK,
+    IMAGE_SUFFIXES,
+    centre_of,
+    is_image,
+    jpeg_in_fields,
+    read_front,
+    sha256_file,
+    sha256_stream,
+    taken_of,
+    walk_files,
+    walk_outside,
+)
 
-IMAGE_SUFFIXES = {".heic", ".heif", ".jpg", ".jpeg", ".png"}
 VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v"}
-SEEN_DIRS = {"photos", "videos", "skill", "notes", "public", "public-home", "origin", "grow"}
 LIST_LIMIT = 50
-CHUNK = 1 << 20
 
 SAME = "同じ物が在る"
 AS_JPEG = "JPEG で入っている"
 NOT_FOUND = "見つからない"
-
-
-# ---------------------------------------------------------------- 共通
-
-
-def walk_files(root: Path) -> Iterator[Path]:
-    """root の下の素のファイル（リンクは辿らない）。root がファイルならそれ一つ。"""
-    if root.is_file() and not root.is_symlink():
-        yield root
-        return
-    for dp, dns, fns in os.walk(root):
-        dns.sort()
-        for f in sorted(fns):
-            p = Path(dp) / f
-            if p.is_file() and not p.is_symlink():
-                yield p
-
-
-def sha256_stream(fh) -> str:
-    h = hashlib.sha256()
-    for b in iter(lambda: fh.read(CHUNK), b""):
-        h.update(b)
-    return h.hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    with open(path, "rb") as fh:
-        return sha256_stream(fh)
-
-
-def is_image(name: str) -> bool:
-    return Path(name).suffix.lower() in IMAGE_SUFFIXES
-
-
-def taken_of(path: Path):
-    """撮った時刻。読めない・無い時は None。"""
-    try:
-        return photos.exif_info(path).taken
-    except Exception:  # noqa: BLE001 - 読めない写真は「見つからない」に数える
-        return None
-
-
-def jpeg_in_fields(taken, fields: list[Path]) -> bool:
-    """<畑>/photos/<日>/<時分秒>.jpg（同じ秒なら -1, -2 …）が在るか。"""
-    if taken is None:
-        return False
-    day = taken.strftime("%Y-%m-%d")
-    stem = taken.strftime("%H%M%S")
-    for field in fields:
-        d = field / "photos" / day
-        if (d / f"{stem}.jpg").is_file():
-            return True
-        if d.is_dir() and any(d.glob(f"{stem}-*.jpg")):
-            return True
-    return False
 
 
 # ---------------------------------------------------------------- compare
@@ -161,28 +112,8 @@ def cmd_compare(args) -> int:
 # ---------------------------------------------------------------- near
 
 
-def read_front(path: Path) -> dict:
-    try:
-        front, _ = split_front(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, TypeError, ValueError):
-        return {}
-    return front
-
-
 def observation_fronts(field: Path) -> list[tuple[Path, dict]]:
     return [(p, read_front(p)) for p in sorted((field / "observations").glob("*.md"))]
-
-
-def centre_of(front: dict) -> tuple[float, float] | None:
-    loc = front.get("location")
-    if not isinstance(loc, dict):
-        return None
-    c = loc.get("center")
-    try:
-        lat, lon = float(c[0]), float(c[1])
-    except (TypeError, ValueError, IndexError, KeyError):
-        return None
-    return lat, lon
 
 
 def extent_of(front: dict) -> float | None:
@@ -250,13 +181,6 @@ def cmd_refs(args) -> int:
 # ---------------------------------------------------------------- outside
 
 
-def seen_by_seed(rel: Path) -> bool:
-    parts = rel.parts
-    if parts and parts[0] in SEEN_DIRS:
-        return True
-    return len(parts) > 2 and parts[0] == "fields" and parts[2] in SEEN_DIRS
-
-
 def kind_of(name: str) -> str | None:
     s = Path(name).suffix.lower()
     if s in IMAGE_SUFFIXES:
@@ -271,18 +195,10 @@ def kind_of(name: str) -> str | None:
 def cmd_outside(args) -> int:
     root = args.project
     groups: dict[str, Counter] = defaultdict(Counter)
-    for dp, dns, fns in os.walk(root):
-        dns[:] = sorted(d for d in dns if not d.startswith("."))
-        for f in fns:
-            if f.startswith("."):
-                continue
-            kind = kind_of(f)
-            if kind is None:
-                continue
-            rel = (Path(dp) / f).relative_to(root)
-            if seen_by_seed(rel):
-                continue
-            groups[rel.parent.as_posix()][kind] += 1
+    for p in walk_outside(root):
+        kind = kind_of(p.name)
+        if kind is not None:
+            groups[p.relative_to(root).parent.as_posix()][kind] += 1
     total = sum(sum(c.values()) for c in groups.values())
     print(f"seed が見ない写真・動画・zip: {total} 個（{len(groups)} か所）")
     for parent in sorted(groups):

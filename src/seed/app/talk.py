@@ -12,6 +12,7 @@ Claude を呼ぶ所（route。設定の札の一行で変えられる）は、PC
 
 送った時の分かれ道（send）:
 - 写真あり → 新しい観察にし、読む（Claude を呼ぶ所の通り）
+- 言葉だけで、畑に入っていない写真（フォルダーか写真の名）と畑の名一つ → その畑に写して入れる（設計書 §5.17）
 - 言葉だけ、手元の Claude Code → Claude Code に渡す（間違いの指摘、計画、公開などの細かい作業）
 - 言葉だけ、自分の鍵かサーバー → 同じ事を、アプリの中の道具の繰り返しで（seed/direct.py）。公開は下書きまで。
   送るのは、下書きの全文を見せ、本人が「出す」を押した時
@@ -23,7 +24,9 @@ Claude を呼ぶ所（route。設定の札の一行で変えられる）は、PC
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import string
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,16 +35,19 @@ from typing import TYPE_CHECKING
 import flet as ft
 import yaml
 
-from seed import album, client, direct, land, local, photos
+from seed import album, client, direct, land, local, loose, photos
 from seed import highlights as H
 from seed.app import capture, cards, photo, theme
 from seed.app.strings import error_text
+from seed.app.strings import s as s_text_of
 from seed.cli import package_skill, public_photos, read_local, read_on_server, read_with_key
 from seed.client import ClientError
 from seed.records import Folder, Line, Observation, Public, photo_rel
 
 if TYPE_CHECKING:
     from seed.app.main import App
+
+log = logging.getLogger("seed.app.talk")
 
 FOUND_SHOWN = 3  # 見つけた事の、頭に見せる行の数（残りは「続きを読む」）
 BIG_W = 560  # 今日の一枚の幅の上限
@@ -561,6 +567,127 @@ async def add_picked(app: App, text: str, paths: list[Path]) -> None:
             await send(app, text if i == 0 else "", g)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    await tell_loose(app)  # 入れた後に、畑に入っていない写真をもう一度探す（設計書 §5.17）
+
+
+# ---------------------------------------------------------------- 畑に入っていない写真（設計書 §5.17）
+#
+# プロジェクトの根から seed が見ない所の写真を探し（seed/loose.py）、話すの中で知らせる。操作の画面は作らず、
+# 本人の言葉（「島根のは知人の田」）で入れる先を聞く。消すのは本人で、アプリは消す命令を見せるだけ。
+
+LOOSE_SHOWN = 20  # 一度に道と小さな絵を出す数（残りは数だけ）
+LOOSE_DIRS_SHOWN = 10  # もう入っている写真の在るフォルダーを名で出す数
+
+
+def loose_fields(app: App) -> list[str]:
+    """入れる先の畑の名（loose.field_dirs と同じ。fields/ の無いプロジェクトは根のフォルダーの名）。"""
+    return [f.root.name for f in app.fields] or [app.project.name]
+
+
+def _kanji(c: str) -> bool:
+    """仮名と漢字（名の前後に空きを入れるかを決める）。"""
+    return "\u3040" <= c <= "\u30ff" or "\u3400" <= c <= "\u9fff" or c == "\u3005"
+
+
+def loose_t(app: App, word: str, **kw) -> str:
+    """名（畑やフォルダー）を差し込む文。日本語は、仮名・漢字と英数字が接する所にだけ空きを入れる。
+
+    「1 枚を知人の田に入れます」「1 枚を rokuse に入れます」「「北側の畑のは rokuse」」。
+    """
+    template = s_text_of(word, app.lang)
+    if app.lang != "ja":
+        return template.format(**kw)
+    out, pad_next = "", False
+    for literal, name, spec, conv in string.Formatter().parse(template):
+        if pad_next and literal and _kanji(literal[0]):
+            out += " "
+        out += literal
+        pad_next = False
+        if name is None:
+            continue
+        value = format(kw[name], spec or "")
+        if value and out and _kanji(out[-1]) and value[0].isascii() and value[0].isalnum():
+            out += " "
+        out += value
+        pad_next = bool(value) and value[-1].isascii() and value[-1].isalnum()
+    return out
+
+
+def loose_text(app: App, groups: list[loose.Group]) -> str:
+    items = loose.loose_items(groups)
+    lines = [app.t("loose_head", n=len(items))]
+    for it in items[:LOOSE_SHOWN]:
+        if it.metres is None:
+            lines.append(app.t("loose_nowhere", path=it.rel))
+        else:
+            lines.append(loose_t(app, "loose_near", path=it.rel, field=it.field, m=it.metres))
+    if len(items) > LOOSE_SHOWN:
+        lines.append(app.t("loose_more", n=len(items) - LOOSE_SHOWN))
+    # もう入っている写真の在るフォルダーは、名で（全部か、何枚のうち何枚か）
+    known = [g for g in groups if g.all_in or g.some_in]
+    for g in known[:LOOSE_DIRS_SHOWN]:
+        if g.all_in:
+            lines.append(app.t("loose_dir_all", folder=g.folder))
+        else:
+            n_in = len(g.items) - len(g.loose)
+            lines.append(app.t("loose_dir_some", folder=g.folder, total=len(g.items), n=n_in))
+    if len(known) > LOOSE_DIRS_SHOWN:
+        lines.append(app.t("loose_more_dirs", n=len(known) - LOOSE_DIRS_SHOWN))
+    first = items[0]
+    group = next(g for g in groups if first in g.items)
+    name = group.name or Path(first.rel).stem
+    lines.append(loose_t(app, "loose_hint", name=name, field=first.field or loose_fields(app)[0]))
+    return "\n".join(lines)
+
+
+async def tell_loose(app: App) -> None:
+    """畑に入っていない写真を探し、在れば Claude の側に一言。同じ顔ぶれは二度言わない（state["loose_told"]）。"""
+    try:
+        groups = await asyncio.to_thread(loose.scan, app.project, app.settings.bulk or None)
+    except OSError:
+        return
+    app.state["loose"] = groups
+    items = loose.loose_items(groups)
+    told = frozenset(i.rel for i in items)
+    if told == app.state.get("loose_told"):
+        return
+    app.state["loose_told"] = told
+    if not items:
+        return
+    say(app, loose_text(app, groups), loose=[str(i.path) for i in items[:LOOSE_SHOWN]])
+    app.refresh()
+
+
+async def place_loose(app: App, text: str) -> bool:
+    """本人の言葉が入っていない写真と畑一つを指していれば、その畑に入れる（写して入れ、元は残す）。違えば False。"""
+    groups = app.state.get("loose") or []
+    got = loose.match(text, groups, loose_fields(app)) if groups else None
+    if got is None:
+        return False
+    paths, name = got
+    into = next((f for f in app.fields if f.root.name == name), None)
+    target = app if into is None or into.root == app.folder.root else app.for_field(into)
+    add(app, who="me", text=text)
+    names = ", ".join(p.name for p in paths[:5]) + (" …" if len(paths) > 5 else "")
+    say(app, loose_t(app, "loose_placing", n=len(paths), field=name, names=names))
+    app.refresh()
+    try:
+        await add_picked(target, "", paths)
+    except Exception as ex:  # 読みや照会が途中で落ちても、入った写真と消す命令までは見せる
+        log.exception("畑に入っていない写真を入れる途中で落ちた")
+        say(app, str(ex) or type(ex).__name__)
+    if target is not app and not app.whole:  # 開いている畑と違う畑に入れた。読みはその畑に
+        say(app, loose_t(app, "loose_elsewhere", field=name))
+    try:  # add_picked の終わりの探し直しに頼らず、ここで探し直す（落ちた時も消す命令を決められるように）
+        app.state["loose"] = await asyncio.to_thread(loose.scan, app.project, app.settings.bulk or None)
+    except OSError:
+        log.exception("畑に入っていない写真を探し直せない")
+    touched = {p.parent for p in paths}
+    gone = [p for p in loose.removable(app.state.get("loose") or []) if p in touched]
+    if gone:
+        say(app, app.t("loose_remove"), commands=[loose.rm_command(p) for p in gone])
+    app.refresh()
+    return True
 
 
 async def send(app: App, text: str, paths: list[Path] | None = None, as_example: bool = True) -> None:
@@ -581,6 +708,8 @@ async def send(app: App, text: str, paths: list[Path] | None = None, as_example:
     to = app.state.pop("talk_to", None)
     if to and text and not paths:
         await cards.send_word(app, to, text)
+        return
+    if not paths and await place_loose(app, text):
         return
     if as_example and not paths:
         key = example_of(app, text)
@@ -773,6 +902,11 @@ def item_controls(app: App, item: dict) -> list[ft.Control]:
         side.append(photos_strip(app, item["photos"], photo_index(app.folder), photo.SMALL))
     if item.get("places"):
         side += places_controls(app)
+    if item.get("loose"):  # 畑に入っていない写真の小さな絵（HEIC も photo.load が縮める）
+        pics = [photo.picture(app, Path(p), photo.TINY, photo.TINY, photo.TINY) for p in item["loose"]]
+        side.append(ft.Row([p for p in pics if p is not None], wrap=True, spacing=8, run_spacing=8))
+    for cmd in item.get("commands") or []:  # 写せる文字で（消すのは本人）
+        side.append(theme.mono(cmd))
     if item.get("examples"):
         side.append(example_chips(app, item["examples"]))
     if item.get("draft"):
@@ -841,15 +975,19 @@ def conversation(app: App) -> list[ft.Control]:
     all_turns = turns(app.folder)
     if not all_turns:
         out.append(claude_side([words_text(t("talk_hello")), words_text(first_photo_text(app))]))
+    names = {turn.name for turn in all_turns}
     for it in items:
-        if it.get("after") is None:
+        if it.get("after") is None or (not all_turns):
             out += item_controls(app, it)
     month = None
-    for turn in all_turns:
+    for n, turn in enumerate(all_turns):
         month = add_month(out, turn, month)
         out += turn_controls(app, turn, hide)
+        last = n == len(all_turns) - 1
         for it in items:
-            if it.get("after") == turn.name:
+            after = it.get("after")
+            # ほかの畑の観察の後に足した物（畑に入っていない写真を別の畑に入れた時）は、最後に
+            if after == turn.name or (last and after is not None and after not in names):
                 out += item_controls(app, it)
     pending = app.state.get("pending")
     if pending:

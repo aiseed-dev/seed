@@ -32,6 +32,7 @@ from seed.records import Folder
 log = logging.getLogger("seed.app")
 
 MAX_PHOTOS = 6
+LOOSE_KEYS = ("loose", "loose_told")  # 畑を替えても持ち越す state の鍵（talk.tell_loose）
 PHOTO_EXTENSIONS = [
     "jpg",
     "jpeg",
@@ -118,6 +119,8 @@ class App:
         old = getattr(self, "state", {}).get("remote")
         if old is not None:  # 前の畑のリモートコントロールは止める
             old.stop()
+        before = getattr(self, "project", None)
+        carry = {k: v for k, v in getattr(self, "state", {}).items() if k in LOOSE_KEYS}
         project, pick = fields_mod.split_field(folder) if folder else (None, None)
         self.settings = settings_mod.load(str(project) if project else None)
         self.settings.pick = pick  # 畑のフォルダーを開いた時は、その畑（seed.toml の field は変えない）
@@ -130,6 +133,8 @@ class App:
         self.plugins = plugins.load(self.folder)
         self._plugins_stamp = plugins.stamp(self.folder)
         self.state: dict = {}  # この窓の間だけ残す物（やり取りに足した物、撮っている間の物）。畑が替われば空に
+        if before == self.project:  # 畑に入っていない写真は、同じプロジェクトの中で畑を替えても二度言わない
+            self.state.update(carry)
 
     # --- 畑（記録の形 §19。切り替えは「話す」の設定の札から）
     async def switch_field(self, name: str) -> None:
@@ -157,6 +162,7 @@ class App:
         fields_mod.remember_folder(folder)
         self.open_folder(folder)
         await self.go(urlparse(self.page.route or "/").path or "/")
+        self.page.run_task(talk.tell_loose, self)
 
     async def pick_folder(self) -> None:
         """フォルダーを選ぶ窓を出し、選ばれたら開く（PC のアプリ）。"""
@@ -423,6 +429,7 @@ def make_main(folder: str | None = None) -> Callable[[ft.Page], object]:
         app = App(page, folder)
         page.on_route_change = app.route_change
         app.route_change()
+        page.run_task(talk.tell_loose, app)  # 畑に入っていない写真を後ろで探す（設計書 §5.17）
 
     return main
 
