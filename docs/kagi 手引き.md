@@ -21,7 +21,7 @@ kagi init --dir ~/kagi-data
 走査で手伝わせる:
 
 ```bash
-kagi scan /etc/seed ~/farm/seed deploy
+kagi scan /etc/seed ~/seed deploy
 ```
 
 出るのは `path:line  種類` だけ。出た場所の物が在庫表にあるか見る。無ければ足すか消す。
