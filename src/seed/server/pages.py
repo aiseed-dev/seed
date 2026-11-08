@@ -106,14 +106,16 @@ def entry_html(idx: dict) -> str:
 <p>Claude は「こうしなさい」とは言いません。写真に何が見えたか、次に何を見ると良さそうかを話してくれます。決めるのは畑です。</p>
 <p>畑は一枚ずつ違います。本に書いてある事より、みんなの畑の記録の方が役に立ちます。だから、見せてもよい所を持ち寄って、近い畑の人と繋がれるようにしました。</p>
 <p>写真と記録は、あなたの手元に残ります。ここに出るのは、<strong>あなたが見せてもよいと決めた写真と言葉だけ</strong>です。写真からは、撮った場所の情報を外してあります。</p>
-<p><strong>一緒に使ってくれる人を探しています（11-08 まで）。</strong>
+<p><strong>一緒に使ってくれる人を探しています。</strong>
 <a href="{_e(DISCORD)}">Discord「AI と一緒に自給農」</a>で、気軽に声をかけてください。招待コードをお渡しします。分からない事も、そこで聞いてください。</p>
 <h2>PC で使う</h2>
 <p>GitHub から取ってきて、そのフォルダーで入れます。</p>
 <pre>git clone https://github.com/aiseed-dev/seed.git
 cd seed
-pip install -e ".[app]"</pre>
-<p class="muted"><small>Windows、macOS、Linux で動きます。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> にあります。スマートフォンだけの人は、Discord で声をかけてください。</small></p>
+python -m venv .venv
+.venv/bin/pip install -e ".[app]"
+.venv/bin/flet run</pre>
+<p class="muted"><small>Windows、macOS、Linux で動きます。Windows では <code>.venv\\Scripts\\</code> の下の物を使います。中身と手引きは <a href="{_e(SOURCE)}">リポジトリ</a> にあります。スマートフォンだけの人は、Discord で声をかけてください。</small></p>
 <h2>公開された記録 {int(total.get("records", 0))} 件 · 繋がり {int(total.get("connections", 0))} 件</h2>
 {listing}
 <p class="muted"><small><a href="/index.json">index.json</a></small></p>"""
