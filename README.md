@@ -97,7 +97,7 @@ USB で繋いだ Android に入れて動かします。PC に Flutter と Androi
 - **芯を変える。** 撮る、位置、話すと写真の画面そのものを変えるなら、フォークして自分の Claude Code に頼みます。
 - **部品を足す。** アプリに要る部品が Flet に無ければ、Flet の拡張として作り、[flet-tools](https://github.com/aiseed-dev/flet-tools) に置いて PyPI に出します。印刷（flet-printing）と GPU の地図（flet-gpumap）はそうして出来ました。天気のグラフで困った「SVG の字を描かない」は、字も描く SVG の部品の提案として flet-tools に置いてあります。seed の中で回り道をするより、部品にして Flet を使う人みんなの物にします。
 
-足す時の手順は、Claude Code が読む手引き [skill-builder/](skill-builder/SKILL.md) にあります。畑を読む手引きは [skill/](skill/SKILL.md)、家の PC を仲間のために動かして守る手引きは [skill-keeper/](skill-keeper/SKILL.md)、プロジェクトフォルダーの形を見直して整える手引きは [skill-folder/](skill-folder/SKILL.md) です。
+足す時の手順は、Claude Code が読む手引き [skill-builder/](skill-builder/SKILL.md) にあります。畑を読む手引きは [skill/](skill/SKILL.md)、家の PC を仲間のために動かして守る手引きは [skill-keeper/](skill-keeper/SKILL.md)、プロジェクトフォルダーの形を見直して整える手引きは [skill-folder/](skill-folder/SKILL.md)、鍵と口と機械を表と突き合わせる道具 kagi の手引きは [skill-kagi/](skill-kagi/SKILL.md) です。
 
 詳しい使い方は [docs/利用マニュアル.md](docs/利用マニュアル.md) にあります。
 
