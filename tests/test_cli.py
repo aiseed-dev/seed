@@ -222,6 +222,14 @@ def test_publish_file_sends_the_draft_as_read(seedfolder, photo, monkeypatch, ca
     assert "公開しました" in capsys.readouterr().out
     assert draft.read_text(encoding="utf-8") == text  # 組み直して書き換えない
 
+    # サーバーが預かった（state が pending）なら、読まれてから載る事を言う
+    mock_server(
+        monkeypatch, lambda req: httpx.Response(200, json={"id": "draft-1", "url": "u", "state": "pending"})
+    )
+    assert cli.main([*base, "--file", str(draft)]) == 0
+    assert "サーバーの人が読んでから、載ります" in capsys.readouterr().out
+    mock_server(monkeypatch, handler)
+
     # 形の悪いファイルは送らない
     bad = seedfolder / "public" / "bad.md"
     for body in (

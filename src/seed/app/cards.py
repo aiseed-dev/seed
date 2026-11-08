@@ -100,6 +100,22 @@ def published_card(app: App) -> list[ft.Control]:
 
         return h
 
+    def check(pid: str):
+        """サーバーでの今（預かり、載った、戻された）を尋ねて、一行で見せる。"""
+
+        async def h(e) -> None:
+            try:
+                got = await app.call("publish_state", pid)
+            except Exception as ex:  # noqa: BLE001 — 本人に一文で見せる
+                app.toast(error_text(ex, app.lang, server=app.settings.server))
+                return
+            state = got.get("state")
+            if state not in ("pending", "public", "returned"):
+                state = "none"
+            app.toast(t(f"publish_state_{state}", id=pid, reason=got.get("reason") or "-"))
+
+        return h
+
     out: list[ft.Control] = []
     for p in sorted(app.folder.public.glob("*.md")) if app.folder.public.exists() else []:
         try:
@@ -114,6 +130,7 @@ def published_card(app: App) -> list[ft.Control]:
                     ft.Column(
                         [ft.Text(f"{pub.id} · {pub.since}"), theme.muted(pub.word)], spacing=2, expand=True
                     ),
+                    ft.TextButton(t("publish_state_check"), on_click=check(pub.id)),
                     (ft.FilledButton if sure else ft.TextButton)(
                         t("unpublish_sure") if sure else t("unpublish"), on_click=withdraw(pub.id)
                     ),

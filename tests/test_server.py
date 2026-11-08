@@ -40,6 +40,7 @@ def settings(tmp_path: Path) -> Settings:
         skill_dir=tmp_path / "no-skill",
         invites={INVITE: "てすと"},
         open=True,  # 既存のテストは招待コード無しで打つ。認証のテストは open=False で別に
+        publish_review=False,  # 既存のテストは公開がすぐ載る形で見る。預かりのテストは review で別に
     )
 
 

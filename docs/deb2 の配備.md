@@ -32,14 +32,14 @@ getent passwd seed || sudo useradd --system --user-group --home-dir /var/lib/see
 ```bash
 sudo install -d -o dev -g dev -m 755 /opt/seed
 sudo install -d -o seed -g seed -m 755 /var/lib/seed /var/lib/seed/public
-sudo install -d -o seed -g seed -m 700 /var/lib/seed/audit /var/lib/seed/gate
+sudo install -d -o seed -g seed -m 700 /var/lib/seed/audit /var/lib/seed/gate /var/lib/seed/pending
 sudo install -d -o root -g seed -m 750 /etc/seed
 sudo install -d -o root -g root -m 700 /etc/seed/keys
 sudo test -e /etc/seed/log-key || sudo sh -c 'umask 077; head -c 32 /dev/urandom > /etc/seed/log-key'
 sudo ls -ld /opt/seed /var/lib/seed /var/lib/seed/* /etc/seed /etc/seed/keys /etc/seed/log-key
 ```
 
-`seed` はログインしない利用者（`nologin`）。`/opt/seed` はコードで、`dev` が置き、`seed` は読むだけ。`/var/lib/seed` の下（公開、token の台帳 `gate/`、操作の記録 `audit/`）の持ち主は `seed`。`public` は Caddy（ユーザー caddy）が読むので 755、`gate` と `audit` は 700。`/etc/seed` は root:seed 750 で、`dev` は中を見られない。`keys/` と `log-key` は root だけ（鍵の置き方は 0-3）。
+`seed` はログインしない利用者（`nologin`）。`/opt/seed` はコードで、`dev` が置き、`seed` は読むだけ。`/var/lib/seed` の下（公開、載せる前の待ち `pending/`、token の台帳 `gate/`、操作の記録 `audit/`）の持ち主は `seed`。`public` は Caddy（ユーザー caddy）が読むので 755、`pending`、`gate`、`audit` は 700（`pending` はサーバーの人が読む前の物なので、Caddy には見せない。設計書 §5.18）。`/etc/seed` は root:seed 750 で、`dev` は中を見られない。`keys/` と `log-key` は root だけ（鍵の置き方は 0-3）。
 
 ### 0-2. [dev] clone、.venv、テスト
 

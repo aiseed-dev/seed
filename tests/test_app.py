@@ -1123,3 +1123,72 @@ def test_every_line_key_has_a_name():
 
     for k in (*READING_KEYS, *PLAN_KEYS, *PLAN_RECORD_KEYS, *RECORD_KEYS):
         assert key_label(k, "ja") != k and key_label(k, "en") != k
+
+
+@pytest.mark.parametrize(
+    ("answer", "want"),
+    [
+        (
+            {"id": "d-2", "url": "https://seed.test/public/d-2.md", "state": "pending"},
+            "サーバーの人が読んでから",
+        ),
+        ({"id": "d-2", "url": "https://seed.test/public/d-2.md", "state": "public"}, "公開しました"),
+        (
+            {"id": "d-2", "url": "https://seed.test/public/d-2.md"},
+            "公開しました",
+        ),  # state を返さない古いサーバー
+    ],
+)
+def test_send_draft_says_pending_when_the_server_holds_it(app, seedfolder, answer, want):
+    pub = Public(id="d-2", place="徳島県", since="2026-11-05", name="見本", word="一言", language="ja")
+    pub.days["2026-11-05"] = [Line("overall", "草が大半", 0.8)]
+    (seedfolder / "public").mkdir(parents=True, exist_ok=True)
+    pub.write(seedfolder / "public" / "d-2.md")
+    text_ = (seedfolder / "public" / "d-2.md").read_text(encoding="utf-8")
+
+    async def call(method, *args):
+        assert method == "publish"
+        return answer
+
+    app.call = call
+    item = {"draft": "public/d-2.md", "draft_text": text_}
+    run(talk.send_draft(app, item))
+    assert item["sent"] is True
+    assert want in talk.talk_state(app)[-1]["text"]
+
+
+def test_published_card_asks_the_server_state(app, seedfolder):
+    pub = Public(id="my-field", place="徳島県", since="2026-11-05", name="見本", word="一言", language="ja")
+    pub.days["2026-11-05"] = [Line("overall", "草が大半", 0.8)]
+    (seedfolder / "public").mkdir(parents=True, exist_ok=True)
+    pub.write(seedfolder / "public" / "my-field.md")
+    answers = iter(
+        [
+            {"state": "pending"},
+            {"state": "returned", "reason": "人の名前が入っています"},
+            {"state": "public"},
+            {"state": "none"},
+        ]
+    )
+    shown = []
+
+    async def call(method, *args):
+        assert (method, *args) == ("publish_state", "my-field")
+        return next(answers)
+
+    app.call = call
+    app.toast = shown.append
+    talk.add(app, card="published")
+    for _ in range(4):
+        v = talk.view(app)
+        run(
+            next(
+                c for c in walk(v) if isinstance(c, ft.TextButton) and c.content == "載ったかを見る"
+            ).on_click(None)
+        )
+    assert shown == [
+        "my-field: サーバーの人が読んでいるところです。",
+        "my-field: 戻されました。サーバーの人の一言: 人の名前が入っています",
+        "my-field: 載っています。",
+        "my-field: サーバーにはありません。",
+    ]

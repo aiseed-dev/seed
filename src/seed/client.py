@@ -220,11 +220,24 @@ class Client:
         return I.parse(data.get("plantnet") or {})
 
     def publish(self, markdown: str, photos: dict[str, bytes] | None = None) -> dict:
-        """公開ファイルを送る。photos は photo の行が指す写真（公開の名 → 縮めた JPEG）。{"id", "url"}。"""
+        """公開ファイルを送る。photos は photo の行が指す写真（公開の名 → 縮めた JPEG）。{"id", "url", "state"}。
+
+        state はサーバーが預かった時 "pending"（動かす人が読んでから載る）、すぐ載せた時 "public"。古いサーバーは返さない。
+        """
         body = {"token": self.token, "markdown": markdown, **self._inv()}
         if photos:
             body["photos"] = {n: base64.b64encode(b).decode("ascii") for n, b in photos.items()}
         return self._json(self._call("POST", "/api/publish", json=body))
+
+    def publish_state(self, public_id: str) -> dict:
+        """その公開の今（GET /api/publish/<id>/state）。{"state": pending|returned|public|none, "reason"?}。
+
+        公開の token と招待コードは頭の行で送る（URL に秘密を載せない）。
+        """
+        headers = {"x-seed-token": self.token}
+        if self.invite:
+            headers["x-seed-invite"] = self.invite
+        return self._json(self._call("GET", f"/api/publish/{public_id}/state", headers=headers))
 
     def unpublish(self, public_id: str) -> None:
         self._call("DELETE", f"/api/publish/{public_id}", json={"token": self.token, **self._inv()})

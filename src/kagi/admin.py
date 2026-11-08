@@ -73,7 +73,13 @@ ACT = {
     "admin.withdraw": "管理: 公開を取り下げた",
     "admin.connections": "管理: 寄せられた一言を見た",
     "admin.connection_remove": "管理: 寄せられた一言を消した",
+    "admin.pending": "管理: 載せる前の記録を見た",
+    "admin.pending_photo": "管理: 載せる前の写真を見た",
+    "admin.approve": "管理: 記録を載せた",
+    "admin.return": "管理: 記録を戻した",
+    "publish.state": "公開の今を見た",
 }
+REASON_MAX = 200  # 戻す理由（サーバーと同じ上限。HTML と連絡先らしい物はサーバーが断る）
 
 
 class AdminError(Exception):
@@ -275,6 +281,31 @@ class Client:
         q, n = urllib.parse.quote(rid, safe=""), urllib.parse.quote(name, safe="")
         self.call("DELETE", f"/api/admin/records/{q}/connections/{n}")
 
+    def pending(self) -> list[dict]:
+        return list(self.call("GET", "/api/admin/pending").get("pending") or [])
+
+    def pending_photo(self, rid: str, name: str) -> bytes:
+        """載せる前の写真（JPEG の中身）。"""
+        q, n = urllib.parse.quote(rid, safe=""), urllib.parse.quote(name, safe="")
+        headers = {"x-seed-invite": self.conn._token, "accept": "image/jpeg"}
+        try:
+            status, raw = self.transport(
+                "GET", f"{self.conn.url}/api/admin/pending/{q}/photos/{n}", headers, None
+            )
+        except AdminError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise AdminError(f"サーバーに繋がらない ({type(e).__name__})") from None
+        if status >= 400 or not raw.startswith(b"\xff\xd8\xff"):
+            raise AdminError(f"写真を読めない（{status}）: {name}")
+        return raw
+
+    def approve(self, rid: str) -> None:
+        self.call("POST", f"/api/admin/pending/{urllib.parse.quote(rid, safe='')}/approve")
+
+    def return_pending(self, rid: str, reason: str) -> None:
+        self.call("POST", f"/api/admin/pending/{urllib.parse.quote(rid, safe='')}/return", {"reason": reason})
+
 
 def load_all(client: Client) -> dict:
     """画面に要る物を一度に読む。"""
@@ -283,7 +314,18 @@ def load_all(client: Client) -> dict:
         "tokens": client.tokens(),
         "audit": client.audit(AUDIT_LINES),
         "records": client.records(),
+        "pending": _pending(client),
     }
+
+
+def _pending(client: Client) -> list[dict] | None:
+    """載せる前の記録。預かりの無い古いサーバー（404）なら None（画面に出さない）。"""
+    try:
+        return client.pending()
+    except AdminError as e:
+        if "（404）" in str(e):
+            return None
+        raise
 
 
 # ---- 画面の中身（Flet を使わない） ----
@@ -458,6 +500,33 @@ def record_rows(records: list[dict]) -> list[dict]:
     return out
 
 
+def pending_rows(pending: list[dict]) -> list[dict]:
+    """載せる前の記録（呼び名、届いた時、全文、写真の名）。古い物が先（サーバーの順）。"""
+    out = []
+    for r in pending:
+        if not isinstance(r, dict):
+            continue
+        photos = r.get("photos") if isinstance(r.get("photos"), list) else []
+        when = str(r.get("received", "") or "")[:16].replace("T", " ")
+        out.append(
+            {
+                "id": str(r.get("id", "")),
+                "meta": f"送った人 {r.get('name') or '分からない人'}　届いた時 {when or '?'}　写真 {len(photos)} 枚",
+                "markdown": str(r.get("markdown", "") or ""),
+                "photos": [str(n) for n in photos],
+            }
+        )
+    return out
+
+
+def check_reason(reason: str) -> str:
+    """戻す理由の欄。前後の空白を外し、200 字まで、改行は空白に。"""
+    r = " ".join((reason or "").split())
+    if len(r) > REASON_MAX:
+        raise Refused(f"戻す理由は {REASON_MAX} 字まで")
+    return r
+
+
 def connection_rows(conns: list[dict]) -> list[dict]:
     return [
         {
@@ -604,6 +673,17 @@ def remove_connection(d: Path, client: Client, rid: str, name: str, env=None) ->
     return note_audit(
         d, "seed.connection_remove", f"{client.conn.host}: 公開 {rid} の一言 {name} を消した", env
     )
+
+
+def approve_record(d: Path, client: Client, rid: str, env=None) -> str | None:
+    client.approve(rid)
+    return note_audit(d, "seed.approve", f"{client.conn.host}: 記録 {rid} を載せた", env)
+
+
+def return_record(d: Path, client: Client, rid: str, reason: str, env=None) -> str | None:
+    """戻す。理由は公開した人に届く。kagi の記録には id だけ（理由は書かない）。"""
+    client.return_pending(rid, check_reason(reason))
+    return note_audit(d, "seed.return", f"{client.conn.host}: 記録 {rid} を戻した", env)
 
 
 # ---- 在庫表 ----

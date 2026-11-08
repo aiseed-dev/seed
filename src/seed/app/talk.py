@@ -429,7 +429,10 @@ async def send_draft(app: App, item: dict) -> None:
         return
     item["sent"] = True
     app.index = None
-    say(app, app.t("published", url=got.get("url") or got.get("id")))
+    if got.get("state") == "pending":  # サーバーが預かった。動かす人が読んでから載る
+        say(app, app.t("publish_pending"))
+    else:
+        say(app, app.t("published", url=got.get("url") or got.get("id")))
     app.refresh()
 
 

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """門のテスト: 相手ごとの token の台帳（ハッシュ、範囲、期限、取り消し）と、誰が何をしたかの記録。"""
 
+import base64
 import datetime as dt
 import json
 import os
@@ -59,6 +60,7 @@ def keyfile(tmp_path, monkeypatch) -> Path:
 
 
 def make(tmp_path, ledger, audit_path=None, **kw) -> Settings:
+    kw.setdefault("publish_review", False)  # 既存のテストは公開がすぐ載る形で見る（預かりは test_server）
     return Settings(
         api_key="test-key",  # 読みの口が門まで進むように（Claude は呼ばれない。門で断るので）
         public_dir=tmp_path / "public",
@@ -635,3 +637,205 @@ def test_admin_records_show_owner_date_and_words(tmp_path, ledger, keyfile):
     ]
     assert ("動かす人", "admin.connection_remove", f"{RID} {name[:10]}") in acts
     assert "買いたい" not in log.read_text()
+
+
+# ---- 公開の預かり（SEED_PUBLISH_REVIEW。動かす人が読んで載せる・戻す）
+
+
+def _public_word(word: str) -> str:
+    p = Public(id=RID, place="徳島県 吉野川市", since="2026-11-06", name="にじ", word=word, language="ja")
+    p.days["2026-11-06"] = [Line("overall", "草が大半", 0.8, "right")]
+    return p.render()
+
+
+def _state(c, token=TOKEN, code=INVITE):
+    return c.get(f"/api/publish/{RID}/state", headers={"X-Seed-Invite": code, "X-Seed-Token": token})
+
+
+def test_review_setting_from_env(monkeypatch):
+    for v, want in (("", True), ("1", True), ("0", False), ("off", False), ("OFF", False)):
+        monkeypatch.setenv("SEED_PUBLISH_REVIEW", v)
+        assert Settings.from_env().publish_review is want, v
+    monkeypatch.setenv("SEED_PUBLIC_DIR", "/var/lib/seed/public")
+    monkeypatch.delenv("SEED_PENDING_DIR", raising=False)
+    assert Settings.from_env().pending_dir == Path("/var/lib/seed/pending")  # public/ の隣で、中ではない
+    monkeypatch.setenv("SEED_PENDING_DIR", "/srv/held")
+    assert Settings.from_env().pending_dir == Path("/srv/held")
+
+
+def test_publish_is_held_until_the_admin_approves(tmp_path, ledger, keyfile):
+    admin = gate.add(ledger, "動かす人", ["admin"], 90)
+    log = tmp_path / "audit" / "audit.log"
+    c = TestClient(create_app(make(tmp_path, ledger, log, publish_review=True)))
+    st = settings_of(c)
+    assert _state(c).json()["state"] == "none"
+    r = publish(c, INVITE)
+    assert r.status_code == 200 and r.json()["state"] == "pending" and r.json()["id"] == RID
+    assert (tmp_path / "pending" / f"{RID}.md").is_file()
+    assert not (tmp_path / "public" / f"{RID}.md").exists()
+    assert c.get(f"/public/{RID}.md").status_code == 404 and c.get(f"/p/{RID}").status_code == 404
+    assert c.get("/index.json").json()["total"]["records"] == 0
+    assert not (st.site_dir / "public" / f"{RID}.md").exists()
+    assert _state(c).json() == {"id": RID, "state": "pending", "public": False}
+    assert _state(c, token="o" * 32).status_code == 403  # 別の token には見せない
+
+    # 預かりの一覧は admin だけ
+    rows = c.get("/api/admin/pending", headers=hdr(admin)).json()["pending"]
+    assert [(x["id"], x["name"], x["photos"]) for x in rows] == [(RID, "てすと", [])]
+    assert "草が伸びた。" in rows[0]["markdown"] and dt.datetime.fromisoformat(rows[0]["received"])
+    for code in (INVITE, None):
+        assert c.get("/api/admin/pending", headers=hdr(code)).status_code == 403
+        assert c.post(f"/api/admin/pending/{RID}/approve", headers=hdr(code)).status_code == 403
+        assert c.post(f"/api/admin/pending/{RID}/return", json={}, headers=hdr(code)).status_code == 403
+
+    r = c.post(f"/api/admin/pending/{RID}/approve", headers=hdr(admin))
+    assert r.status_code == 200 and r.json()["state"] == "public"
+    assert (tmp_path / "public" / f"{RID}.md").is_file() and not (tmp_path / "pending" / f"{RID}.md").exists()
+    assert c.get("/index.json").json()["total"]["records"] == 1
+    assert c.get(f"/p/{RID}").status_code == 200
+    assert _state(c).json()["state"] == "public"
+    assert c.post(f"/api/admin/pending/{RID}/approve", headers=hdr(admin)).status_code == 404
+
+    # 載った物を書き直すと、新しい版は預かり。前の版は載せるまでそのまま
+    assert (
+        c.post(
+            "/api/publish", json={"token": TOKEN, "markdown": _public_word("書き直し"), "invite": INVITE}
+        ).json()["state"]
+        == "pending"
+    )
+    assert c.get("/index.json").json()["records"][0]["word"] == "草が伸びた。"
+    assert _state(c).json() == {"id": RID, "state": "pending", "public": True}
+
+    # 戻す: 理由の確かめ、預かりは消え、前の版は残る。理由は公開した人が読める
+    for bad in ("<b>x</b>", "電話 088-123-4567", "あ" * 201):
+        r = c.post(f"/api/admin/pending/{RID}/return", json={"reason": bad}, headers=hdr(admin))
+        assert r.status_code == 400, bad
+    r = c.post(
+        f"/api/admin/pending/{RID}/return", json={"reason": "人の名前が入っています"}, headers=hdr(admin)
+    )
+    assert r.status_code == 200 and r.json()["state"] == "returned"
+    assert not (tmp_path / "pending" / f"{RID}.md").exists()
+    assert c.get("/index.json").json()["records"][0]["word"] == "草が伸びた。"
+    assert _state(c).json() == {
+        "id": RID,
+        "state": "returned",
+        "reason": "人の名前が入っています",
+        "public": True,
+    }
+    back = json.loads((tmp_path / "pending" / ".returned.json").read_text())
+    assert back[RID]["reason"] == "人の名前が入っています"
+    assert c.post(f"/api/admin/pending/{RID}/return", json={}, headers=hdr(admin)).status_code == 404
+
+    # 新しく送ると、戻した印は消える
+    publish(c, INVITE)
+    assert _state(c).json()["state"] == "pending" and RID not in json.loads(
+        (tmp_path / "pending" / ".returned.json").read_text()
+    )
+
+    # 持ち主の取り下げは、預かりの版も載った版も消す
+    assert (
+        c.request("DELETE", f"/api/publish/{RID}", json={"token": TOKEN, "invite": INVITE}).status_code == 200
+    )
+    assert not (tmp_path / "pending" / f"{RID}.md").exists()
+    assert not (tmp_path / "public" / f"{RID}.md").exists()
+    assert _state(c).json()["state"] == "none"
+
+    # 記録: 載せた・戻したは id だけ（理由は書かない）
+    acts = [
+        (x["actor"], x["action"], x["detail"])
+        for x in c.get("/api/admin/audit", headers=hdr(admin)).json()["lines"]
+    ]
+    assert ("動かす人", "admin.approve", RID) in acts and ("動かす人", "admin.return", RID) in acts
+    assert "人の名前が入っています" not in log.read_text()
+
+
+def test_withdraw_of_a_held_only_record(tmp_path, ledger):
+    c = TestClient(create_app(make(tmp_path, ledger, publish_review=True)))
+    publish(c, INVITE)
+    assert (
+        c.request("DELETE", f"/api/publish/{RID}", json={"token": "o" * 32, "invite": INVITE}).status_code
+        == 403
+    )
+    assert (
+        c.request("DELETE", f"/api/publish/{RID}", json={"token": TOKEN, "invite": INVITE}).status_code == 200
+    )
+    assert not (tmp_path / "pending" / f"{RID}.md").exists()
+    assert (
+        c.request("DELETE", f"/api/publish/{RID}", json={"token": TOKEN, "invite": INVITE}).status_code == 404
+    )
+
+
+def test_held_photos_move_on_approve(tmp_path, ledger):
+    from test_photos import make_jpeg
+
+    admin = gate.add(ledger, "動かす人", ["admin"], 90)
+    c = TestClient(create_app(make(tmp_path, ledger, publish_review=True)))
+    st = settings_of(c)
+    a, b = "2026-11-06_090000.jpg", "2026-11-06_100000.jpg"
+
+    def md(*names):
+        p = Public(id=RID, place="徳島県", since="2026-11-06", name="にじ", word="畑。", language="ja")
+        p.days["2026-11-06"] = [*(Line("photo", n) for n in names), Line("did", "見ただけ")]
+        return p.render()
+
+    def jpeg(name):
+        return base64.b64encode(make_jpeg(tmp_path / "in" / name).read_bytes()).decode()
+
+    P.publish(st, TOKEN, md(a), {a: jpeg(a)})
+    held = tmp_path / "pending" / "photos" / RID
+    assert (held / a).is_file() and not (tmp_path / "public" / "photos" / RID).exists()
+    assert c.get(f"/photos/{RID}/{a}").status_code == 404  # 載せる前は配らない
+    assert c.get("/api/admin/pending", headers=hdr(admin)).json()["pending"][0]["photos"] == [a]
+    got = c.get(f"/api/admin/pending/{RID}/photos/{a}", headers=hdr(admin))
+    assert got.status_code == 200 and got.headers["content-type"] == "image/jpeg"
+    assert c.get(f"/api/admin/pending/{RID}/photos/{a}", headers=hdr(INVITE)).status_code == 403
+    assert c.post(f"/api/admin/pending/{RID}/approve", headers=hdr(admin)).status_code == 200
+    assert (tmp_path / "public" / "photos" / RID / a).is_file() and not held.exists()
+    assert (st.site_dir / "photos" / RID / a).is_file()
+
+    # 文だけ書き直す（前の写真を使う）と、写真無しで預かれる。載せても写真は残る
+    P.publish(st, TOKEN, md(a, b), {b: jpeg(b)})
+    assert sorted(p.name for p in held.iterdir()) == [b]
+    P.approve(st, RID)
+    assert sorted(p.name for p in (tmp_path / "public" / "photos" / RID).iterdir()) == [a, b]
+    # 指されなくなった写真は載せた時に消える
+    P.publish(st, TOKEN, md(b))
+    assert (tmp_path / "public" / "photos" / RID / a).is_file()  # 載せるまでは前のまま
+    P.approve(st, RID)
+    assert sorted(p.name for p in (tmp_path / "public" / "photos" / RID).iterdir()) == [b]
+
+
+def test_admin_withdraw_also_drops_the_held_version(tmp_path, ledger):
+    c = TestClient(create_app(make(tmp_path, ledger, publish_review=True)))
+    st = settings_of(c)
+    P.publish(st, TOKEN, PUBLIC)
+    P.approve(st, RID)
+    P.publish(st, TOKEN, _public_word("書き直し"))
+    P.withdraw_as_admin(st, RID)
+    assert not (tmp_path / "pending" / f"{RID}.md").exists()
+    assert P.pending(st) == []
+
+
+def test_client_publish_state_and_pending_words(tmp_path, ledger):
+    import httpx
+
+    from seed.app.strings import s
+    from seed.client import Client
+
+    gate.add(ledger, "仲間", ["member"], 90)
+    tc = TestClient(create_app(make(tmp_path, ledger, publish_review=True)))
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        r = tc.request(
+            request.method, request.url.raw_path.decode(), content=request.content, headers=request.headers
+        )
+        return httpx.Response(r.status_code, content=r.content, headers=r.headers)
+
+    with Client("http://seed.test", TOKEN, "ja", transport=httpx.MockTransport(handler), invite=INVITE) as cl:
+        assert cl.publish(PUBLIC)["state"] == "pending"
+        assert cl.publish_state(RID)["state"] == "pending"
+    assert TOKEN not in str(seen[-1].url) and INVITE not in str(seen[-1].url)  # 秘密は頭の行で
+    assert s("publish_pending", "ja") == "送りました。サーバーの人が読んでから、載ります。"
+    assert s("publish_pending", "en")

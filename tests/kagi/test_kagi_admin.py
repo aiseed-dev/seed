@@ -94,6 +94,23 @@ class Fake:
             ("POST", "/api/admin/pause"): (200, {"paused": True}),
             ("DELETE", "/api/admin/records/r1"): (200, {"withdrawn": True}),
             ("DELETE", "/api/admin/records/r1/connections/c1"): (200, {"removed": True}),
+            ("GET", "/api/admin/pending"): (
+                200,
+                {
+                    "pending": [
+                        {
+                            "id": "r2",
+                            "name": "niji",
+                            "received": "2026-11-08T09:30:12",
+                            "markdown": "---\nid: r2\n---\n",
+                            "photos": ["a.jpg"],
+                        }
+                    ],
+                    "review": True,
+                },
+            ),
+            ("POST", "/api/admin/pending/r2/approve"): (200, {"id": "r2", "state": "public"}),
+            ("POST", "/api/admin/pending/r2/return"): (200, {"id": "r2", "state": "returned"}),
         }
         self.routes.update(routes or {})
 
@@ -497,3 +514,66 @@ def test_admin_token_row_guidance(tmp_path):
     admin.add_secret(d, {**pre, "holder": "kakari", "expires": "2026-12-06"})
     assert admin.has_admin_token_row(d)
     assert TOKEN not in (d / "inventory.toml").read_text("utf-8")
+
+
+# ---- 載せる前の記録（サーバーが預かった公開）----
+
+
+def test_pending_rows_and_old_server(tmp_path):
+    d, _env = _dir(tmp_path)
+    data = admin.load_all(_client(d))
+    assert admin.pending_rows(data["pending"]) == [
+        {
+            "id": "r2",
+            "meta": "送った人 niji　届いた時 2026-11-08 09:30　写真 1 枚",
+            "markdown": "---\nid: r2\n---\n",
+            "photos": ["a.jpg"],
+        }
+    ]
+    # 預かりの口の無い古いサーバーなら None（画面に出さない）。他の断りはそのまま
+    old = Fake({("GET", "/api/admin/pending"): (404, {"detail": "Not Found"})})
+    assert admin.load_all(_client(d, old))["pending"] is None
+    bad = Fake({("GET", "/api/admin/pending"): (500, {"error": "x"})})
+    with pytest.raises(admin.AdminError):
+        admin.load_all(_client(d, bad))
+
+
+def test_approve_and_return_logged_without_reason(tmp_path):
+    d, env = _dir(tmp_path)
+    fake = Fake()
+    c = _client(d, fake)
+    assert admin.approve_record(d, c, "r2", env=env) is None
+    assert fake.calls[-1][:2] == ("POST", "/api/admin/pending/r2/approve")
+    assert admin.return_record(d, c, "r2", "  人の名前が\n入っています ", env=env) is None
+    assert fake.calls[-1][3] == {"reason": "人の名前が 入っています"}
+    with pytest.raises(inventory.Refused):
+        admin.return_record(d, c, "r2", "あ" * 201, env=env)
+    recs = [json.loads(x) for x in (d / "audit.log").read_text("utf-8").splitlines()]
+    assert [(r["action"], r["detail"]) for r in recs] == [
+        ("seed.approve", "seed.example: 記録 r2 を載せた"),
+        ("seed.return", "seed.example: 記録 r2 を戻した"),
+    ]
+    assert "人の名前" not in (d / "audit.log").read_text("utf-8")
+    assert (
+        admin.ACT["admin.approve"] == "管理: 記録を載せた"
+        and admin.ACT["admin.return"] == "管理: 記録を戻した"
+    )
+
+
+def test_pending_photo_reads_jpeg_only(tmp_path):
+    d, _env = _dir(tmp_path)
+    seen = []
+
+    def transport(method, url, headers, body):
+        seen.append((method, url, headers))
+        if url.endswith("/a.jpg"):
+            return 200, b"\xff\xd8\xff\xe0jpeg"
+        return 404, b'{"error": "not_found"}'
+
+    c = _client(d, transport)
+    assert c.pending_photo("r2", "a.jpg") == b"\xff\xd8\xff\xe0jpeg"
+    assert seen[-1][1] == "https://seed.example/api/admin/pending/r2/photos/a.jpg"
+    assert seen[-1][2]["x-seed-invite"] == TOKEN
+    with pytest.raises(admin.AdminError) as e:
+        c.pending_photo("r2", "b.jpg")
+    assert TOKEN not in str(e.value)

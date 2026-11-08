@@ -90,6 +90,11 @@ class Settings:
     gate_tries: int = GATE_TRIES
     gate_window: int = GATE_WINDOW
     gate_block: int = GATE_BLOCK
+    # SEED_PUBLISH_REVIEW。既定で入。公開は pending/ に預かり、動かす人が読んで「載せる」と public/ に移す。
+    # 0 か off で切ると、今まで通り受け取ってすぐ public/ に書く
+    publish_review: bool = True
+    # SEED_PENDING_DIR。預かった公開の置き場。無ければ public/ の隣の pending/（Caddy が配る site/ の外）
+    pending_path: Path | None = None
     _book: InviteBook = field(init=False, repr=False, compare=False)
     _tokens: gate.TokenBook = field(init=False, repr=False, compare=False)
     journal: gate.Journal = field(init=False, repr=False, compare=False)
@@ -112,6 +117,11 @@ class Settings:
     @property
     def owners_path(self) -> Path:
         return self.public_dir / ".owners.json"
+
+    @property
+    def pending_dir(self) -> Path:
+        """預かった公開（pending/<id>.md、pending/photos/<id>/）。public/ の中には置かない（配られないように）。"""
+        return self.pending_path or self.public_dir.parent / "pending"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -136,6 +146,11 @@ class Settings:
             gate_tries=_int("SEED_GATE_TRIES", GATE_TRIES),
             gate_window=_int("SEED_GATE_WINDOW", GATE_WINDOW),
             gate_block=_int("SEED_GATE_BLOCK", GATE_BLOCK),
+            publish_review=os.environ.get("SEED_PUBLISH_REVIEW", "").strip().lower()
+            not in ("0", "off", "false", "no"),
+            pending_path=Path(d).expanduser()
+            if (d := os.environ.get("SEED_PENDING_DIR", "").strip())
+            else None,
         )
 
     @property

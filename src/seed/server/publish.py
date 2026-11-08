@@ -8,6 +8,9 @@ id の持ち主は public/.owners.json（id → token のハッシュ）。上�
 小数 3 桁以上の緯度経度らしい対があれば 400 で拒む（人の了解の無い細かい座標を静的ページに出さない）。
 写真: 本文の `photo` の行が指す写真だけを受け、Pillow で開いて書き直し（RGB、長い辺 1280、EXIF 無し）、
 public/photos/<id>/<名> に置く。端末が何を送っても、位置の情報はここに残らない。指されなくなった写真は消す。
+預かり（settings.publish_review、既定で入）: 確かめ方は同じで、書く先が pending/<id>.md と pending/photos/<id>/。
+動かす人が読んで「載せる」（approve）と public/ に移して索引を作り直す。「戻す」（return_pending）は預かりを消し、
+理由を pending/.returned.json に残す。public/ に在る前の版は、載せるまでそのまま。
 """
 
 from __future__ import annotations
@@ -146,6 +149,40 @@ def remove_photos(settings: Settings, record_id: str) -> None:
     shutil.rmtree(photos_dir(settings, record_id), ignore_errors=True)
 
 
+RETURNED = ".returned.json"  # id → {"reason": 戻した理由, "returned": 時}
+
+
+def pending_path(settings: Settings, record_id: str) -> Path:
+    if not R.ID_RE.match(record_id):
+        raise PublishError(400, ["id は [a-z0-9-]+"])
+    return settings.pending_dir / f"{record_id}.md"
+
+
+def pending_photos_dir(settings: Settings, record_id: str) -> Path:
+    return settings.pending_dir / "photos" / record_id
+
+
+def returned_path(settings: Settings) -> Path:
+    return settings.pending_dir / RETURNED
+
+
+def _forget_returned(settings: Settings, record_id: str) -> None:
+    path = returned_path(settings)
+    back = load_owners(path)
+    if record_id in back:
+        del back[record_id]
+        save_owners(path, back)
+
+
+def _remove_pending(settings: Settings, record_id: str) -> bool:
+    """預かりの版と写真を消す。在ったら True。"""
+    path = pending_path(settings, record_id)
+    had = path.exists()
+    path.unlink(missing_ok=True)
+    shutil.rmtree(pending_photos_dir(settings, record_id), ignore_errors=True)
+    return had
+
+
 def rebuild(settings: Settings) -> dict:
     """索引を作り直し、静的サイト（site/）も書き出す（設計書 §7.5）。"""
     from . import pages  # 循環を避ける
@@ -186,18 +223,27 @@ def publish(settings: Settings, token: str, markdown: str, photos: object = None
     if stray:
         raise PublishError(400, [f"photo の行が指していない写真: {', '.join(stray)}"])
     cleaned = {n: clean_photo(n, b) for n, b in incoming.items()}
-    path = public_path(settings, pub.id)
+    shown = public_path(settings, pub.id)
+    review = settings.publish_review
+    path = pending_path(settings, pub.id) if review else shown
     h = token_hash(token)
     with write_lock:
         settings.public_dir.mkdir(parents=True, exist_ok=True)
         owners = load_owners(settings.owners_path)
         owner = owners.get(pub.id)
-        if (owner and owner != h) or (path.exists() and not owner):
+        if (owner and owner != h) or ((shown.exists() or path.exists()) and not owner):
             raise PublishError(403, ["この id は別の人が公開している"])
-        folder = photos_dir(settings, pub.id)
-        missing = [n for n in names if n not in cleaned and not (folder / n).is_file()]
+        public_folder = photos_dir(settings, pub.id)
+        folder = pending_photos_dir(settings, pub.id) if review else public_folder
+        # 前に置いた写真（public の物、預かりの物）はそのまま使える。載せる時に public へ重ねる
+        missing = [
+            n
+            for n in names
+            if n not in cleaned and not (folder / n).is_file() and not (public_folder / n).is_file()
+        ]
         if missing:
             raise PublishError(400, [f"photo の行が指す写真が無い: {', '.join(missing)}"])
+        path.parent.mkdir(parents=True, exist_ok=True)
         if cleaned:
             folder.mkdir(parents=True, exist_ok=True)
         for n, data in cleaned.items():
@@ -211,8 +257,110 @@ def publish(settings: Settings, token: str, markdown: str, photos: object = None
                     old.unlink(missing_ok=True)
         owners[pub.id] = h
         save_owners(settings.owners_path, owners)
-        rebuild(settings)
+        _forget_returned(settings, pub.id)
+        if not review:
+            rebuild(settings)
     return pub
+
+
+def approve(settings: Settings, record_id: str) -> None:
+    """預かった版を public/ に移す（前の版を置き換える）。写真は public の物に重ね、指されない物は消す。"""
+    src = pending_path(settings, record_id)
+    with write_lock:
+        if not src.is_file():
+            raise PublishError(404, ["その id の預かりは無い"])
+        text = src.read_text(encoding="utf-8")
+        try:
+            names = set(R.Public.parse(text).photo_names())
+        except (ValueError, TypeError, KeyError, yaml.YAMLError):
+            raise PublishError(400, ["預かりの版を読めない"]) from None
+        settings.public_dir.mkdir(parents=True, exist_ok=True)
+        folder = photos_dir(settings, record_id)
+        incoming = pending_photos_dir(settings, record_id)
+        if incoming.is_dir():
+            folder.mkdir(parents=True, exist_ok=True)
+            for f in incoming.iterdir():
+                if f.is_file() and f.name in names:
+                    _write_atomic(folder / f.name, f.read_bytes())
+        _write_atomic(public_path(settings, record_id), text.encode("utf-8"))
+        if folder.is_dir():
+            for old in folder.iterdir():
+                if old.name not in names:
+                    old.unlink(missing_ok=True)
+        _remove_pending(settings, record_id)
+        _forget_returned(settings, record_id)
+        rebuild(settings)
+
+
+RETURN_REASON_MAX = 200
+
+
+def check_reason(reason: object) -> str:
+    """戻す理由。200 字まで、HTML と個人の連絡先らしい物は入れない（一言と同じ確かめ）。"""
+    if not isinstance(reason, str):
+        raise PublishError(400, ["reason は文字"])
+    reason = reason.strip()
+    if len(reason) > RETURN_REASON_MAX:
+        raise PublishError(400, [f"理由は {RETURN_REASON_MAX} 字まで"])
+    if R.HTML_RE.search(reason):
+        raise PublishError(400, ["理由に HTML は入れない"])
+    if R.PERSONAL_RE.search(reason):
+        raise PublishError(400, ["理由に電話番号・メール・郵便番号らしい物は入れない"])
+    return reason
+
+
+def return_pending(settings: Settings, record_id: str, reason: object) -> None:
+    """預かった版を戻す（消す）。理由は pending/.returned.json に残し、公開した人が state で読む。"""
+    reason = check_reason(reason)
+    pending_path(settings, record_id)  # id の形
+    with write_lock:
+        if not _remove_pending(settings, record_id):
+            raise PublishError(404, ["その id の預かりは無い"])
+        path = returned_path(settings)
+        back = load_owners(path)
+        back[record_id] = {"reason": reason, "returned": dt.datetime.now().isoformat(timespec="seconds")}
+        save_owners(path, back)
+
+
+def pending(settings: Settings) -> list[dict]:
+    """預かっている公開（古い物が先）。name は門で通した呼び名。"""
+    folder = settings.pending_dir
+    out = []
+    for f in sorted(folder.glob("*.md"), key=lambda f: f.stat().st_mtime) if folder.is_dir() else []:
+        rid = f.stem
+        if not R.ID_RE.match(rid):
+            continue
+        shots = pending_photos_dir(settings, rid)
+        out.append(
+            {
+                "id": rid,
+                "name": publisher_of(settings, rid),
+                "received": dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds"),
+                "markdown": f.read_text(encoding="utf-8"),
+                "photos": sorted(p.name for p in shots.iterdir() if p.is_file()) if shots.is_dir() else [],
+            }
+        )
+    return out
+
+
+def state(settings: Settings, token: str, record_id: str) -> dict:
+    """公開した人が見る、その id の今: pending（預かり）| returned（戻された。reason）| public | none。"""
+    check_token(token)
+    path = public_path(settings, record_id)
+    owner = load_owners(settings.owners_path).get(record_id)
+    if owner is None:
+        if path.exists():
+            raise PublishError(403, ["公開した token からだけ見られる"])
+        return {"id": record_id, "state": "none"}
+    if owner != token_hash(token):
+        raise PublishError(403, ["公開した token からだけ見られる"])
+    shown = path.exists()
+    if pending_path(settings, record_id).exists():
+        return {"id": record_id, "state": "pending", "public": shown}
+    back = load_owners(returned_path(settings)).get(record_id)
+    if isinstance(back, dict):
+        return {"id": record_id, "state": "returned", "reason": back.get("reason", ""), "public": shown}
+    return {"id": record_id, "state": "public" if shown else "none", "public": shown}
 
 
 def withdraw_as_admin(settings: Settings, record_id: str) -> None:
@@ -224,23 +372,27 @@ def withdraw_as_admin(settings: Settings, record_id: str) -> None:
         owners = load_owners(settings.owners_path)
         path.unlink()
         remove_photos(settings, record_id)
+        _remove_pending(settings, record_id)  # 持ち主を外すので、預かりの版も残さない
         owners.pop(record_id, None)
         save_owners(settings.owners_path, owners)
         rebuild(settings)
 
 
 def withdraw(settings: Settings, token: str, record_id: str) -> None:
-    """取り下げ。公開ファイルと写真を消して索引から外す。繋がりの記録（connections/<id>/）は残す。"""
+    """取り下げ。公開ファイルと写真、預かりの版を消して索引から外す。繋がりの記録（connections/<id>/）は残す。"""
     check_token(token)
     path = public_path(settings, record_id)
+    held = pending_path(settings, record_id)
     with write_lock:
         owners = load_owners(settings.owners_path)
-        if not path.exists():
+        if not path.exists() and not held.exists():
             raise PublishError(404, ["その id の公開は無い"])
         if owners.get(record_id) != token_hash(token):
             raise PublishError(403, ["公開した token からだけ取り下げられる"])
-        path.unlink()
+        path.unlink(missing_ok=True)
         remove_photos(settings, record_id)
+        _remove_pending(settings, record_id)
+        _forget_returned(settings, record_id)
         del owners[record_id]
         save_owners(settings.owners_path, owners)
         rebuild(settings)

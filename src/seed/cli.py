@@ -577,6 +577,8 @@ def home_env(project: Path, invites: Path) -> dict[str, str]:
         "SEED_HOME": str(project),
         "SEED_INVITES": str(invites),
         "SEED_PUBLIC_DIR": str(project / PUBLIC_DIR),
+        # 家のサーバーは本人の PC。読んで載せる人は本人なので、公開を預からない（預かると pending/ がプロジェクトに出来る）
+        "SEED_PUBLISH_REVIEW": "0",
     }
     skill = project / "skill"
     if (skill / "SKILL.md").is_file():
@@ -877,8 +879,16 @@ def publish_file(st: Settings, path: Path) -> int:
     except client.ClientError as e:
         _err(error_text(e, lg, server=st.server))
         return 2
-    _out(s("published", lg, url=got.get("url") or got.get("id")))
+    _say_published(lg, got)
     return 0
+
+
+def _say_published(lg: str, got: dict) -> None:
+    """送った後の一行。サーバーが預かった（state が pending）なら、読まれてから載る事を言う。"""
+    if got.get("state") == "pending":
+        _out(s("publish_pending", lg))
+    else:
+        _out(s("published", lg, url=got.get("url") or got.get("id")))
 
 
 def _photos_to_send(st: Settings, pub: Public) -> dict[str, bytes] | None:
@@ -950,7 +960,7 @@ def cmd_publish(st: Settings, args) -> int:
         _err(error_text(e, lg, server=st.server))
         _out(s("published_local", lg, path=path))
         return 2
-    _out(s("published", lg, url=got.get("url") or got.get("id")))
+    _say_published(lg, got)
     return 0
 
 

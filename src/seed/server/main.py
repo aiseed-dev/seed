@@ -107,6 +107,10 @@ class WithdrawBody(BaseModel):
     invite: str | None = None
 
 
+class ReturnBody(BaseModel):
+    reason: str = ""
+
+
 class TokenBody(BaseModel):
     name: str
     scope: str = "member"
@@ -704,11 +708,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             settings.journal.record(actor, "publish", f"断った: {e.status}")
             return _error(e.status, "publish_rejected", detail=e.reasons)
         shots = len(pub.photo_names())
-        settings.journal.record(actor, "publish", f"通した（写真 {shots} 枚）" if shots else "通した")
+        state = "pending" if settings.publish_review else "public"
+        held = "。預かった（動かす人が読んでから載る）" if settings.publish_review else ""
+        settings.journal.record(
+            actor, "publish", (f"通した（写真 {shots} 枚）" if shots else "通した") + held
+        )
         await run_in_threadpool(P.note_publisher, settings, pub.id, who)  # 管理の画面の「公開した人」
         # 外向きの url。SEED_PUBLIC_URL があればそれを基底にする（127.0.0.1 で叩かれても外の url を返す。11-05）
+        # 預かりの間は、この url はまだ前の版か 404（載せた後に出る）
         base = (settings.public_url or str(request.base_url)).rstrip("/")
-        return {"id": pub.id, "url": f"{base}/public/{pub.id}.md"}
+        return {"id": pub.id, "url": f"{base}/public/{pub.id}.md", "state": state}
+
+    @app.get("/api/publish/{record_id}/state")
+    async def api_publish_state(record_id: str, request: Request):
+        """公開した人が、その id の今を見る（pending | returned | public | none）。
+
+        招待コードは頭の x-seed-invite、公開の token は頭の x-seed-token（GET なので本文を持たない。URL に出さない）。
+        """
+        who = _invite(
+            settings, request, request.headers.get("x-seed-invite"), "publish.state", detail=record_id[:80]
+        )
+        if not isinstance(who, str):
+            return who
+        try:
+            return await run_in_threadpool(
+                P.state, settings, request.headers.get("x-seed-token") or "", record_id
+            )
+        except P.PublishError as e:
+            return _error(e.status, "state_rejected", detail=e.reasons)
 
     @app.delete("/api/publish/{record_id}")
     async def api_withdraw(record_id: str, body: WithdrawBody, request: Request):
@@ -923,6 +950,74 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except P.PublishError as e:
             return _error(e.status, "withdraw_rejected", detail=e.reasons)
         return {"id": record_id, "withdrawn": True}
+
+    @app.get("/api/admin/pending")
+    async def admin_pending(request: Request):
+        """預かっている公開（読んでから載せる）。全文と写真の名を返す。"""
+        who = _admin(request, "admin.pending")
+        if not isinstance(who, str):
+            return who
+        return {"pending": await run_in_threadpool(P.pending, settings), "review": settings.publish_review}
+
+    @app.get("/api/admin/pending/{record_id}/photos/{name}")
+    async def admin_pending_photo(record_id: str, name: str, request: Request):
+        """預かった写真（載せる前に見る）。"""
+        who = _admin(request, "admin.pending_photo", record_id[:80])
+        if not isinstance(who, str):
+            return who
+        if not R.ID_RE.match(record_id) or not R.safe_photo_name(name):
+            return _error(404, "not_found")
+        path = P.pending_photos_dir(settings, record_id) / name
+        if not path.is_file():
+            return _error(404, "not_found")
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.post("/api/admin/pending/{record_id}/approve")
+    async def admin_approve(record_id: str, request: Request):
+        """預かった版を載せる（public/ に移し、索引と頁を作り直す）。記録には id を一行。"""
+        action = "admin.approve"
+        who = _invite(
+            settings,
+            request,
+            request.headers.get("x-seed-invite"),
+            action,
+            need=("admin",),
+            detail=record_id[:80],
+            note=False,
+        )
+        if not isinstance(who, str):
+            return who
+        try:
+            await run_in_threadpool(P.approve, settings, record_id)
+        except P.PublishError as e:
+            settings.journal.record(who or "?", action, f"{record_id[:80]} 断った: {e.status}")
+            return _error(e.status, "approve_rejected", detail=e.reasons)
+        settings.journal.record(who or "?", action, record_id)
+        base = (settings.public_url or str(request.base_url)).rstrip("/")
+        return {"id": record_id, "state": "public", "url": f"{base}/p/{record_id}"}
+
+    @app.post("/api/admin/pending/{record_id}/return")
+    async def admin_return(record_id: str, body: ReturnBody, request: Request):
+        """預かった版を戻す（消す）。理由は公開した人が state で読む。記録には id だけ（理由は書かない）。"""
+        action = "admin.return"
+        who = _invite(
+            settings,
+            request,
+            request.headers.get("x-seed-invite"),
+            action,
+            need=("admin",),
+            detail=record_id[:80],
+            note=False,
+        )
+        if not isinstance(who, str):
+            return who
+        try:
+            await run_in_threadpool(P.return_pending, settings, record_id, body.reason)
+        except P.PublishError as e:
+            settings.journal.record(who or "?", action, f"{record_id[:80]} 断った: {e.status}")
+            return _error(e.status, "return_rejected", detail=e.reasons)
+        settings.journal.record(who or "?", action, record_id)
+        return {"id": record_id, "state": "returned"}
 
     @app.post("/api/connect")
     async def api_connect(body: ConnectBody, request: Request):

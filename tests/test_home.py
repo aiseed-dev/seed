@@ -279,6 +279,7 @@ def test_home_env(tmp_path):
     env = cli.home_env(proj, path)
     assert env["SEED_HOME"] == str(proj) and env["SEED_INVITES"] == str(path)
     assert env["SEED_PUBLIC_DIR"] == str(proj / "public-home") and "SEED_SKILL_DIR" not in env
+    assert env["SEED_PUBLISH_REVIEW"] == "0"  # 本人の PC。公開を預からない
     (proj / "skill").mkdir()
     (proj / "skill" / "SKILL.md").write_text("# x", encoding="utf-8")
     assert cli.home_env(proj, path)["SEED_SKILL_DIR"] == str(proj / "skill")

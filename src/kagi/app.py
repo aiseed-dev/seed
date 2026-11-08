@@ -654,7 +654,16 @@ def make_main(d: Path):
 
         # ---- 人の出入り（seed のサーバーの門） ----
 
-        g: dict = {"data": None, "error": None, "loaded": False, "new": None, "confirm": None, "conns": {}}
+        g: dict = {
+            "data": None,
+            "error": None,
+            "loaded": False,
+            "new": None,
+            "confirm": None,
+            "conns": {},
+            "held": {},  # 読んでいる載せる前の記録: id → {名: JPEG}
+            "reasons": {},  # 戻す理由の欄: id → TextField
+        }
         g["replacing"], g["touched"], g["scope"] = False, set(), "member"
         g_url = field("サーバーの URL（https://…）", 320)
         g_token = field("管理者の token", 320, password=True)
@@ -723,7 +732,7 @@ def make_main(d: Path):
             render()
 
         async def gate_reload(e=None) -> None:
-            g["loaded"], g["new"], g["conns"] = False, None, {}
+            g["loaded"], g["new"], g["conns"], g["held"] = False, None, {}, {}
             render()
 
         def asking(key) -> bool:
@@ -832,6 +841,26 @@ def make_main(d: Path):
                     return
                 try:
                     g["conns"][rid] = await asyncio.to_thread(lambda: client().connections(rid))
+                except (admin.AdminError, inventory.Refused) as ex:
+                    toast(str(ex))
+                    return
+                render()
+
+            return h
+
+        def reader(rid: str, names: list[str]):
+            """載せる前の記録を読む・閉じる。開く時に写真をサーバーから読む。"""
+
+            async def h(e) -> None:
+                if rid in g["held"]:
+                    g["held"].pop(rid)
+                    render()
+                    return
+                try:
+                    c = client()
+                    g["held"][rid] = await asyncio.to_thread(
+                        lambda: {n: c.pending_photo(rid, n) for n in names}
+                    )
                 except (admin.AdminError, inventory.Refused) as ex:
                     toast(str(ex))
                     return
@@ -1039,6 +1068,66 @@ def make_main(d: Path):
                 )
             )
             out.append(card("人に渡す token", tk))
+
+            held = data.get("pending")
+            if held is not None:  # 預かりの無い古いサーバーなら出さない
+                hc: list[ft.Control] = [
+                    muted(
+                        "送られた記録は、ここで読んで「載せる」まで頁に出ません。人の名前や連絡先が無いかを見ます。"
+                    )
+                ]
+                for r in admin.pending_rows(held):
+                    rid = r["id"]
+                    reason = g["reasons"].setdefault(
+                        rid, ft.TextField(label="戻す理由（送った人に届く。200 字まで）", max_length=200)
+                    )
+
+                    async def ok(rid=rid) -> str | None:
+                        return await asyncio.to_thread(admin.approve_record, d, client(), rid)
+
+                    async def back(rid=rid, reason=reason) -> str | None:
+                        msg = await asyncio.to_thread(
+                            admin.return_record, d, client(), rid, reason.value or ""
+                        )
+                        g["reasons"].pop(rid, None)
+                        return msg
+
+                    opened = rid in g["held"]
+                    one = [
+                        ft.Text(rid, selectable=True),
+                        muted(r["meta"]),
+                        ft.Row(
+                            [
+                                ft.TextButton(
+                                    "閉じる" if opened else "読む", on_click=reader(rid, r["photos"])
+                                ),
+                                sure_button("載せる", "本当に載せる", ("approve", rid), ok),
+                            ],
+                            wrap=True,
+                            spacing=4,
+                        ),
+                    ]
+                    if opened:
+                        shots = g["held"][rid]
+                        if shots:
+                            one.append(
+                                ft.Row(
+                                    [
+                                        ft.Image(src=b, width=240, height=180, fit=ft.BoxFit.CONTAIN)
+                                        for b in shots.values()
+                                    ],
+                                    wrap=True,
+                                )
+                            )
+                        one += [
+                            mono(r["markdown"]),
+                            reason,
+                            sure_button("戻す", "本当に戻す", ("return", rid), back),
+                        ]
+                    hc.append(ft.Column(one, spacing=4))
+                if not admin.pending_rows(held):
+                    hc.append(muted("載せる前の記録はありません。"))
+                out.append(card("載せる前の記録", hc))
 
             rec: list[ft.Control] = []
             for r in admin.record_rows(data.get("records") or []):
