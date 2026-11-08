@@ -51,7 +51,7 @@ cd /opt/seed && git clone https://github.com/aiseed-dev/seed.git . && git log --
 cd /opt/seed && python3 -m venv .venv && .venv/bin/pip install -q -e ".[server,lookup]" && .venv/bin/pip install -q pytest && .venv/bin/python -m pytest -q
 ```
 
-`git log --oneline -1` が debpc の main の先頭と同じかを見る（push が済んでいるか）。テストは本物の鍵を使わない（Claude を呼ぶ所は差し替えてある）。
+`git log --oneline -1` が debpc の main の先頭と同じかを見る（push が済んでいるか）。テストは本物の鍵を使わない（Claude を呼ぶ所は差し替えてある）。サーバーには `flet`（アプリ）と `resvg_py`（図）と `qrcode` を入れないので、それらの要るテスト（test_app、capture、direct、loose、plugins、procedure_plugin、project は読み込めず、bundle・cli・home・grow・remote の一部が落ちる）はここでは通らない。サーバーのコードのテスト（test_server、test_talk_server、test_publish など）が通ればよい。11-08 の deb2: 568 通り、13 落ち（全部その理由）。pytest は `--basetemp=/var/tmp/seed-test -p no:cacheprovider` を付け、終わったら消す。
 
 ### 0-3. [root] 鍵、設定、招待コードの一覧を置く
 
