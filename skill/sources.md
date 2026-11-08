@@ -451,3 +451,10 @@ Christine Jones, PhD (Amazing Carbon 創設者) "Light Farming: 農業土壌へ�
 
 - https://laws.e-gov.go.jp/law/427M60000002010
 - 確認日 2026-11-08
+
+## 56. Mineral Commodity Summaries 2026: Phosphate Rock（米国地質調査所 USGS）
+
+りん鉱石の世界の埋蔵量 730 億 t（丸め）のうち、モロッコが 500 億 t（68 パーセント）。2025 年の世界の鉱山生産は 2 億 5 千万 t。米国政府の刊行物。
+
+- https://pubs.usgs.gov/periodicals/mcs2026/mcs2026-phosphate.pdf
+- 確認日 2026-11-08
