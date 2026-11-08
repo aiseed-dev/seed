@@ -25,7 +25,8 @@ seed.aiseed.dev {
 		file_server
 	}
 	handle {
-		try_files {path} {path}.html =404
+		# / はフォルダーなので、index.html を明示する（11-08: 無いと / が 404 になった）
+		try_files {path} {path}/index.html {path}.html =404
 		file_server
 	}
 	# 404 だけを「見つからない」に。uvicorn が落ちたときの 502 などはその番号のまま返す

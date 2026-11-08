@@ -169,7 +169,7 @@ grep -q 'seed.aiseed.dev' /etc/caddy/Caddyfile && echo "もう入っている" |
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sudo systemctl reload caddy
 ```
 
-`validate` が落ちたら reload しない（今動いているほかのサイトは止まらない）。落ちたときに疑う所（Claude は手元に caddy が無く、目でしか見ていない）: `handle_errors` の中の `expression` と `respond` の番号の置き換え（古い Caddy）。その時は `deploy/Caddyfile` の `handle_errors { ... }` をまるごと元の `respond "見つからない（seed）" 404` だけに戻してよい。
+`validate` が落ちたら reload しない（今動いているほかのサイトは止まらない）。 11-08 夜に置いた時、`/` だけが 404 になった（`/index.html` は 200）。`handle { try_files {path} {path}.html =404 }` が、フォルダーの `/` を見つけられないため。`deploy/Caddyfile` は `{path}/index.html` を足した形に直した。もう足してある Caddyfile は、その一行を置き換えて reload する: `sudo sed -i 's#try_files {path} {path}.html =404#try_files {path} {path}/index.html {path}.html =404#' /etc/caddy/Caddyfile && sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile && sudo systemctl reload caddy`。鍵を後にして紹介の頁だけ出す時は、`/etc/systemd/system/seed.service` の `LoadCredential=anthropic:` と `plantnet:` の行を `#` にして立てる（`/health` は `read:false`、読み取りと話すは 503、入口と公開の一覧は出る）。落ちたときに疑う所（Claude は手元に caddy が無く、目でしか見ていない）: `handle_errors` の中の `expression` と `respond` の番号の置き換え（古い Caddy）。その時は `deploy/Caddyfile` の `handle_errors { ... }` をまるごと元の `respond "見つからない（seed）" 404` だけに戻してよい。
 
 客の IP: deb2 の Caddy の全体の設定（`/etc/caddy/Caddyfile` の先頭の `{ servers { trusted_proxies ... } }`）か `(cf)` に Cloudflare の範囲が書いてあるかを見る:
 
