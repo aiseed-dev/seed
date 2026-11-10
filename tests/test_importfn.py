@@ -4,7 +4,7 @@ import json
 
 from test_photos import make_jpeg
 
-from seed import cli
+from seed import cli, walk
 from seed.records import Hypotheses, Observation, Plan
 
 SITE = """---
@@ -119,6 +119,10 @@ def farm(tmp_path):
     (rec / "_concepts" / "uncut.md").write_text(
         "## Concepts\n- concept: vegetation | by: default\n", encoding="utf-8"
     )
+    (rec / "lookup").mkdir()
+    ring = [[134.445, 34.08], [134.446, 34.08], [134.446, 34.081], [134.445, 34.08]]
+    parcel = {"parcel": {"geometry": {"type": "Polygon", "coordinates": [ring]}}}
+    (rec / "lookup" / "parcel_jp.json").write_text(json.dumps(parcel), encoding="utf-8")
     (rec / "_compare").mkdir()
     (rec / "_compare" / "2026-10-30.md").write_text("比べた", encoding="utf-8")
     day = src / "photos" / "uncut" / "2026-10-28"
@@ -175,6 +179,7 @@ def test_import_fieldnotes_farm_into_a_field(tmp_path, seedfolder):
         ("cut", None),
         ("next_to_observe", None),
     ]
+    assert walk.parcels(f) == [[[134.445, 34.08], [134.446, 34.08], [134.446, 34.081], [134.445, 34.08]]]
     assert (f / "concepts.md").exists() and (
         seedfolder / "notes" / "fieldnotes" / "_compare" / "2026-10-30.md"
     ).exists()

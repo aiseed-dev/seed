@@ -9,7 +9,7 @@
 [[secret]]
 id = "halo-glimmer-token"
 kind = "token"
-where = "halo:/etc/caddy/halo.env の HALO_GLIMMER_TOKEN（形 B なら halo:/etc/credstore.encrypted/halo-glimmer-token）。呼ぶ側: fieldnotes の Glimmer の設定（未）"
+where = "halo:/etc/caddy/halo.env の HALO_GLIMMER_TOKEN（形 B なら halo:/etc/credstore.encrypted/halo-glimmer-token）。呼ぶ側: 無し（2026-11-11 に fieldnotes を seed に一本化した時、Glimmer の読みは外した）"
 holder = "yniji"
 role = "halo の :11444（Glimmer、llama-server）に入る。他の口には効かない（K-01）"
 # made = 2026-11-XX       # 作った日

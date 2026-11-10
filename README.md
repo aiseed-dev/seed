@@ -134,7 +134,7 @@ USB で繋いだ Android に入れて動かします。PC に Flutter と Androi
 seed は、同じ作者の三つ目です。
 
 - [aiai](https://github.com/aiseed-dev/aiai)（Zenn のハッカソン）: ふだん使っている AI に手引きを読ませ、AI とのチャットの履歴を使う。
-- [fieldnotes](https://github.com/aiseed-dev/fieldnotes)（Meta のハッカソン）: 畑で写真を撮り、Meta の Muse で読む。
+- [fieldnotes](https://github.com/aiseed-dev/fieldnotes)（Meta のハッカソン）: 畑で写真を撮り、Meta の Muse で読む。2026-11-11 に seed に一本化した（履歴は seed の中に。読みは Claude に、写真の覆い％と声の書き取りは Meta のまま。古い記録は `seed import fieldnotes` で移る）。
 - seed: 写真を撮って Claude と話し、記録を残し、アプリを作っていく。
 
 作る時は、作者が言葉で決め、Claude（Fable）が形と確かめをし、別の Claude（Opus、Sonnet）が書きました。

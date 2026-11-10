@@ -178,7 +178,7 @@ systemctl --no-pager status seed | head -20
 curl -s http://127.0.0.1:8010/health; echo
 ```
 
-`"lookup":true`（fieldnotes-farm が入った）、`"audit":"on"` なら次へ。鍵を置いていなければ `"read":false`、`"talk":false`、`"identify":false` で、それで正しい（その口が 503 で「準備中です」）。鍵の値は出ない。
+`"lookup":true`（照会の部品 seed-farm[lookup] が入った）、`"audit":"on"` なら次へ。鍵を置いていなければ `"read":false`、`"talk":false`、`"identify":false` で、それで正しい（その口が 503 で「準備中です」）。鍵の値は出ない。
 
 ```bash
 ls /var/lib/seed/public/site

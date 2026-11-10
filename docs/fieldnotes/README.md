@@ -1,5 +1,7 @@
 # fieldnotes — read your field from the photos of a walk, with AI
 
+> **2026-11-11: fieldnotes is now part of seed.** Its history is in this repository and its code was folded into `src/seed/` (readings by Claude; SAM 3.1 cover and Muse Voice Transcribe still on Meta). Old farm folders move with `seed import fieldnotes <folder>`. This page and the rest of `docs/fieldnotes/` are kept as written for the Meta hackathon; the commands below are fieldnotes', not seed's. The record format is now `docs/記録の形.md`.
+
 Built for the Meta Global AI Developer Hackathon (26 Oct – 4 Nov 2026), track *Indie Developer*, theme *Build for Your World*. Demo video (3 min): https://youtu.be/xw2kbu5pmWg. Meta's models read a farmer's field; a Flet phone app is where the farmer walks, reads and marks; the records stay at home as plain text.
 
 ```bash

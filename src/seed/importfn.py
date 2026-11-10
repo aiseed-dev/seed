@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import lookup as lookup_mod
 from . import records as R
+from . import walk
 
 SKIP_DIRS = {"lookup", "surroundings", "documents", "weather"}  # records/ の下で、畑ではない物
 CHANGE_KEYS = ("leaf_colour", "weed_height", "soil", "animal", "other")  # 前の観察からの変化 → change
@@ -389,6 +390,16 @@ def merge_proposals(folder: R.Folder, paths: list[Path], language: str) -> None:
         plan.write(folder.plan)
 
 
+def _parcel(rec: Path) -> dict | None:
+    """lookup/parcel_jp.json の筆の形（GeoJSON の geometry）。無ければ None。"""
+    p = rec / "lookup" / "parcel_jp.json"
+    try:
+        hit = json.loads(p.read_text(encoding="utf-8")).get("parcel") if p.exists() else None
+    except ValueError:
+        return None
+    return hit.get("geometry") if isinstance(hit, dict) and isinstance(hit.get("geometry"), dict) else None
+
+
 def _copy_tree(src: Path, dest: Path) -> None:
     if src.is_dir():
         shutil.copytree(src, dest, dirs_exist_ok=True)
@@ -409,8 +420,11 @@ def import_farm(
     rec = src / "records"
     rep = Report(fields=sorted(folders))
     site = read_site(src, language, today)
+    parcel = _parcel(rec)
     for name, folder in folders.items():
         write_place(folder, site)
+        if parcel and not (folder.root / walk.PARCEL_FILE).exists():
+            walk.save_parcel(folder.root, parcel)
         rep.hypotheses += write_hypotheses(folder, site, rec / "_checks" / name / "expect.md", language)
         # 写真と一日の観察
         days = set()
