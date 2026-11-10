@@ -31,13 +31,10 @@ def verdict_buttons(app, on_mark, current: str | None) -> ft.Row:
     t = app.t
 
     def button(verdict: str) -> ft.Control:
-        chosen = current == verdict
-        return ft.TextButton(
-            t(verdict),
-            icon=ft.Icons.CHECK if verdict == "right" else ft.Icons.CLOSE,
-            style=ft.ButtonStyle(color=ft.Colors.PRIMARY if chosen else ft.Colors.ON_SURFACE_VARIANT),
-            on_click=lambda e, v=verdict: on_mark(v),
-        )
+        icon = ft.Icons.CHECK if verdict == "right" else ft.Icons.CLOSE
+        if current == verdict:  # 付けた方は塗った釦にして、どちらを付けたか一目で分かるように
+            return ft.FilledTonalButton(t(verdict), icon=icon, on_click=lambda e, v=verdict: on_mark(v))
+        return ft.TextButton(t(verdict), icon=icon, on_click=lambda e, v=verdict: on_mark(v))
 
     return ft.Row([button("right"), button("wrong")], spacing=4)
 
