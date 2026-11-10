@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from conftest import FIELD
+from fn.conftest import FIELD
 
 from fieldnotes import propose, timeline
 from fieldnotes.records import Observation, Record

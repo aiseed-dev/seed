@@ -23,14 +23,17 @@ origin = ["pillow", "httpx", "imageio-ffmpeg"]                                  
 grow = ["pillow", "httpx", "resvg-py"]                                          # seed grow --draw（図を PNG にして halo で絵に。resvg は wheel だけ）
 heic = ["pillow-heif"]                                                          # HEIC だけ要るとき
 server = ["fastapi", "uvicorn[standard]", "python-multipart", "anthropic", "pillow", "httpx", "markdown>=3.5"]  # seed.aiseed.dev（markdown は /manual）
-# 座標からの照会（fieldnotes.lookup だけを呼ぶ）。fieldnotes-farm は同じ作者の別の包み。
-# PyPI の 0.2.0（2026-11-05 10:43 JST 公開、タグ v0.2.0 = aiseed-dev/fieldnotes の 604dcd6）に固定する
-# （作者 2026-11-05。前は期間前のコミット 2bc2c4f）。記録の一行の形は仕様（fieldnotes の docs/records.md）で
-# 揃え、コードは共有しない（設計書 §13 の 2 と 18）。
-lookup = ["fieldnotes-farm==0.2.0"]
+# 座標からの照会（seed/lookup.py。地理院、ハザードマップ、土壌図、筆ポリゴンのタイルを読む。numpy は色の面）
+lookup = ["numpy", "pillow", "httpx"]
+# 写真の覆い％（Meta の SAM 3.1。Meta の鍵がある時だけ）
+sam = ["meta-sam-parser", "numpy", "pillow", "openai>=3"]
+# 声の書き取り（Meta の Muse Voice Transcribe。電話の録音を av で読む）
+voice = ["httpx", "av"]
+# 本人の AI から記録を読む（seed mcp）
+mcp = ["mcp>=2.3"]
 # 撮る画面（スマートフォンのアプリと Web 版。カメラと位置の部品。PC の窓では使わない）
 capture = ["flet-camera==1.1.0", "flet-geolocator==1.1.0"]
-dev = ["pytest", "ruff", "seed-farm[app,server,grow,capture]"]
+dev = ["pytest", "ruff", "seed-farm[app,server,grow,capture,lookup,sam,voice,mcp]"]
 
 [project.scripts]
 seed = "seed.cli:main"
@@ -50,7 +53,7 @@ build_number = 1
 [tool.flet.app]
 path = "src"
 module = "main.py"
-exclude = ["kagi", "seed/server", "seed_farm.egg-info"]
+exclude = ["kagi", "seed/server", "seed_farm.egg-info", "fieldnotes"]
 
 [tool.flet.ios]
 dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx", "pyyaml"]

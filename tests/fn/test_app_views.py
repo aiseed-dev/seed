@@ -34,7 +34,7 @@ def app(tmp_path, monkeypatch):
 
 
 def test_walk_strip_builds_with_and_without_gps(app, tmp_path):
-    from test_walk import parcel, walk_photos
+    from fn.test_walk import parcel, walk_photos
     from fieldnotes.ui import Words
     w = Words("en")
     dialogs = app.Dialogs(StubPage(), w)
@@ -49,7 +49,7 @@ def test_walk_strip_builds_with_and_without_gps(app, tmp_path):
 
 def test_every_view_builds(app, tmp_path):
     """Send, Read and Nouns are built as build() builds them, on a farm with one read day."""
-    from test_walk import parcel, walk_photos
+    from fn.test_walk import parcel, walk_photos
     from fieldnotes.records import Observation, Record
     from fieldnotes.ui import Words
     parcel(tmp_path)
@@ -68,7 +68,7 @@ def test_every_view_builds(app, tmp_path):
 
 def test_land_view_builds_on_an_empty_farm_and_a_farm_with_checks(app, tmp_path):
     """土地: no site.md says so; with site.md and checks the lines and the table are drawn."""
-    from test_appdata import land_farm
+    from fn.test_appdata import land_farm
     from fieldnotes.ui import Words
     page, w = StubPage(), Words("en")
     dialogs = app.Dialogs(page, w)
@@ -84,7 +84,7 @@ def test_land_view_builds_on_an_empty_farm_and_a_farm_with_checks(app, tmp_path)
 def test_hypotheses_table_and_read_state(app, tmp_path):
     """The Land view's table has a row per hypothesis and a column per day; Read on a day with
     no reading says so."""
-    from test_appdata import jpg, land_farm
+    from fn.test_appdata import jpg, land_farm
     from fieldnotes.ui import Words
     land_farm(tmp_path)
     page, w = StubPage(), Words("en")
@@ -104,7 +104,7 @@ def test_hypotheses_table_and_read_state(app, tmp_path):
 def test_land_tools_offer_init_then_note_and_field_work(app, tmp_path):
     """No site.md: the form to start the land; after it, the note form and the field buttons.
     No button that calls a model is pressed here."""
-    from test_appdata import land_farm
+    from fn.test_appdata import land_farm
     from fieldnotes.ui import Words
     page, w = StubPage(), Words("en")
     tools, refresh = app.land_tools(page, app.Dialogs(page, w), w, "en", lambda: None)

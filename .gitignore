@@ -10,3 +10,5 @@ private/
 .claude/launch.json
 .claude/skills/seed-video/
 .claude/worktrees/
+# 電話の生の HEIC は大きい。揃えた写しと重ねた絵は残す（fieldnotes から）
+**/photos/**/*.HEIC

@@ -5,7 +5,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from conftest import DAY, FIELD, add_photos
+from fn.conftest import DAY, FIELD, add_photos
 from PIL import Image
 
 from fieldnotes import cli, pipeline, surroundings
@@ -133,7 +133,3 @@ def test_app(root, monkeypatch):
     assert Path(os.environ["FIELDNOTES_ROOT"]) == root.resolve()
     os.environ.pop("FIELDNOTES_ROOT")
 
-
-def test_console_script_is_declared():
-    meta = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
-    assert meta["project"]["scripts"]["fieldnotes"] == "fieldnotes.cli:main"

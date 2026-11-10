@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from conftest import DAY, FIELD, add_photos
+from fn.conftest import DAY, FIELD, add_photos
 from mcp.client.client import Client
 
 from fieldnotes import mcp_server, timeline

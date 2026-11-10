@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 
-from conftest import DAY, FIELD, add_photos
-from test_cli import D, run
+from fn.conftest import DAY, FIELD, add_photos
+from fn.test_fn_cli import D, run
 
 from fieldnotes import propose
 from fieldnotes.records import Observation, Record

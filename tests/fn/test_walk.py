@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import date
 
-from conftest import DAY, FIELD, add_photos
+from fn.conftest import DAY, FIELD, add_photos
 from PIL import Image
 
 from fieldnotes import describe, inbox, pipeline, timeline, walk

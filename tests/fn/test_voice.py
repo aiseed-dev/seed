@@ -8,7 +8,7 @@ import wave
 
 import numpy as np
 
-from conftest import DAY, FIELD, add_photos
+from fn.conftest import DAY, FIELD, add_photos
 from fieldnotes import pipeline, voice
 from fieldnotes.records import Record
 

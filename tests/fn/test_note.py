@@ -63,7 +63,7 @@ def test_note_from_the_command_line_and_the_farmers_ai(tmp_path, capsys):
     assert cli.main(["--root", str(tmp_path), "note", "飯尾川沿いに桑の木", "--section", "history"]) == 0
     assert "- `record` 飯尾川沿いに桑の木。" in capsys.readouterr().out
     assert cli.main(["--root", str(tmp_path), "note", "--page", "x.jpg"]) == 1
-    from test_mcp import call
+    from fn.test_mcp import call
     _, written, bad = call(mcp_server.build(tmp_path),
                            ("note", {"text": "昔はホウレンソウの産地", "section": "works"}),
                            ("note", {"text": "x", "section": "weather"}))

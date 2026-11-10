@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from conftest import DAY, FIELD, add_photos
+from fn.conftest import DAY, FIELD, add_photos
 
 from fieldnotes import check, cli, pipeline, timeline
 from fieldnotes.records import Record

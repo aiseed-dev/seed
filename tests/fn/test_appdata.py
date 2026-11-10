@@ -167,7 +167,7 @@ def test_sources_say_what_the_model_was_given(tmp_path):
 # ---- the walk (WP18 item 3) ----------------------------------------------
 
 def test_walk_map_draws_the_points_on_the_parcel_true_to_scale(tmp_path):
-    from test_walk import E, N, PARCEL, S, W, parcel
+    from fn.test_walk import E, N, PARCEL, S, W, parcel
     import json
     root = tmp_path
     parcel(root)
@@ -197,7 +197,7 @@ def test_walk_map_draws_the_points_on_the_parcel_true_to_scale(tmp_path):
 
 
 def test_strip_pairs_photos_with_overlays_and_labels(tmp_path):
-    from test_walk import walk_photos
+    from fn.test_walk import walk_photos
     root = tmp_path
     (root / "records").mkdir()
     walk_photos(root)
