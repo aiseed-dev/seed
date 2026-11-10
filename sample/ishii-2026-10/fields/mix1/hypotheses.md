@@ -1,0 +1,40 @@
+---
+language: ja
+---
+
+## Hypotheses
+- h1: A slightly raised ground (微高地) on the south side of the Yoshino River plain. — farmer. Check: GSI 地形分類 (land condition map).
+- h2: The soil was laid down by a great flood about 2000 years ago. The 高川原遺跡 records note a great flood 1800–2000 years ago (late Yayoi). — farmer. Not yet confirmed in the report text, which is not online. Check: archaeological / flood-history literature for the lower Yoshino.
+- h3: Ordinary floods do not inundate it. — farmer. Check: MLIT flood hazard and past-inundation maps.
+- h4: Underflow (伏流水) runs about 4 m below the surface. — farmer. Check: well records, groundwater surveys.
+- h5: In great floods the water was thrown outward at the bend of the 飯尾川 (at times a channel of the Yoshino) next to the field, and what it carried was laid here. — farmer, 2026-10-30
+- h6: Regional context (general knowledge): the Yoshino valley follows the Median Tectonic Line; north of the river is the Izumi Group, south is the Sambagawa belt (crystalline schist). — AI. Check: GSJ seamless geology map (`https://gbank.gsj.jp/seamless/v2/api/1.0/legend.json?point=34.0801,134.4454`, under maintenance on 10-27 and 10-28).
+- h7: Formed from silt of black schist (黒色片岩, Sambagawa pelitic schist). — farmer. Check: NARO 日本土壌インベントリー (https://soil-inventory.rad.naro.go.jp/, read by hand), GSJ map.
+- h8: Low in organic matter: mineral silt from one flood, then a well-drained raised ground where organic matter decomposes fast. — farmer. Check: measure soil organic matter.
+- h9: Minerals are plentiful (black schist), but that only helps if the plants can take them up themselves. — farmer, 2026-10-28
+- h10: Even among unfertilised fields, a soil rich in organic matter behaves differently from this one. — farmer, 2026-10-28
+- h11: This difference shows mainly in nitrogen. Rock minerals carry almost no nitrogen, so in this low-organic-matter schist silt nitrogen has to come from organic matter built up by roots, or from legumes fixing it. In an organic-rich soil, humus releases nitrogen every season. Here P, K, Mg and Ca are in the rock and need roots and fungi to reach them. — AI (Claude), 2026-10-28. Check: leaf yellowing in crops and weeds, and how legumes do here.
+- h12: In a field like this, letting ogi grow is not necessarily bad. — farmer, 2026-10-28
+- h13: Ogi is hard to turn back into crop ground, but that may be the price of letting roots till the field instead of a machine. — farmer, 2026-10-28
+- h14: Why ogi could help here. Its dense rhizomes and deep roots put organic matter into the soil itself, not only on the surface, and they open up silt that packs tight. As a grass it hosts mycorrhizal fungi. Some studies report nitrogen-fixing bacteria living with Miscanthus, though how much this adds in the field is unclear. The cost is that its rhizomes are hard to turn back into crop ground, and it shades and competes. So how and when to cut it matters more than whether to remove it. — AI (Claude), 2026-10-28. Check: literature on Miscanthus root biomass and associated N fixation; this field's own records after cutting.
+- h15: What matters is organic matter in the soil (from roots), not above ground. — farmer. Check: literature on root-derived vs surface-residue soil carbon.
+- h16: Black-schist silt does not suit vegetables with weak roots. — farmer. Check: see below.
+- h17: 治水地形分類図 (lcmfc2): the field point falls in the light-green unit, which I read as 氾濫平野, about 50–100 m east of a 旧河道 band (blue stripes) along the winding river to the west. — AI (Claude) reading the map legend, 2026-10-28. Conflicts with the farmer's 微高地; the 1:25,000 map may not resolve a small rise. Check: the legend, and a 1 m DEM profile.
+- h18: In the 1961–69 and 1974–78 aerial photos, the field lies at the edge of houses and trees by the river while paddies spread around them. Old settlements tend to sit on slightly raised ground, which would support 微高地. — AI (Claude), 2026-10-28
+- h19: The river right beside the field, with its banks, is a likely seed source for ogi and goldenrod. — AI (Claude), 2026-10-28
+- h20: Why it meanders. A small river now flows in a bed once cut by the much larger Yoshino. On flat land with a gentle slope and fine, cohesive silt banks, it has too little energy to run straight, so it bends. It also runs along the low ground between the Yoshino's natural levees and the southern hills. The bends next to the field are upstream of the 1932 cut-off, so they were left as they were. — AI (Claude), 2026-10-28
+- h21: The field (red circle on the maps) is where the river's flow hits head-on in a flood, on the outer side of the bend. — farmer, 2026-10-28
+- h22: Grain size here is set by the source rock as much as by the flow. Black (pelitic) schist splits along its foliation into thin flakes, which weather to fine, platy silt and clay, not sand. So even where the flood hit hardest, the deposit is fine. Platy grains settle in flat layers and pack tightly. That fits silt that holds water (ogi), soil that may crust and harden when dry, and the farmer's 'not for weak-rooted vegetables'. It also fits a soil low in organic matter, being fresh mineral deposit. Flood water may have brought ogi rhizome pieces and seed. — AI (Claude), 2026-10-28
+- h23: On this reading, the field's soil was laid by the old Yoshino main channel next to its bed. The raised ground was there before (excavation records, per the farmer); the flood laid fine schist silt on it. This fits the flood deposit, and it fits black-schist silt, since the Yoshino brings Sambagawa schist from upstream. The underflow about 4 m down may run in the sand and gravel of the old channel. — AI (Claude), 2026-10-28. Check: borehole logs (国土地盤情報検索サイト KuniJiban), well records.
+- h24: The field lies on an original 微高地. The excavation records of the 高川原遺跡 show it. — farmer, 2026-10-28. Check: the reports below.
+- h25: Hairy vetch is too strong in this farm's fields, so crimson clover is used instead. — farmer, 2026-10-28
+- h26: Tokushima, facing east, gets more typhoon rain. — farmer, 2026-10-28. Fits the monthly means: August to October gives 699 mm here and 485 mm at 大平, about 210 of the 300 mm difference. — Open-Meteo, same grids.
+- h27: What this field shares with Fukuoka's 大平 is lying just south of the Median Tectonic Line. — farmer, 2026-10-28. In Tokushima the MTL fault zone runs along the southern edge of the Sanuki mountains, north of the Yoshino (地震調査研究推進本部 2017, above). This field is on the south bank.
+- h28: This field's soil may also hold sandstone and shale from the north bank of the Yoshino. — farmer, 2026-10-28
+- h29: In detail the geology differs, but both soils come from rocks of the Sambagawa belt. — farmer, 2026-10-28.
+- h30: Low floodplain  → farmer: wrong (AI guess from elevation alone; corrected by the farmer. Elevation cannot tell 微高地 from floodplain.)
+- h31: High water table  → farmer: wrong (AI guess from the presence of ogi; the farmer puts the underflow at about 4 m.)
+- h32: The flood flow built the raised ground". AI (Claude) guess; the farmer says the ground was a 微高地 from the start, as the 高川原遺跡 excavation records show.  → farmer: wrong
+- h33: Coarse load (sand, coarse silt), well drained, sandy lenses". AI (Claude) guess from the flow hitting here. The farmer points out that black schist does not give coarse grains.  → farmer: wrong (2026-10-28)
+- h34: Susuki (Miscanthus sinensis)  → farmer: wrong (AI identification; corrected to ogi by the farmer.)
+- h35: Parent material: not looked up. No 1:50,000 geological map is published for this sheet (13［高知］-033; 134°15′–134°30′E, 34°00′–34°10′N), so there is no report to read. — 出典：産総研地質調査総合センター 地質図カタログ, https://www.gsj.jp/Map/JP/geology4-13.html#13033

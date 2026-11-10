@@ -1,0 +1,76 @@
+## Data
+- place_name: 徳島県名西郡石井町 高川原 (municipality code 36341)（出典: GSI reverse geocoder、確認日 2026-10-28）
+- place_name: Elevation 7 m (1 m LiDAR DEM)（出典: GSI elevation API、確認日 2026-10-28）
+- place_name: Open-Meteo weather grid point used for the records: 34.0598 N, 134.4375 E, 5 m, about 2 km SSW of the field.（出典: fieldnotes の site.md、確認日 2026-10-28）
+- place_name: Nearest JMA station with temperature and rain: 徳島 (71106), 2 m, 12 km east. Not used; Open-Meteo is closer.（出典: fieldnotes の site.md、確認日 2026-10-28）
+- landform: The 飯尾川 turns left by about 100° (from ENE to NNW) just north-west of the field; the field lies on the outside (east bank) of that bend, 62 m from the channel（出典: OpenStreetMap ways 250491669 and 250491668 (ODbL), measured 2026-10-30、確認日 2026-10-30）
+- landform: With the plain's slope taken out (0.5 m per km falling east), the ground on the outside of the bend, south-east of the river, is a broad rise 0.2–0.5 m above its surroundings, and the field is on it; inside and north of the bend run low belts 0.5–1 m below, shaped like old channels（出典: 国土地理院 DEM5A (5 m), tiles z15, read 2026-10-30、確認日 2026-10-30）
+- landform: The flood zones over the field are those of the river managed by the state (吉野川) when its levee fails: 0.5–3 m deep at the planned scale (L1), 5–10 m at the maximum scale (L2). The prefecture-managed rivers' layer shows nothing on this tile（出典: ハザードマップポータルサイト, layers 01_flood_l1_shinsuishin_newlegend_kuni_data and 01_flood_l2_shinsuishin_kuni_data, z16, read 2026-10-30. Fits "ordinary floods do not inundate it"、確認日 2026-10-30）
+- geology: Surface geology at the field: unconsolidated deposit, mud (未固結堆積物「泥」). Landform: 扇状地性低地（氾濫原性低地）. Soil: 細粒灰色低地土壌 (gray lowland soil, fine)（出典: 国土交通省 20万分の1土地分類基本調査 GIS data, 徳島県 ( point-in-polygon at 34.0801, 134.4454, checked 2026-10-28. At 1:200,000 a small rise (微高地) does not show; the landform unit does not contradict the farmer's 微高地 within it、確認日 2026-10-28）
+- soil: Soil class at the field point: 細粒質水田化褐色低地土 (F4c1t1), a brown lowland soil changed by paddy use whose subsoil is clay to clay loam (重埴土 … 砂質埴壌土)（出典: 農研機構 日本土壌インベントリー, read by hand at 34.080137, 134.445458 on 2026-10-30 Fine-textured, as the 1:200,000 MLIT map's 細粒灰色低地土壌 is、確認日 2026-10-30）
+- surroundings: Spot elevations (GSI, mostly 1 m laser DEM), field 7.0 m; 75–500 m east 7.0–7.9 m; 150–300 m south 7.5–7.6 m; points 150 m west and 150 m north 5.3 m and 2.7 m (river / channel). A handful of points does not settle whether the field is a rise; a dense profile would（出典: GSI elevation API, 2026-10-28、確認日 2026-10-28）
+- surroundings: The winding river beside the field is the 飯尾川. It is an old main channel of the Yoshino River, with a very gentle bed slope, and it crosses the low land of the Yoshino's south-bank flood area. In the first improvement works (from 1932) the channel was widened up to 石井町高川原, and the sharp bends between 高川原村加茂野 and 南井上村 were cut off with a new channel. Since the Yoshino's levees were built (late Meiji to early Shōwa), it has been the prefecture's largest 内水 river（出典: MLIT 四国地方整備局「吉野川歴史探訪 その2 飯尾川河川改修のはじまり」、確認日 2026-10-28）
+- surroundings: 高川原遺跡 (石井町). Finds include a dōtaku-shaped clay object and ink-inscribed haji ware. The periods given are Yayoi, ancient and medieval. Reports: 石井町 1979『徳島県高川原遺跡調査概報 銅鐸型土製品・墨書土師器出土遺跡』(NCID BB07298783), and 石井町教育委員会 1980『高川原遺跡発掘調査報告書』(NCID BB07298149). Also 松永住美・近藤賢 1982「徳島県高川原遺跡」『日本考古学年報』. The full texts are not online; nabunken lists them without files（出典: 奈良文化財研究所 全国遺跡報告総覧、確認日 2026-10-28）
+- history: North of the river (飯尾川) are the indigo merchants' houses (藍屋敷): 武知家住宅 (「武知家の藍寝床」, national Important Cultural Property), 0.8 km N, and 田中家住宅, 1.1 km N. The village north of the river was called 藍畑村, 1.7 km N（出典: farmer; Wikipedia 武知家住宅, 藍畑村; OpenStreetMap (records/lookup.md)、確認日 2026-10-28）
+- history: 慶応2年寅の大水 (1866-09-15) has a flood-mark memorial 2.1 km NE at 国府町芝原（出典: OpenStreetMap node 8463027003, from the GSI 自然災害伝承碑 data (records/lookup.md)、確認日 2026-10-28）
+- history: The 麻名用水 runs east along the southern foot of the town's hills (「本町の南山麓に沿うて東に流れる麻名用水」) and feeds the 渡内川（出典: 木下覚・阿部近一「石井町の植物相」, 阿波学会 郷土研究発表会紀要 第32号 The field lies on the plain north of the town centre, not along that foot、確認日 2026-10-28）
+- history: The 麻名用水's water union of 1904 was formed by 無理山村, 牛島村 (麻植郡), 浦庄村, 石井町 and 高原村 (名西郡); 高川原村 is not among them（出典: Wikipedia「麻名用水」, citing 『角川日本地名大辞典 36 徳島県』 (1986); not read in the original、確認日 2026-10-28）
+- farming: Masanobu Fukuoka was born in 伊予郡南山崎村, now 伊予市 (石坂 2021, 愛媛大学, https://ehime-u.repo.nii.ac.jp/record/2001326/files/AA12777305_2021_50_1-20.pdf); a book biography gives 伊予市大平. The farm (福岡正信自然農園) is in 伊予市 (its official site, https://f-masanobu.jp/). No street address found.（出典: fieldnotes の site.md、確認日 2026-10-28）
+- farming: Surface geology at 伊予市大平 (GSI address point 33.71682, 132.7052, the town's representative point, not the farm itself): consolidated sedimentary rock, alternating sandstone and shale (固結堆積物「砂岩・頁岩互層」). Landform: 小起伏山地. Soil: 黄色土壌（出典: 国土交通省 20万分の1土地分類基本調査 GIS data, 愛媛県 ( checked 2026-10-28、確認日 2026-10-28）
+- farming: Climate, 1991–2020 means. This field: 16.2 °C, 2021 mm a year, January 5.7 °C, August 27.4 °C. 伊予市大平: 15.5 °C, 1714 mm, January 5.1 °C, August 26.5 °C. Similar temperatures; about 300 mm more rain here（出典: Open-Meteo archive (ERA5), grid points 5 m and 131 m、確認日 2026-10-28）
+- place_name: 住所: 徳島県石井町 高川原（市区町村コード 36341）（出典: 国土地理院 逆ジオコーダ、確認日 2026-10-30）
+- parcel: 筆ポリゴン: 畑の地点は 602 m² の筆の中にある。2020 年に 田 と読まれた（id afafc863-45b4-40b3-866a-21e3c55b1ed5）。100 m 以内に他に 24 筆（田 24）。筆ポリゴンは農地の位置と形の参考で、面積調査のために空中写真の上に手で描き、田/畑は目で読んだ物。筆界も権利も示さない（出典: 「筆ポリゴンデータ（2026年度公開）」（農林水産省）（2026年10月30日に利用）を加工して作成、確認日 2026-10-30）
+- parcel: 全国農地ナビ（eMAFF農地ナビ）: 農業委員会の農地の地図。農振の区分と、遊休かどうかが分かる。リンクに座標は付けられないので、上の住所で探す（出典: 農林水産省、確認日 2026-10-30）
+- elevation: 標高 7 m（DEM: 1m（レーザ））（出典: 国土地理院 標高API、確認日 2026-10-30）
+- elevation: Elevation 5 m（出典: Open-Meteo elevation API (Copernicus DEM)、確認日 2026-10-30）
+- landform: 地形分類: 氾濫平野・海岸平野（氾濫平野、コード 3030101）（出典: 国土地理院 ベクトルタイル「地形分類（自然地形）」、確認日 2026-10-30）
+- geology: Bedrock: Paleozoic-Mesozoic sedimentary rocks; sedimentary rocks (Late Paleozoic to Triassic; map scale tiny)（出典: Macrostrat (CC BY 4.0)、確認日 2026-10-30）
+- hazard: 活断層: 最も近い断層線は 3.1 km 南西（推定: 地図の画像の赤い線を色で読んだ物。4.1 km の範囲を探した。タイルに断層の名は無い）（出典: 国土地理院 活断層図（都市圏活断層図）、確認日 2026-10-30）
+- hazard: 土砂災害警戒区域: 畑は外。1.0 km 以内に無い（出典: ハザードマップポータルサイト、確認日 2026-10-30）
+- hazard: 洪水浸水想定区域: 畑はその中にある（想定最大規模）（出典: ハザードマップポータルサイト、確認日 2026-10-30）
+- soil: SoilGrids has no value at this point (masked, e.g. built-up land)（出典: fieldnotes の lookup.md、確認日 2026-10-30）
+- soil: 土壌: 細粒質水田化褐色低地土（F4c1t1）。次表層の土性が重埴土、シルト質埴土、軽埴土、砂質埴土、シルト質埴壌土、埴壌土、砂質埴壌土である水田化褐色低地土。 土壌図には誤差が含まれる。地点の地図の色から読んだ（出典: 農研機構、日本土壌インベントリー (CC BY 4.0)、確認日 2026-10-30）
+- history: 慶応2年洪水痕跡（記念碑、2.1 km 北東。災害の名: 慶応2年寅の大水（1866年9月15日）。年代: 1995）（出典: OpenStreetMap (ODbL)、確認日 2026-10-30）
+- history: 前山峰のお地蔵さん（路傍の祠、2.9 km 南）（出典: OpenStreetMap (ODbL)、確認日 2026-10-30）
+- history: 武知家の藍寝床（史跡（種類の記載なし）、0.8 km 北）（出典: OpenStreetMap (ODbL)、確認日 2026-10-30）
+- history: 田中家住宅（史跡（種類の記載なし）、1.1 km 北。Wikipedia: ja:田中家住宅 (石井町)）（出典: OpenStreetMap (ODbL)、確認日 2026-10-30）
+- history: 石井町立高川原小学校 (0.4 km SE)（出典: Wikipedia、確認日 2026-10-30）
+- history: フジグラン石井 (0.5 km NW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 飯尾川公園 (0.5 km N)（出典: Wikipedia、確認日 2026-10-30）
+- history: 高川原村 (0.7 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 桜間神社 (0.8 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町 (0.8 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 武知家住宅 (0.8 km N)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町立石井中学校 (0.8 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 徳島県立名西高等学校 (0.9 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井駅 (徳島県) (1.1 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 地福寺 (徳島県石井町) (1.3 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井郵便局 (1.3 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町立石井小学校 (1.6 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 藍畑村 (1.7 km N)（出典: Wikipedia、確認日 2026-10-30）
+- history: 山ノ神古墳 (石井町) (1.9 km SE)（出典: Wikipedia、確認日 2026-10-30）
+- history: 徳島県立農林水産総合技術支援センター農業大学校 (2.0 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町立藍畑小学校 (2.0 km N)（出典: Wikipedia、確認日 2026-10-30）
+- history: 徳島県立農林水産総合技術支援センター農業研究所 (2.0 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 蔵珠院 (2.1 km NE)（出典: Wikipedia、確認日 2026-10-30）
+- history: 芝原城 (2.2 km NE)（出典: Wikipedia、確認日 2026-10-30）
+- history: 高原村 (徳島県) (2.2 km W)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町立高浦中学校 (2.2 km W)（出典: Wikipedia、確認日 2026-10-30）
+- history: 石井町立高原小学校 (2.3 km W)（出典: Wikipedia、確認日 2026-10-30）
+- history: 野鳥の森 (2.3 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 久武館 (2.3 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 気延山 (2.6 km SE)（出典: Wikipedia、確認日 2026-10-30）
+- history: 下浦駅 (2.6 km SW)（出典: Wikipedia、確認日 2026-10-30）
+- history: 前山公園 (2.7 km S)（出典: Wikipedia、確認日 2026-10-30）
+- history: 徳島市北井上中学校 (2.7 km NE)（出典: Wikipedia、確認日 2026-10-30）
+- history: 浦庄村 (2.8 km SW)（出典: Wikipedia、確認日 2026-10-30）
+
+## Record
+- center: 34.0801, 134.4454（fieldnotes の site.md）
+- note: 高川原城 stood near the field（farmer, 2026-10-28. Not found by `fieldnotes search 高川原城` (ja Wikipedia within 10 km, OpenStreetMap names). The nearest castle there is 芝原城, 2.2 km NE. Check: 徳島県の中世城館跡調査, 石井町史、2026-10-28）
+- note: The field is in the district of the 高川原用水, which was built later than the 麻名用水; it is not in the 麻名用水 district（farmer, 2026-10-30, correcting a Gemini Deep Research report that put the field under the 麻名用水、2026-10-30）
+- note: Natural farming (Fukuoka method): no tillage, no fertiliser, no pesticide. Weeds are ground cover, not a target.（the farmer）
+- note: No fertiliser since 2023 (2026 is the fourth year)（farmer (year to confirm)）
+- note: Spot 1: daikon (Raphanus sativus) and kailan (Brassica oleracea var. alboglabra), sown 2026-10-18, broadcast and mixed in the same strip, into cut-grass and straw mulch. 20 mm rain on 10-19 (Open-Meteo). Cotyledon to first true leaf on 10-27.（the farmer）
+- note: Spot 3: a plot left uncut for a year (autumn 2025 to autumn 2026, to confirm), now tall goldenrod (Solidago altissima) and ogi (Miscanthus sacchariflorus), above head height. Stands in for abandoned farmland（farmer, photo 2026-10-28、2026-10-28）
+- note: Planned for autumn 2026: a mixed sowing led by rye, with crimson clover (Trifolium incarnatum) as the legume（farmer, 2026-10-28、2026-10-28）

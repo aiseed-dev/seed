@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """記録の読み書き。仕様は docs/記録の形.md で、コードはそれに合わせる。
 
-一行の文法は fieldnotes-farm（同じ作者の別の包み。照会だけに使い、PyPI の 0.2.0 に固定）と仕様で揃えてあり
-（fieldnotes の docs/records.md）、コードは共有しない。
+一行の文法は fieldnotes（11-11 に seed に一本化。古い記録は importfn.py で移す）の docs/records.md と同じ。
 ここにあるのは、行（Line）、一回の観察（Observation）、栽培計画（Plan）、判定の付いた行（Mark）、
 公開ファイル（Public）、本人のフォルダー（Folder）の読み書きだけ。ネットも AI も呼ばない。
 """
@@ -41,9 +40,15 @@ READING_KEYS = (
     "overall",
     "soil_surface",
     "plants",
+    "dominant",  # 優占する草 2〜4 種、多い順に（fieldnotes から、11-11）
     "crops",
+    "emerging",  # 播いた・植えた物の芽生え
     "tags",  # 写真一枚に一行。「<写真の名>: <植物の名>, <状態>, …」（手引き 06「写真のタグ」）
+    "zone",  # 畑の中でほかと違う所。同じ key が何行あってもよい
     "water",
+    "acidity",  # 草から読んだ酸度、肥え方、乾き（三つの目安）
+    "fertility",
+    "dryness",
     "access",  # 道、通える距離。候補地で特に
     "sun_slope",  # 日当たり、傾斜
     "surroundings",  # 周りの畑、獣の痕
@@ -115,7 +120,18 @@ def parse_asks(text: str | None) -> list[str]:
 
 
 # 栽培計画 plan.md の ## Plan のキーと順（記録の形 §10）。mix は混植
-PLAN_KEYS = ("ground", "sow", "host", "mix", "cover", "no_input", "basis", "uncertain", "next_to_observe")
+PLAN_KEYS = (
+    "cut",
+    "ground",
+    "sow",
+    "host",
+    "mix",
+    "cover",
+    "no_input",
+    "basis",
+    "uncertain",
+    "next_to_observe",
+)
 PLAN_RECORD_KEYS = ("decided", "did")
 H_PLAN = "Plan"
 
@@ -335,7 +351,23 @@ NEXT_HEADINGS = ("Sell", "Process", "Host or teach", "Paperwork")
 MODEL_CLAUDE_CODE = "claude-code"
 KINDS = ("own", "candidate")  # 自分の畑か、候補地（自分の畑でない場所）か
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-OBSERVATION_FRONT_KEYS = ("date", "time", "photos", "location", "lookup", "model", "language", "kind", "ask")
+OBSERVATION_FRONT_KEYS = (
+    "date",
+    "time",
+    "photos",
+    "location",
+    "lookup",
+    "model",
+    "language",
+    "kind",
+    "ask",
+    "coverage",
+    "cover_range",
+    "cover_model",
+)
+H_CHECKS = "Checks"
+CHECK_KEY_RE = re.compile(r"^h\d+$")
+CHECK_RESULTS = ("agrees", "disagrees", "cannot tell")
 TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 
 
@@ -423,8 +455,13 @@ class Observation(JudgedLines):
     language: str = "en"
     kind: str = "own"
     ask: list[str] = field(default_factory=list)  # 本人が知りたいこと（ASKS の語）
+    coverage: dict[str, float] = field(default_factory=dict)  # SAM の覆い％（名詞 → ％）
+    cover_range: dict[str, list[float]] = field(default_factory=dict)  # 写真が二枚以上の時の [低, 高]
+    cover_model: str | None = None
     reading: list[Line] = field(default_factory=list)
     earlier: list[Line] = field(default_factory=list)
+    checks: list[Line] = field(default_factory=list)  # ## Checks。仮説に写真が何を言うか（§21）
+    checks_model: str | None = None
     data: list[Line] = field(default_factory=list)
     record: list[Line] = field(default_factory=list)
     kept_front: dict = field(default_factory=dict)
@@ -461,6 +498,9 @@ class Observation(JudgedLines):
             language=str(front.get("language") or "en"),
             kind=str(front.get("kind") or "own"),
             ask=[str(a) for a in (front.get("ask") or [])],
+            coverage={str(k): float(v) for k, v in (front.get("coverage") or {}).items()},
+            cover_range={str(k): [float(x) for x in v] for k, v in (front.get("cover_range") or {}).items()},
+            cover_model=front.get("cover_model"),
             kept_front={k: v for k, v in front.items() if k not in OBSERVATION_FRONT_KEYS},
         )
         obs.kept_preface = preface(body)
@@ -474,6 +514,10 @@ class Observation(JudgedLines):
                     obs.model = arg
             elif name == H_EARLIER:
                 obs.earlier = obs.earlier + lines
+            elif name == H_CHECKS:
+                obs.checks = obs.checks + lines
+                if arg and arg != "none" and not obs.checks_model:
+                    obs.checks_model = arg
             elif name == H_DATA:
                 obs.data = obs.data + lines
             elif name == H_RECORD:
@@ -498,6 +542,12 @@ class Observation(JudgedLines):
             f["kind"] = self.kind
         if self.ask:
             f["ask"] = list(self.ask)
+        if self.coverage:
+            f["coverage"] = dict(self.coverage)
+        if self.cover_range:
+            f["cover_range"] = {k: list(v) for k, v in self.cover_range.items()}
+        if self.cover_model:
+            f["cover_model"] = self.cover_model
         f.update(self.kept_front)
         return f
 
@@ -511,6 +561,9 @@ class Observation(JudgedLines):
         )
         if self.earlier or t.get(H_EARLIER):
             parts.append(render_section(H_EARLIER, self.earlier, t.get(H_EARLIER, "")))
+        if self.checks or t.get(H_CHECKS):
+            heading = f"{H_CHECKS} ({self.checks_model or 'none'})"
+            parts.append(render_section(heading, self.checks, t.get(H_CHECKS, "")))
         parts.append(render_section(H_DATA, self.data, t.get(H_DATA, "")))
         parts.append(render_section(H_RECORD, self.record, t.get(H_RECORD, "")))
         parts += render_kept_sections(self.kept_sections)
@@ -524,6 +577,30 @@ class Observation(JudgedLines):
         Path(path).write_text(self.render(), encoding="utf-8")
 
     # --- 操作
+
+    def mark(self, key: str, verdict: str, reason: str | None = None, text: str | None = None) -> Line:
+        """読みの行か、仮説の確かめの行（h<n>）に本人の判定を付ける。"""
+        if not CHECK_KEY_RE.match(key):
+            return super().mark(key, verdict, reason, text)
+        hits = [l for l in self.checks if l.key == key and (text is None or text in l.text)]
+        if not hits:
+            raise KeyError(f"確かめに無い行: {key!r}")
+        if len(hits) > 1:
+            raise KeyError(f"{key!r} の行が {len(hits)} つある。text で選ぶ")
+        i = self.checks.index(hits[0])
+        self.checks[i] = hits[0].marked(verdict, reason)
+        return self.checks[i]
+
+    def recheck(self, new_checks: list[Line], model: str) -> None:
+        """確かめ直した結果を入れる。同じ文の判定は引き継ぎ、判定の付いた消えた行は前の読みに移す。"""
+        carried = []
+        for n in new_checks:
+            old = next((o for o in self.checks if o.same_statement(n)), None)
+            carried.append(n if not (old and old.judged) else n.marked(old.verdict, old.reason))
+        gone = [o for o in self.checks if o.judged and not any(o.same_statement(n) for n in new_checks)]
+        self.earlier = self.earlier + gone
+        self.checks = carried
+        self.checks_model = model
 
 
 # ---------------------------------------------------------------- 栽培計画 plan.md（記録の形 §10）
@@ -625,6 +702,113 @@ class Plan(JudgedLines):
         return cls(since=today or dt.date.today().isoformat(), season=season, language=language)
 
 
+# ---------------------------------------------------------------- 仮説 hypotheses.md（記録の形 §21）
+
+H_HYPOTHESES = "Hypotheses"
+H_EXPECT = "Expect"
+HYPOTHESES_FRONT_KEYS = ("language", "model")
+
+
+@dataclass
+class Hypotheses:
+    """hypotheses.md 一つ。土地についての仮説（h<n>）と、写真に何が見えれば確かめられるか（## Expect）。
+
+    本人の合う／違うは仮説の行に付く（right は確かめられた、wrong は違った）。番号は詰めない。
+    """
+
+    language: str = "en"
+    model: str | None = None  # ## Expect を書いたモデル
+    lines: list[Line] = field(default_factory=list)
+    expect: list[Line] = field(default_factory=list)
+    record: list[Line] = field(default_factory=list)
+    kept_front: dict = field(default_factory=dict)
+    kept_text: dict[str, str] = field(default_factory=dict)
+    kept_sections: list[tuple[str, str]] = field(default_factory=list)
+    kept_preface: str = ""
+
+    @classmethod
+    def parse(cls, text: str) -> Hypotheses:
+        front, body = split_front(text)
+        h = cls(
+            language=str(front.get("language") or "en"),
+            model=front.get("model"),
+            kept_front={k: v for k, v in front.items() if k not in HYPOTHESES_FRONT_KEYS},
+        )
+        h.kept_preface = preface(body)
+        for title, block in split_sections(body):
+            name, arg = heading_arg(title)
+            lines, text = split_block(block)
+            if name == H_HYPOTHESES:
+                h.lines = h.lines + lines
+            elif name == H_EXPECT:
+                h.expect = h.expect + lines
+                if arg and arg != "none" and not h.model:
+                    h.model = arg
+            elif name == H_RECORD:
+                h.record = h.record + lines
+            else:
+                h.kept_sections.append((title, block))
+                continue
+            if text:
+                h.kept_text[name] = join_text(h.kept_text.get(name, ""), text)
+        return h
+
+    def front(self) -> dict:
+        f: dict = {"language": self.language}
+        if self.model:
+            f["model"] = self.model
+        f.update(self.kept_front)
+        return f
+
+    def render(self) -> str:
+        t = self.kept_text
+        parts = [render_front(self.front())]
+        if self.kept_preface:
+            parts.append(f"{self.kept_preface}\n")
+        parts.append(render_section(H_HYPOTHESES, self.lines, t.get(H_HYPOTHESES, "")))
+        if self.expect or t.get(H_EXPECT):
+            parts.append(
+                render_section(f"{H_EXPECT} ({self.model or 'none'})", self.expect, t.get(H_EXPECT, ""))
+            )
+        if self.record or t.get(H_RECORD):
+            parts.append(render_section(H_RECORD, self.record, t.get(H_RECORD, "")))
+        parts += render_kept_sections(self.kept_sections)
+        return "\n".join(parts)
+
+    @classmethod
+    def read(cls, path: Path) -> Hypotheses:
+        path = Path(path)
+        return cls.parse(path.read_text(encoding="utf-8")) if path.exists() else cls()
+
+    def write(self, path: Path) -> None:
+        Path(path).write_text(self.render(), encoding="utf-8")
+
+    def next_key(self) -> str:
+        nums = [int(l.key[1:]) for l in self.lines if CHECK_KEY_RE.match(l.key)]
+        return f"h{max(nums, default=0) + 1}"
+
+    def add(self, text: str, confidence: float | None = None) -> Line:
+        """仮説を一つ足す。本人や資料の物は確からしさ無し（出典は text の括弧に）、AI の物は確からしさ付き。"""
+        line = Line(self.next_key(), text, confidence)
+        self.lines.append(line)
+        return line
+
+    def mark(self, key: str, verdict: str, reason: str | None = None) -> Line:
+        for i, l in enumerate(self.lines):
+            if l.key == key:
+                self.lines[i] = l.marked(verdict, reason)
+                return self.lines[i]
+        raise KeyError(f"仮説に無い: {key!r}")
+
+    def open(self) -> list[Line]:
+        """まだ確かめられていない（本人が wrong を付けていない）仮説。"""
+        return [l for l in self.lines if l.verdict != "wrong"]
+
+    def set_expect(self, lines: list[Line], model: str) -> None:
+        self.expect = [l for l in lines if CHECK_KEY_RE.match(l.key)]
+        self.model = model
+
+
 # ---------------------------------------------------------------- 合う／違うの付いた行（seed marks）
 
 MARK_SOURCES = ("observation", "plan")
@@ -658,7 +842,8 @@ class Mark:
     def collect(cls, doc: JudgedLines, when: str, source: str) -> list[Mark]:
         """観察か栽培計画一つから、判定の付いた行を、今の読み → 前の読みの順に。"""
         out = []
-        for earlier, lines in ((False, doc.reading), (True, doc.earlier)):
+        checks = getattr(doc, "checks", [])
+        for earlier, lines in ((False, doc.reading + checks), (True, doc.earlier)):
             for l in lines:
                 if l.judged:
                     out.append(cls(when, l.key, l.text, l.verdict, l.reason, source, earlier, l.confidence))

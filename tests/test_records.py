@@ -109,7 +109,7 @@ def test_candidate_material_keys_between_water_and_change():
 
     i = READING_KEYS.index
     assert i("water") < i("access") < i("sun_slope") < i("surroundings") < i("change") < i("basis")
-    assert PLAN_KEYS[:2] == ("ground", "sow") and "mix" in PLAN_KEYS and PLAN_KEYS[-1] == "next_to_observe"
+    assert PLAN_KEYS[:3] == ("cut", "ground", "sow") and "mix" in PLAN_KEYS and PLAN_KEYS[-1] == "next_to_observe"
 
 
 def test_change_key_sorts_after_water_before_basis():
@@ -608,7 +608,8 @@ def test_public_photo_lines_parse_split_and_check():
 def test_tags_key_after_crops_and_ten_states():
     from seed.records import READING_KEYS, TAG_STATES
 
-    assert READING_KEYS.index("tags") == READING_KEYS.index("crops") + 1
+    i = READING_KEYS.index
+    assert i("crops") < i("emerging") < i("tags") < i("zone") < i("water")  # 芽生えと違う所は fieldnotes から（11-11）
     assert len(TAG_STATES["ja"]) == 10 and len(TAG_STATES["en"]) == 10
 
 
@@ -825,3 +826,67 @@ def test_duplicate_headings_are_merged_not_lost():
     )
     assert [l.key for l in plan.reading] == ["ground", "sow", "uncertain", "cover"]
     assert plan.render().count("## Plan") == 1 and Plan.parse(plan.render()).render() == plan.render()
+
+
+# ---------------------------------------------------------------- fieldnotes から足した物（記録の形 §3、§21。11-11）
+
+
+def test_observation_keeps_cover_and_checks_and_marks_a_check():
+    from seed.records import Observation
+
+    text = """---
+date: '2026-10-28'
+time: '12:17:01'
+photos:
+- photos/2026-10-28/121701.jpg
+language: ja
+coverage:
+  vegetation: 91.8
+  goldenrod: 0.0
+cover_range:
+  vegetation: [80.1, 97.3]
+cover_model: sam-3.1
+---
+## Reading (claude-opus-5-5)
+- dominant: オギ (Miscanthus sacchariflorus) ~55% [0.80]
+- acidity: unclear; evidence: 判断できない [0.30]
+
+## Checks (claude-opus-5-5)
+- h3: agrees: 倒伏が無い [0.85]
+- h8: cannot tell: 土が見えない [0.90]
+
+## Data
+(none)
+
+## Record
+(none)
+"""
+    obs = Observation.parse(text)
+    assert obs.coverage == {"vegetation": 91.8, "goldenrod": 0.0} and obs.cover_range["vegetation"] == [80.1, 97.3]
+    assert [l.key for l in obs.checks] == ["h3", "h8"] and obs.checks_model == "claude-opus-5-5"
+    obs.mark("h3", "right")
+    obs.mark("acidity", "wrong", "スギナが少ない")
+    again = Observation.parse(obs.render())
+    assert again.checks[0].verdict == "right" and again.reading[1].reason == "スギナが少ない"
+    assert again.cover_model == "sam-3.1" and "## Checks (claude-opus-5-5)" in obs.render()
+    # 読み直しても確かめは残り、確かめ直すと同じ文の判定は引き継ぐ
+    again.reread([Line("overall", "密生", 0.8)], "claude-opus-5-5")
+    assert again.checks[0].verdict == "right"
+    again.recheck([Line("h3", "agrees: 倒伏が無い", 0.85), Line("h8", "agrees: 湿っている", 0.5)], "m2")
+    assert again.checks[0].verdict == "right" and again.checks_model == "m2"
+
+
+def test_hypotheses_add_mark_expect_roundtrip(tmp_path):
+    from seed.records import Hypotheses
+
+    h = Hypotheses(language="ja")
+    h.add("吉野川の平野の南側の微高地（出典: 本人、2026-10-28）")
+    h.add("南に水田が並ぶ", 0.6)
+    h.mark("h1", "right")
+    h.set_expect([Line("h1", "holds: 水が溜まらない; fails: 溜まる; visible: yes", 0.6), Line("x", "no")], "m")
+    path = tmp_path / "hypotheses.md"
+    h.write(path)
+    back = Hypotheses.read(path)
+    assert [l.key for l in back.lines] == ["h1", "h2"] and back.lines[0].verdict == "right"
+    assert [l.key for l in back.expect] == ["h1"] and back.model == "m"
+    assert back.next_key() == "h3" and Hypotheses.read(tmp_path / "none.md").lines == []

@@ -1,0 +1,461 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""fieldnotes の農場のフォルダーを、一度だけ seed の形にする（記録の形 §23。11-11 に一本化）。
+
+元のフォルダーは読むだけで変えない。移す先はプロジェクトの fields/<畑の名>/。本人の判定と理由はそのまま移す。
+決まった形に当てられない物（documents/、_compare/、surroundings/ の絵、lookup/*.json）は、捨てずに
+プロジェクトの notes/fieldnotes/ に写す。網には出ない（照会も気象も引き直さない）。
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import re
+import shutil
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import lookup as lookup_mod
+from . import records as R
+
+SKIP_DIRS = {"lookup", "surroundings", "documents", "weather"}  # records/ の下で、畑ではない物
+CHANGE_KEYS = ("leaf_colour", "weed_height", "soil", "animal", "other")  # 前の観察からの変化 → change
+SITE_LINE_RE = re.compile(
+    r"^- `(?P<status>data|record|hypothesis|supported|refuted|reference)` (?P<text>.+)$"
+)
+VOICE_NOTE_RE = re.compile(r"^(?P<hm>\d{2}:\d{2}) (?P<text>.+?) \((?P<file>[^()]+)\)$")
+PHOTO_RE = re.compile(r"^(?P<hms>\d{6})-(?P<name>.+)\.(?P<ext>jpe?g|png|heic)$", re.IGNORECASE)
+VOICE_RE = re.compile(r"^(?P<hms>\d{6})-voice\.(?P<ext>\w+)$")
+OVERLAY_RE = re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})-overlay-(?P<n>\d+)\.jpg$")
+DATE_IN_TEXT_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+# site.md と lookup.md の見出し → data 行の key
+SECTION_KEY = {
+    "Location": "place_name",
+    "Place": "place_name",
+    "Parcel": "parcel",
+    "Terrain": "landform",
+    "Terrain and water": "water",
+    "Geology": "geology",
+    "Geology and soil": "geology",
+    "Soil": "soil",
+    "Faults and hazards": "hazard",
+    "Surroundings": "surroundings",
+    "History": "history",
+    "History of the land": "history",
+    "History and places nearby": "history",
+    "Farming": "farming",
+}
+SITE_SOURCE = "fieldnotes の site.md"
+LAST_SITE_HEADING = "How a hypothesis is checked"  # これより後は site.md の説明で、記録ではない
+
+
+@dataclass
+class Report:
+    fields: list[str] = field(default_factory=list)
+    observations: int = 0
+    photos: int = 0
+    voices: int = 0
+    hypotheses: int = 0
+    kept: list[str] = field(default_factory=list)  # notes/fieldnotes/ に写した物
+
+
+def is_farm(path: Path) -> bool:
+    return (Path(path) / "records").is_dir()
+
+
+def field_names(src: Path) -> list[str]:
+    names = set()
+    rec = src / "records"
+    for d in rec.iterdir() if rec.is_dir() else []:
+        if d.is_dir() and not d.name.startswith(("_", ".")) and d.name not in SKIP_DIRS:
+            names.add(d.name)
+    ph = src / "photos"
+    for d in ph.iterdir() if ph.is_dir() else []:
+        if d.is_dir() and not d.name.startswith(("_", ".")):
+            names.add(d.name)
+    return sorted(names)
+
+
+# ---------------------------------------------------------------- site.md、lookup.md、surroundings.md
+
+
+def _split_source(text: str) -> tuple[str, str, str | None]:
+    """'<主張> — <出典>; <日>' → (主張, 出典, 日)。出典が無ければ ('…', '', None)。"""
+    claim, sep, tail = text.rpartition(" — ")
+    if not sep:
+        return text.strip(), "", None
+    day = DATE_IN_TEXT_RE.search(tail)
+    return claim.strip().rstrip("。.").strip(), tail.strip().rstrip("."), day[1] if day else None
+
+
+def _data_line(key: str, text: str, day: str) -> R.Line:
+    claim, src, when = _split_source(text)
+    src = re.sub(r",?\s*https?://\S+", "", src).strip() or SITE_SOURCE
+    return R.Line(key, f"{claim}（出典: {src}、確認日 {when or day}）")
+
+
+@dataclass
+class Site:
+    data: list[R.Line] = field(default_factory=list)
+    record: list[R.Line] = field(default_factory=list)
+    # (h の番号か None, 文, 判定, 理由)。番号は fieldnotes の check.py と同じ: site.md の `hypothesis` の行の順
+    hypotheses: list[tuple[int | None, str, str | None, str | None]] = field(default_factory=list)
+    center: tuple[float, float] | None = None
+
+
+def read_site(src: Path, language: str, today: str) -> Site:
+    out = Site()
+    rec = src / "records"
+    site = rec / "site.md"
+    if site.exists():
+        front, body = R.split_front(site.read_text(encoding="utf-8"))
+        if front.get("lat") is not None and front.get("lon") is not None:
+            out.center = (float(front["lat"]), float(front["lon"]))
+        day = str(front.get("checked") or today)
+        n = 0
+        for title, block in R.split_sections(body):
+            if title.strip() == LAST_SITE_HEADING:
+                break
+            key = SECTION_KEY.get(title.strip(), "note")
+            for raw in block.splitlines():
+                m = SITE_LINE_RE.match(raw.strip())
+                if not m:
+                    continue
+                status, text = m["status"], m["text"].strip()
+                if status in ("data", "reference"):
+                    out.data.append(_data_line(key, text, day))
+                elif status == "record":
+                    claim, who, when = _split_source(text)
+                    out.record.append(
+                        R.Line("note", f"{claim}（{who or 'the farmer'}{'、' + when if when else ''}）")
+                    )
+                elif status == "hypothesis":
+                    numbered = not text.startswith("—")  # check.py の HYPOTHESIS と同じ
+                    n += numbered
+                    out.hypotheses.append((n if numbered else None, text, None, None))
+                elif status == "supported":
+                    out.hypotheses.append((None, text, "right", None))
+                else:  # refuted: "<主張>" — <誰の>; <何で違ったか>
+                    claim, _, why = text.partition(" — ")
+                    out.hypotheses.append((None, claim.strip().strip('"'), "wrong", why.strip() or None))
+    looked = rec / "lookup.md"
+    if looked.exists():
+        front, body = R.split_front(looked.read_text(encoding="utf-8"))
+        day = str(front.get("fetched") or today)
+        for title, block in R.split_sections(body):
+            key = SECTION_KEY.get(title.strip(), "note")
+            for raw in block.splitlines():
+                raw = raw.strip()
+                if raw.startswith("- `hypothesis` "):
+                    out.hypotheses.append((None, raw[len("- `hypothesis` ") :], None, None))
+                    continue
+                k = "elevation" if key == "landform" and "Elevation" in raw else key
+                line = lookup_mod.to_line(k, raw, "fieldnotes の lookup.md", day, language)
+                if line:
+                    out.data.append(line)
+    sur = rec / "surroundings.md"
+    if sur.exists():
+        for raw in sur.read_text(encoding="utf-8").splitlines():
+            m = SITE_LINE_RE.match(raw.strip())
+            if m and m["status"] == "hypothesis":
+                out.hypotheses.append((None, m["text"].strip(), None, None))
+            else:
+                line = R.Line.parse(raw.strip())
+                if line and line.confidence is not None:  # AI が地図から読んだ行（確からしさ付き）
+                    out.hypotheses.append(
+                        (None, f"{line.key}: {line.text} [{line.confidence:.2f}]", None, None)
+                    )
+    return out
+
+
+def write_place(folder: R.Folder, site: Site) -> None:
+    data, record = folder._place_sections()
+    have = {l.render() for l in data + record}
+    data = data + [l for l in site.data if l.render() not in have]
+    if site.center and not any(l.key == "center" for l in record + data):
+        lat, lon = site.center
+        record = [R.Line("center", f"{lat}, {lon}（{SITE_SOURCE}）"), *record]
+    record = record + [l for l in site.record if l.render() not in have]
+    folder.place.write_text(
+        R.render_section(R.H_DATA, data) + "\n" + R.render_section(R.H_RECORD, record), encoding="utf-8"
+    )
+
+
+def _hyp_line(key: str, text: str, verdict: str | None, reason: str | None) -> R.Line:
+    m = re.search(r"\s*\[(\d(?:\.\d{1,2})?)\]$", text)
+    conf = float(m[1]) if m else None
+    body = text[: m.start()] if m else text
+    return R.Line(key, body.strip(), conf, verdict, reason)
+
+
+def write_hypotheses(folder: R.Folder, site: Site, expect: Path | None, language: str) -> int:
+    path = folder.root / "hypotheses.md"
+    h = R.Hypotheses.read(path)
+    if not path.exists():
+        h.language = language
+    have = {l.text for l in h.lines}
+    n = 0
+    # 番号の付いた物（観察の ## Checks の h<n> が指す物）を先に、その番号のまま。残りはその後の番号
+    for num, text, verdict, reason in sorted(site.hypotheses, key=lambda x: x[0] is None):
+        line = _hyp_line(f"h{num}" if num else h.next_key(), text, verdict, reason)
+        if line.text in have:
+            continue
+        if any(l.key == line.key for l in h.lines):  # 前に取り込んだ物と番号が重なる時だけ、後ろへ
+            line = R.Line(h.next_key(), line.text, line.confidence, line.verdict, line.reason)
+        h.lines.append(line)
+        have.add(line.text)
+        n += 1
+    if expect and expect.exists():
+        front, body = R.split_front(expect.read_text(encoding="utf-8"))
+        model = None
+        lines: list[R.Line] = []
+        for title, block in R.split_sections(body):
+            _name, arg = R.heading_arg(title)
+            model = model or (arg if arg and arg != "none" else None)
+            lines += [l for l in R.parse_lines(block) if R.CHECK_KEY_RE.match(l.key)]
+        if lines and not h.expect:
+            h.set_expect(lines, str(front.get("model") or model or "none"))
+    h.lines.sort(key=lambda l: int(l.key[1:]) if R.CHECK_KEY_RE.match(l.key) else 0)
+    h.write(path)
+    return n
+
+
+# ---------------------------------------------------------------- 一日の観察
+
+
+def _index(day_dir: Path) -> dict[str, dict]:
+    p = day_dir / "index.json"
+    if not p.exists():
+        return {}
+    try:
+        return {e["file"]: e for e in json.loads(p.read_text(encoding="utf-8")) if isinstance(e, dict)}
+    except (ValueError, KeyError, TypeError):
+        return {}
+
+
+def _new_name(dest: Path, hms: str, ext: str, suffix: str = "") -> Path:
+    path = dest / f"{hms}{suffix}.{ext}"
+    n = 2
+    while path.exists():
+        path = dest / f"{hms}{suffix}-{n}.{ext}"
+        n += 1
+    return path
+
+
+def _copy_day_photos(src_day: Path, folder: R.Folder, day: str) -> tuple[dict[str, str], list[dict], int]:
+    """写真と録音を写す。({元の道: 新しい道}, 座標の入った index の項目, 録音の数)。"""
+    dest = folder.photos / day
+    dest.mkdir(parents=True, exist_ok=True)
+    moved: dict[str, str] = {}
+    voices = 0
+    for p in sorted(src_day.iterdir()):
+        m = PHOTO_RE.match(p.name)
+        v = VOICE_RE.match(p.name)
+        if v:
+            to = _new_name(dest, v["hms"], v["ext"].lower(), "-voice")
+            shutil.copy2(p, to)
+            voices += 1
+        elif m:
+            ext = "jpg" if m["ext"].lower() in ("jpg", "jpeg") else m["ext"].lower()
+            to = _new_name(dest, m["hms"], ext)
+            shutil.copy2(p, to)
+        else:
+            continue
+        moved[p.name] = f"photos/{day}/{to.name}"
+    idx = _index(src_day)
+    return moved, [idx[k] for k in moved if k in idx], voices
+
+
+def _location(points: list[dict]) -> dict | None:
+    from .photos import PhotoInfo, location
+
+    infos = [
+        PhotoInfo(float(e["lat"]), float(e["lon"]), None)
+        for e in points
+        if e.get("lat") is not None and e.get("lon") is not None
+    ]
+    return location(infos) if infos else None
+
+
+def _language_of(arg: str | None, lines: list[R.Line], fallback: str) -> str:
+    if arg and "," in arg:
+        lg = arg.split(",")[-1].strip()
+        if re.fullmatch(r"[a-z]{2,3}(-[A-Za-z]+)?", lg):
+            return lg
+    if any(re.search(r"[぀-ヿ一-鿿]", l.text) for l in lines):
+        return "ja"
+    return fallback
+
+
+def convert_day(text: str, photos: dict[str, str], location: dict | None, language: str) -> R.Observation:
+    """fieldnotes の records/<field>/<date>.md の文 → seed の観察。photos は {元の道: 新しい道}。"""
+    front, body = R.split_front(text)
+    day = str(front.get("date"))
+    old_photos = [str(p) for p in front.get("photos") or []]
+    new_photos = [photos.get(Path(p).name, p) for p in old_photos] or sorted(photos.values())
+    new_photos = [p for p in new_photos if not Path(p).stem.endswith("-voice")]
+    first = next((Path(p).name for p in old_photos if PHOTO_RE.match(Path(p).name)), None)
+    hms = PHOTO_RE.match(first)["hms"] if first else "000000"
+    obs = R.Observation(
+        date=day,
+        time=f"{hms[:2]}:{hms[2:4]}:{hms[4:]}",
+        photos=new_photos,
+        location=location,
+        coverage={str(k): float(v) for k, v in (front.get("coverage") or {}).items()},
+        cover_range={str(k): [float(x) for x in v] for k, v in (front.get("cover_range") or {}).items()},
+    )
+    if obs.coverage:
+        obs.cover_model = "sam-3.1"
+    lines_all: list[R.Line] = []
+    note_arg = None
+    for title, block in R.split_sections(body):
+        name, arg = R.heading_arg(title)
+        lines, rest = R.split_block(block)
+        lines_all += lines
+        if name == "AI observation":
+            obs.model = arg if arg and arg != "none" else obs.model
+            obs.reading += [_reading_line(l) for l in lines]
+        elif name == "Earlier AI lines":
+            obs.earlier += [_reading_line(l) for l in lines]
+        elif name == "Checks":
+            obs.checks += lines
+            obs.checks_model = arg if arg and arg != "none" else obs.checks_model
+        elif name == "From the farmer's voice":
+            via = f"（声から: {arg}）" if arg and arg != "none" else ""
+            for l in lines:
+                key = {"work": "did", "seen": "saw"}.get(l.key, "note")
+                obs.record.append(R.Line(key, f"{l.text}{via}"))
+        elif name == "Farmer note":
+            note_arg = arg
+            for para in (rest or "").splitlines():
+                para = para.strip()
+                if not para or para == R.EMPTY:
+                    continue
+                m = VOICE_NOTE_RE.match(para)
+                if m:
+                    voice = photos.get(m["file"], m["file"])
+                    obs.record.append(
+                        R.Line("said", f"{m['hm']} {m['text']}（書き取り、{Path(voice).name}）")
+                    )
+                else:
+                    obs.record.append(R.Line("note", para))
+            obs.record += [R.Line(l.key if l.key in R.RECORD_KEYS else "note", l.text) for l in lines]
+        else:
+            obs.kept_sections.append((title, block))
+    obs.language = _language_of(note_arg, lines_all, language)
+    return obs
+
+
+def _reading_line(l: R.Line) -> R.Line:
+    if l.key in CHANGE_KEYS:
+        return R.Line("change", f"{l.key}: {l.text}", l.confidence, l.verdict, l.reason)
+    return l
+
+
+# ---------------------------------------------------------------- 提案、名詞、草の読み
+
+
+PROPOSAL_KEYS = {
+    "cut": {"summary": "cut", "where": "cut", "height": "cut", "leave": "cut", "method": "cut",
+            "basis": "basis", "watch": "next_to_observe", "caution": "uncertain"},
+    "cover_crop": {"summary": "cover", "mix": "mix", "sowing": "sow", "watch": "next_to_observe",
+                   "caution": "uncertain"},
+}  # fmt: skip
+
+
+def merge_proposals(folder: R.Folder, paths: list[Path], language: str) -> None:
+    if not paths:
+        return
+    plan = R.Plan.read(folder.plan) if folder.plan.exists() else None
+    for path in sorted(paths):
+        front, body = R.split_front(path.read_text(encoding="utf-8"))
+        kind = str(front.get("kind") or path.stem.split("-")[-1])
+        keys = PROPOSAL_KEYS.get(kind, {})
+        lines: list[R.Line] = []
+        model = front.get("model")
+        for title, block in R.split_sections(body):
+            _name, arg = R.heading_arg(title)
+            model = model or arg
+            for l in R.parse_lines(block):
+                lines.append(R.Line(keys.get(l.key, "basis"), l.text, l.confidence, l.verdict, l.reason))
+        if plan is None:
+            plan = R.Plan.new(language, today=str(front.get("date") or dt.date.today()))
+        have = {(l.key, l.text) for l in plan.reading}
+        plan.reading = R.sort_reading(
+            plan.reading + [l for l in lines if (l.key, l.text) not in have], R.PLAN_KEYS
+        )
+        plan.model = plan.model or (str(model) if model else None)
+    if plan is not None:
+        plan.write(folder.plan)
+
+
+def _copy_tree(src: Path, dest: Path) -> None:
+    if src.is_dir():
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+    elif src.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
+
+# ---------------------------------------------------------------- 全体
+
+
+def import_farm(
+    src: Path, folders: dict[str, R.Folder], language: str = "en", today: str | None = None
+) -> Report:
+    """src（fieldnotes の農場のフォルダー）を、畑の名 → Folder（init 済み）へ移す。"""
+    src = Path(src).expanduser()
+    today = today or dt.date.today().isoformat()
+    rec = src / "records"
+    rep = Report(fields=sorted(folders))
+    site = read_site(src, language, today)
+    for name, folder in folders.items():
+        write_place(folder, site)
+        rep.hypotheses += write_hypotheses(folder, site, rec / "_checks" / name / "expect.md", language)
+        # 写真と一日の観察
+        days = set()
+        ph = src / "photos" / name
+        days |= (
+            {d.name for d in ph.iterdir() if d.is_dir() and R.DATE_RE.match(d.name)} if ph.is_dir() else set()
+        )
+        rd = rec / name
+        days |= {p.stem for p in rd.glob("*.md") if R.DATE_RE.match(p.stem)} if rd.is_dir() else set()
+        for day in sorted(days):
+            moved, points, voices = (
+                _copy_day_photos(ph / day, folder, day) if (ph / day).is_dir() else ({}, [], 0)
+            )
+            rep.photos += sum(1 for v in moved.values() if Path(v).stem.split("-")[-1] != "voice")
+            rep.voices += voices
+            day_md = rd / f"{day}.md"
+            if not day_md.exists():
+                continue
+            obs = convert_day(day_md.read_text(encoding="utf-8"), moved, _location(points), language)
+            target = folder.observation_path(obs)
+            if target.exists():  # 二度目の取り込み: 本人が seed で付けた物を消さない
+                continue
+            folder.observations.mkdir(parents=True, exist_ok=True)
+            obs.write(target)
+            rep.observations += 1
+            overlays = sorted(rd.glob(f"{day}-overlay-*.jpg"))
+            if overlays:
+                sam = folder.observations / (Path(obs.filename).stem + ".sam")
+                sam.mkdir(exist_ok=True)
+                for o in overlays:
+                    shutil.copy2(o, sam / f"{OVERLAY_RE.match(o.name)['n']}.jpg")
+        # 名詞、草の読み、提案
+        _copy_tree(rec / "_concepts" / f"{name}.md", folder.root / "concepts.md")
+        if (rec / "_plants").is_dir():
+            _copy_tree(rec / "_plants", folder.root / "plants")
+        merge_proposals(folder, list((rec / "_proposals" / name).glob("*.md")), language)
+    # 当てられない物は捨てずに写す。農場全体の物なので、プロジェクトの根に一度だけ
+    first = next(iter(folders.values()), None)
+    if first is not None:
+        kept = (first.project or first.root) / "notes" / "fieldnotes"
+        for part in ("documents", "_compare", "surroundings", "lookup"):
+            if (rec / part).exists():
+                _copy_tree(rec / part, kept / part)
+                rep.kept.append(part)
+        if (src / "photos" / "_around").is_dir():
+            _copy_tree(src / "photos" / "_around", kept / "around")
+            rep.kept.append("around")
+    return rep

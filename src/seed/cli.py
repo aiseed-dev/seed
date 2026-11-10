@@ -1693,6 +1693,47 @@ def move_root_records(st: Settings, folder: Folder) -> list[str]:
     return moved
 
 
+def cmd_import(st: Settings | None, args) -> int:
+    """fieldnotes の農場のフォルダーを、プロジェクトの fields/<畑の名>/ に移す（記録の形 §23）。元は変えない。"""
+    from . import importfn
+
+    lg = lang.default_language(None)
+    src = Path(args.src).expanduser()
+    if not importfn.is_farm(src):
+        _err(s("import_not_farm", lg, src=src))
+        return 1
+    project = _field_project(args)
+    st = settings_mod.load(project)
+    lg = st.language
+    had = settings_mod.field_names(project)
+    if not had and ((project / "observations").exists() or (project / "photos").exists()):
+        _err(s("import_root_records", lg, project=project))
+        return 1
+    names = importfn.field_names(src)
+    folders = {}
+    for name in names:
+        folder = st.field_folder(name)
+        prepare(folder, st.language)
+        folders[name] = folder
+    rep = importfn.import_farm(src, folders, st.language)
+    if not had and names:
+        settings_mod.write_field(project, names[0])
+    _out(
+        s(
+            "import_done",
+            lg,
+            fields="、".join(rep.fields) if lg == "ja" else ", ".join(rep.fields),
+            observations=rep.observations,
+            photos=rep.photos,
+            hypotheses=rep.hypotheses,
+            project=project,
+        )
+    )
+    if rep.kept:
+        _out(s("import_kept", lg, items=", ".join(rep.kept)))
+    return 0
+
+
 def cmd_field(st: Settings | None, args) -> int:
     """プロジェクトの中の畑を作る・選ぶ・見る。前の seed field add は seed project add に回す。"""
     lg = lang.default_language(None)
@@ -2066,6 +2107,16 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("skill-path", parents=[common], help="手引き skill/ の道を出す")
 
+    im = sub.add_parser(
+        "import",
+        parents=[common],
+        help="fieldnotes の農場のフォルダーを、このプロジェクトの畑に移す（一度だけ）",
+    )
+    im.add_argument(
+        "kind", choices=("fieldnotes",), help="fieldnotes（records/ と photos/ のあるフォルダー）"
+    )
+    im.add_argument("src", metavar="FOLDER", help="fieldnotes の農場のフォルダー（変えない）")
+
     hm = sub.add_parser(
         "home",
         parents=[common],
@@ -2105,6 +2156,7 @@ COMMANDS = {
     "procedure": cmd_procedure,
     "field": cmd_field,
     "project": cmd_project,
+    "import": cmd_import,
     "home": cmd_home,
 }
 # プロジェクト全体（畑が幾つも）では使えない命令。記録は畑ごとに在る
@@ -2118,7 +2170,7 @@ FIELD_ONLY = frozenset(
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    if args.command in ("field", "project"):
+    if args.command in ("field", "project", "import"):
         return COMMANDS[args.command](None, args)
     try:
         args.folder, pick = fields_mod.locate(getattr(args, "field", None), getattr(args, "folder", None))
