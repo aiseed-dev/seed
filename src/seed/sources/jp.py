@@ -1,4 +1,5 @@
-"""Japanese primary data for `lookup`: 国土地理院 and the ハザードマップポータルサイト.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Japanese primary data for the lookup (元は fieldnotes の lookup_jp.py): 国土地理院 and the ハザードマップポータルサイト.
 
 The world sources in lookup.py are coarse in Japan (Macrostrat's world map
 called the Izumi Group under 新居浜市萩生 an intrusive rock; SoilGrids is
@@ -22,7 +23,7 @@ and settle the place:
     soil_jp       農研機構 日本土壌インベントリー → the soil class at the point: the colour of
                   the soil map's tile there, looked up in the site's own legend (figureRGB.js)
 
-Each returns (lines, raw) like the sources in lookup.py. A tile that is not
+Each returns (lines, raw) like the sources in world.py. A tile that is not
 there (404) means the layer has nothing in it; any other failure raises, and
 lookup writes its "not reached" line.
 """
@@ -41,59 +42,114 @@ from datetime import date
 import numpy as np
 from PIL import Image
 
-from .site import Site
+from . import GSI, PORTAL, USER_AGENT, Point
 
 TIMEOUT = 10  # a slow tile server must not stall init
-GSI = "https://cyberjapandata.gsi.go.jp/xyz"
-PORTAL = "https://disaportaldata.gsi.go.jp/raster"
 EARTH_M = 40075016.686
 
 # ベクトルタイル「地形分類」: code → (class, 土地条件図 / 治水地形分類図 name).
 # From 国土地理院「ベクトルタイル「地形分類」の凡例対応表」
 # https://www.gsi.go.jp/bousaichiri/bousaichiri41017.html (read 2026-10-30).
 LANDFORM = {
-    "10101": ("山地斜面等", "斜面（山地）"), "11201": ("山地斜面等", "火砕丘"), "11202": ("山地斜面等", "溶岩円頂丘"),
-    "11203": ("山地斜面等", "火口"), "11204": ("山地斜面等", "溶岩流地形"), "1010101": ("山地斜面等", "山地"),
-    "10202": ("崖・段丘崖", "崖"), "10204": ("崖・段丘崖", "禿しゃ地・露岩"), "2010201": ("崖・段丘崖", "崖（段丘崖）"),
-    "10205": ("地すべり地形", "地すべり（滑落崖）"), "10206": ("地すべり地形", "地すべり（移動体）"),
-    "10301": ("台地・段丘", "高位面"), "10302": ("台地・段丘", "上位面"), "10303": ("台地・段丘", "中位面"),
-    "10304": ("台地・段丘", "下位面"), "10305": ("台地・段丘", "完新世段丘・低位面"), "10306": ("台地・段丘", "台地・段丘"),
-    "10307": ("台地・段丘", "対比困難な段丘"), "10308": ("台地・段丘", "洪積台地"), "10310": ("台地・段丘", "岩石台地"),
-    "10312": ("台地・段丘", "溶岩台地"), "10314": ("台地・段丘", "更新世段丘"), "10508": ("台地・段丘", "台地・段丘状の地形"),
+    "10101": ("山地斜面等", "斜面（山地）"),
+    "11201": ("山地斜面等", "火砕丘"),
+    "11202": ("山地斜面等", "溶岩円頂丘"),
+    "11203": ("山地斜面等", "火口"),
+    "11204": ("山地斜面等", "溶岩流地形"),
+    "1010101": ("山地斜面等", "山地"),
+    "10202": ("崖・段丘崖", "崖"),
+    "10204": ("崖・段丘崖", "禿しゃ地・露岩"),
+    "2010201": ("崖・段丘崖", "崖（段丘崖）"),
+    "10205": ("地すべり地形", "地すべり（滑落崖）"),
+    "10206": ("地すべり地形", "地すべり（移動体）"),
+    "10301": ("台地・段丘", "高位面"),
+    "10302": ("台地・段丘", "上位面"),
+    "10303": ("台地・段丘", "中位面"),
+    "10304": ("台地・段丘", "下位面"),
+    "10305": ("台地・段丘", "完新世段丘・低位面"),
+    "10306": ("台地・段丘", "台地・段丘"),
+    "10307": ("台地・段丘", "対比困難な段丘"),
+    "10308": ("台地・段丘", "洪積台地"),
+    "10310": ("台地・段丘", "岩石台地"),
+    "10312": ("台地・段丘", "溶岩台地"),
+    "10314": ("台地・段丘", "更新世段丘"),
+    "10508": ("台地・段丘", "台地・段丘状の地形"),
     "2010101": ("台地・段丘", "段丘面"),
-    "10401": ("山麓堆積地形", "麓屑面"), "10402": ("山麓堆積地形", "崖錐"), "10403": ("山麓堆積地形", "土石流堆"),
-    "10404": ("山麓堆積地形", "土石流段丘"), "10406": ("山麓堆積地形", "山麓堆積地形"),
-    "10407": ("山麓堆積地形", "崖錐・麓屑面・土石流堆"), "3010101": ("山麓堆積地形", "山麓堆積地形"),
-    "10501": ("扇状地", "扇状地"), "10502": ("扇状地", "緩扇状地"), "3020101": ("扇状地", "扇状地"),
-    "10503": ("自然堤防", "自然堤防"), "3040101": ("自然堤防", "微高地（自然堤防）"),
-    "10506": ("天井川等", "天井川沿いの微高地"), "10507": ("天井川等", "旧天井川の微高地"), "10801": ("天井川等", "天井川の部分"),
-    "10504": ("砂州・砂丘", "砂丘"), "10505": ("砂州・砂丘", "砂（礫）堆・州"), "10512": ("砂州・砂丘", "砂州・砂堆・砂丘"),
+    "10401": ("山麓堆積地形", "麓屑面"),
+    "10402": ("山麓堆積地形", "崖錐"),
+    "10403": ("山麓堆積地形", "土石流堆"),
+    "10404": ("山麓堆積地形", "土石流段丘"),
+    "10406": ("山麓堆積地形", "山麓堆積地形"),
+    "10407": ("山麓堆積地形", "崖錐・麓屑面・土石流堆"),
+    "3010101": ("山麓堆積地形", "山麓堆積地形"),
+    "10501": ("扇状地", "扇状地"),
+    "10502": ("扇状地", "緩扇状地"),
+    "3020101": ("扇状地", "扇状地"),
+    "10503": ("自然堤防", "自然堤防"),
+    "3040101": ("自然堤防", "微高地（自然堤防）"),
+    "10506": ("天井川等", "天井川沿いの微高地"),
+    "10507": ("天井川等", "旧天井川の微高地"),
+    "10801": ("天井川等", "天井川の部分"),
+    "10504": ("砂州・砂丘", "砂丘"),
+    "10505": ("砂州・砂丘", "砂（礫）堆・州"),
+    "10512": ("砂州・砂丘", "砂州・砂堆・砂丘"),
     "3050101": ("砂州・砂丘", "砂州・砂丘"),
-    "10601": ("凹地・浅い谷", "凹地・浅い谷"), "2010301": ("凹地・浅い谷", "浅い谷"),
-    "10701": ("氾濫平野・海岸平野", "谷底平野・氾濫平野"), "10702": ("氾濫平野・海岸平野", "海岸平野・三角州"),
-    "10705": ("氾濫平野・海岸平野", "湖岸平野・三角州"), "3030101": ("氾濫平野・海岸平野", "氾濫平野"),
-    "10703": ("後背低地・湿地", "後背低地"), "10804": ("後背低地・湿地", "湿地"), "3030201": ("後背低地・湿地", "後背湿地"),
-    "10704": ("旧河道", "旧河道"), "3040201": ("旧河道", "旧河道（明瞭）"), "3040202": ("旧河道", "旧河道（不明瞭）"),
+    "10601": ("凹地・浅い谷", "凹地・浅い谷"),
+    "2010301": ("凹地・浅い谷", "浅い谷"),
+    "10701": ("氾濫平野・海岸平野", "谷底平野・氾濫平野"),
+    "10702": ("氾濫平野・海岸平野", "海岸平野・三角州"),
+    "10705": ("氾濫平野・海岸平野", "湖岸平野・三角州"),
+    "3030101": ("氾濫平野・海岸平野", "氾濫平野"),
+    "10703": ("後背低地・湿地", "後背低地"),
+    "10804": ("後背低地・湿地", "湿地"),
+    "3030201": ("後背低地・湿地", "後背湿地"),
+    "10704": ("旧河道", "旧河道"),
+    "3040201": ("旧河道", "旧河道（明瞭）"),
+    "3040202": ("旧河道", "旧河道（不明瞭）"),
     "3040301": ("落堀", "落堀"),
-    "10802": ("河川敷・浜", "高水敷"), "10803": ("河川敷・浜", "低水敷・浜"), "10807": ("河川敷・浜", "低水敷・浜・潮汐平野"),
+    "10802": ("河川敷・浜", "高水敷"),
+    "10803": ("河川敷・浜", "低水敷・浜"),
+    "10807": ("河川敷・浜", "低水敷・浜・潮汐平野"),
     "10808": ("河川敷・浜", "高水敷・低水敷・浜"),
-    "10805": ("水部", "落堀"), "10806": ("水部", "潮汐平野"), "10901": ("水部", "水部"),
-    "10903": ("水部", "河川・水涯線及び水面"), "5010201": ("水部", "現河道・水面"),
-    "10904": ("旧水部", "旧水部"), "5010301": ("旧水部", "旧水部"),
-    "11001": ("切土地", "切土地・平坦化地"), "11003": ("切土地", "切土斜面"), "11009": ("切土地", "凹陥地"),
-    "11011": ("切土地", "切土地"), "4010301": ("切土地", "切土地"),
-    "11002": ("農耕平坦化地", "農耕平坦化地"), "11008": ("干拓地", "干拓地"), "4010101": ("干拓地", "干拓地"),
-    "11004": ("盛土地・埋立地", "盛土斜面"), "11005": ("盛土地・埋立地", "高い盛土地"), "11006": ("盛土地・埋立地", "盛土地"),
-    "11007": ("盛土地・埋立地", "埋土地"), "11014": ("盛土地・埋立地", "盛土地・埋立地"),
-    "4010201": ("盛土地・埋立地", "盛土地・埋立地"), "11010": ("改変工事中", "改変工事中"),
+    "10805": ("水部", "落堀"),
+    "10806": ("水部", "潮汐平野"),
+    "10901": ("水部", "水部"),
+    "10903": ("水部", "河川・水涯線及び水面"),
+    "5010201": ("水部", "現河道・水面"),
+    "10904": ("旧水部", "旧水部"),
+    "5010301": ("旧水部", "旧水部"),
+    "11001": ("切土地", "切土地・平坦化地"),
+    "11003": ("切土地", "切土斜面"),
+    "11009": ("切土地", "凹陥地"),
+    "11011": ("切土地", "切土地"),
+    "4010301": ("切土地", "切土地"),
+    "11002": ("農耕平坦化地", "農耕平坦化地"),
+    "11008": ("干拓地", "干拓地"),
+    "4010101": ("干拓地", "干拓地"),
+    "11004": ("盛土地・埋立地", "盛土斜面"),
+    "11005": ("盛土地・埋立地", "高い盛土地"),
+    "11006": ("盛土地・埋立地", "盛土地"),
+    "11007": ("盛土地・埋立地", "埋土地"),
+    "11014": ("盛土地・埋立地", "盛土地・埋立地"),
+    "4010201": ("盛土地・埋立地", "盛土地・埋立地"),
+    "11010": ("改変工事中", "改変工事中"),
 }
-LANDFORM_LAYERS = [("experimental_landformclassification1", "natural"), ("experimental_landformclassification2", "artificial")]
+LANDFORM_LAYERS = [
+    ("experimental_landformclassification1", "natural"),
+    ("experimental_landformclassification2", "artificial"),
+]
 
 # ハザードマップポータルサイト raster layers: (key, name). 土砂災害警戒区域 is three layers.
-SEDIMENT = [("05_dosekiryukeikaikuiki", "土石流"), ("05_kyukeishakeikaikuiki", "急傾斜地の崩壊"),
-            ("05_jisuberikeikaikuiki", "地すべり")]
+SEDIMENT = [
+    ("05_dosekiryukeikaikuiki", "土石流"),
+    ("05_kyukeishakeikaikuiki", "急傾斜地の崩壊"),
+    ("05_jisuberikeikaikuiki", "地すべり"),
+]
 FLOOD = "01_flood_l2_shinsuishin_data"
-FAULT_SEARCH = [(15, 2), (14, 2)]  # 5×5 tiles: at least 2 km round the point at z15 (~4 m px), then 4 km at z14
+FAULT_SEARCH = [
+    (15, 2),
+    (14, 2),
+]  # 5×5 tiles: at least 2 km round the point at z15 (~4 m px), then 4 km at z14
 HAZARD_Z, HAZARD_R = 15, 1  # 3×3 tiles: at least 1 km
 
 # 産総研 地質図カタログ, 5万分の1地質図幅: one page per region, each with an index map
@@ -109,8 +165,10 @@ CATALOGUE = "https://www.gsj.jp/Map/JP/geology4-{}.html"
 FUDE = "https://services8.arcgis.com/cW9ZoPyzxXOxrpu1/arcgis/rest/services/FudePolygonTemp_2026/FeatureServer/0/query"
 FUDE_NEAR_M = 100
 LAND_TYPE = {100: "田", 200: "畑"}
-FUDE_CAVEAT = ("筆ポリゴン are reference for the position and shape of farmland, drawn by hand over aerial "
-               "photos for the 面積調査 with 田/畑 read by eye; they show neither 筆界 nor rights")
+FUDE_CAVEAT = (
+    "筆ポリゴン are reference for the position and shape of farmland, drawn by hand over aerial "
+    "photos for the 面積調査 with 田/畑 read by eye; they show neither 筆界 nor rights"
+)
 NOUCHI_NAVI = "https://map.maff.go.jp/"
 
 # 農研機構 日本土壌インベントリー: CC BY 4.0, credit 「農研機構、日本土壌インベントリー」
@@ -122,17 +180,26 @@ SOIL_Z = 15  # the map's finest tiles
 EARTH_R = 6371008.8
 SHEET_PX = (41.6, 34.2)
 SHEET_GRID = {
-    1: (142.5, 271, 94, 118, 12, 10), 2: (142.5, 261, 94, 80, 14, 10), 3: (141.0, 274, 258, 15, 7, 13),
-    4: (139.25, 261, 15, 34, 13, 13), 5: (139.5, 250, 130, 104, 10, 10), 6: (139.0, 240, 151, 55, 13, 12),
-    7: (138.0, 230, 78, 70, 13, 11), 8: (138.0, 219, 125, 58, 12, 12), 10: (135.0, 227, 86, 4, 12, 14),
-    11: (135.0, 213, 120, 35, 12, 13), 12: (132.0, 218, 119, 45, 12, 11), 13: (132.0, 207, 119, 61, 12, 11),
-    14: (129.0, 209, 118, 70, 12, 11), 15: (128.25, 200, 37, 13, 15, 14),
+    1: (142.5, 271, 94, 118, 12, 10),
+    2: (142.5, 261, 94, 80, 14, 10),
+    3: (141.0, 274, 258, 15, 7, 13),
+    4: (139.25, 261, 15, 34, 13, 13),
+    5: (139.5, 250, 130, 104, 10, 10),
+    6: (139.0, 240, 151, 55, 13, 12),
+    7: (138.0, 230, 78, 70, 13, 11),
+    8: (138.0, 219, 125, 58, 12, 12),
+    10: (135.0, 227, 86, 4, 12, 14),
+    11: (135.0, 213, 120, 35, 12, 13),
+    12: (132.0, 218, 119, 45, 12, 11),
+    13: (132.0, 207, 119, 61, 12, 11),
+    14: (129.0, 209, 118, 70, 12, 11),
+    15: (128.25, 200, 37, 13, 15, 14),
 }
 
 
 def get_bytes(url: str) -> bytes | None:
     """The one place that touches the network here; None when the tile is not there (404)."""
-    req = urllib.request.Request(url, headers={"User-Agent": "fieldnotes/0.1 (+https://github.com/aiseed-dev/fieldnotes)"})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.read()
@@ -144,20 +211,22 @@ def get_bytes(url: str) -> bytes | None:
 
 def _json(url: str):
     import json
+
     data = get_bytes(url)
     return json.loads(data.decode("utf-8")) if data is not None else None
 
 
 # ---- geometry -------------------------------------------------------------
 
+
 def tile_xy(lat: float, lon: float, z: int) -> tuple[float, float]:
     """The point in tile coordinates (fractional) at zoom z."""
-    n = 2 ** z
+    n = 2**z
     return (lon + 180) / 360 * n, (1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n
 
 
 def metres_per_px(lat: float, z: int) -> float:
-    return EARTH_M * math.cos(math.radians(lat)) / 2 ** z / 256
+    return EARTH_M * math.cos(math.radians(lat)) / 2**z / 256
 
 
 def bearing(east: float, north: float) -> str:
@@ -183,8 +252,13 @@ def polygon_at(features: list[dict], lon: float, lat: float) -> dict | None:
     """The first (Multi)Polygon feature the point is in, holes respected."""
     for f in features:
         g = f.get("geometry") or {}
-        polys = [g["coordinates"]] if g.get("type") == "Polygon" else g.get("coordinates", []) \
-            if g.get("type") == "MultiPolygon" else []
+        polys = (
+            [g["coordinates"]]
+            if g.get("type") == "Polygon"
+            else g.get("coordinates", [])
+            if g.get("type") == "MultiPolygon"
+            else []
+        )
         for rings in polys:
             if rings and _inside(lon, lat, rings[0]) and not any(_inside(lon, lat, h) for h in rings[1:]):
                 return f
@@ -227,15 +301,18 @@ def _mosaic(urls: dict[tuple[int, int], str], classify) -> tuple[np.ndarray, lis
         seen.append(urls[(x, y)])
         tile = np.asarray(Image.open(io.BytesIO(data)).convert("RGBA"))
         r, c = ys.index(y) * 256, xs.index(x) * 256
-        mask[r:r + 256, c:c + 256] = classify(tile)
+        mask[r : r + 256, c : c + 256] = classify(tile)
     return mask, seen
 
 
 def _around(lat: float, lon: float, z: int, radius: int, url) -> tuple[dict, float, float]:
     fx, fy = tile_xy(lat, lon, z)
     cx, cy = int(fx), int(fy)
-    urls = {(cx + dx, cy + dy): url(z, cx + dx, cy + dy) for dx in range(-radius, radius + 1)
-            for dy in range(-radius, radius + 1)}
+    urls = {
+        (cx + dx, cy + dy): url(z, cx + dx, cy + dy)
+        for dx in range(-radius, radius + 1)
+        for dy in range(-radius, radius + 1)
+    }
     return urls, (fx - cx + radius) * 256, (fy - cy + radius) * 256
 
 
@@ -254,17 +331,25 @@ def painted(tile: np.ndarray) -> np.ndarray:
 
 # ---- the sources ----------------------------------------------------------
 
-def address(site: Site):
-    url = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?" + \
-          urllib.parse.urlencode({"lat": site.lat, "lon": site.lon})
+
+def address(site: Point):
+    url = "https://mreversegeocoder.gsi.go.jp/reverse-geocoder/LonLatToAddress?" + urllib.parse.urlencode(
+        {"lat": site.lat, "lon": site.lon}
+    )
     raw = _json(url) or {}
     res = raw.get("results") or {}
     if not res:
-        return [f"- `data` Address: none at this point (sea or outside Japan). — 出典：国土地理院 逆ジオコーダ, {url}"], raw
+        return [
+            f"- `data` Address: none at this point (sea or outside Japan). — 出典：国土地理院 逆ジオコーダ, {url}"
+        ], raw
     muni = res.get("muniCd", "")
     try:
         js = (get_bytes("https://maps.gsi.go.jp/js/muni.js") or b"").decode("utf-8")
-        line = next(x for x in js.splitlines() if f'MUNI_ARRAY["{muni.lstrip("0")}"]' in x or f'MUNI_ARRAY["{muni}"]' in x)
+        line = next(
+            x
+            for x in js.splitlines()
+            if f'MUNI_ARRAY["{muni.lstrip("0")}"]' in x or f'MUNI_ARRAY["{muni}"]' in x
+        )
         _, pref, _, city = line.split("'")[1].split(",")[:4]
         raw["muni"] = line.split("'")[1]
     except (StopIteration, ValueError, OSError):
@@ -273,23 +358,26 @@ def address(site: Site):
     return [f"- `data` Address: {name} (市区町村コード {muni}). — 出典：国土地理院 逆ジオコーダ, {url}"], raw
 
 
-def elevation(site: Site):
-    url = "https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?" + \
-          urllib.parse.urlencode({"lon": site.lon, "lat": site.lat, "outtype": "JSON"})
+def elevation(site: Point):
+    url = "https://cyberjapandata2.gsi.go.jp/general/dem/scripts/getelevation.php?" + urllib.parse.urlencode(
+        {"lon": site.lon, "lat": site.lat, "outtype": "JSON"}
+    )
     raw = _json(url) or {}
     h = raw.get("elevation")
     if not isinstance(h, (int, float)):
         return [f"- `data` Elevation: no value here in the GSI DEM. — 出典：国土地理院 標高API, {url}"], raw
-    return [f"- `data` Elevation {h:g} m (DEM: {raw.get('hsrc', '?')}). — 出典：国土地理院 標高API, {url}"], raw
+    return [
+        f"- `data` Elevation {h:g} m (DEM: {raw.get('hsrc', '?')}). — 出典：国土地理院 標高API, {url}"
+    ], raw
 
 
-def landform(site: Site, z: int = 14):
+def landform(site: Point, z: int = 14):
     """The landform polygon the point is in. Polygons are cut at tile edges, so
     near an edge the neighbouring tile is asked too."""
     fx, fy = tile_xy(site.lat, site.lon, z)
     cx, cy = int(fx), int(fy)
     tiles = [(cx, cy)]
-    near = lambda f: -1 if f < 0.02 else 1 if f > 0.98 else 0  # noqa: E731
+    near = lambda f: -1 if f < 0.02 else 1 if f > 0.98 else 0
     ex, ey = near(fx - cx), near(fy - cy)
     tiles += [t for t in ((cx + ex, cy), (cx, cy + ey), (cx + ex, cy + ey)) if t != (cx, cy)]
     lines, raw = [], {}
@@ -304,16 +392,21 @@ def landform(site: Site, z: int = 14):
                 code = str(hit.get("properties", {}).get("code", ""))
                 group, name = LANDFORM.get(code, ("unknown class", "?"))
                 label = "Landform" if kind == "natural" else "Made ground"
-                lines.append(f"- `data` {label}: {group} ({name}; code {code}). "
-                             f"— 出典：国土地理院 ベクトルタイル「地形分類（{'自然地形' if kind == 'natural' else '人工地形'}）」, {url}")
+                lines.append(
+                    f"- `data` {label}: {group} ({name}; code {code}). "
+                    f"— 出典：国土地理院 ベクトルタイル「地形分類（{'自然地形' if kind == 'natural' else '人工地形'}）」, {url}"
+                )
                 break
     if not any(x.startswith("- `data` Landform") for x in lines):
-        lines.insert(0, f"- `data` Landform: not mapped at this point. — 出典：国土地理院 ベクトルタイル「地形分類」, "
-                        f"{GSI}/{LANDFORM_LAYERS[0][0]}/{z}/{cx}/{cy}.geojson")
+        lines.insert(
+            0,
+            f"- `data` Landform: not mapped at this point. — 出典：国土地理院 ベクトルタイル「地形分類」, "
+            f"{GSI}/{LANDFORM_LAYERS[0][0]}/{z}/{cx}/{cy}.geojson",
+        )
     return lines, raw
 
 
-def faults(site: Site):
+def faults(site: Point):
     """The nearest active fault line, searched close first (finer), then wider."""
     src = f"— 出典：国土地理院 活断層図（都市圏活断層図）, {GSI}/afm/{{z}}/{{x}}/{{y}}.png"
     raw, seen_any = {"searched": []}, False
@@ -328,22 +421,28 @@ def faults(site: Site):
         if hits:
             break
     if not seen_any:
-        return [f"- `data` Active faults: no 活断層図 sheet covers this area (it maps the faults near cities only). {src}"], raw
+        return [
+            f"- `data` Active faults: no 活断層図 sheet covers this area (it maps the faults near cities only). {src}"
+        ], raw
     raw["nearest"] = [{"m": round(m), "direction": d} for m, d, _ in hits]
     if not hits:
         return [f"- `data` Active faults: no fault line on the 活断層図 within {reach}. {src}"], raw
     said = f"nearest fault line {distance(hits[0][0])} {hits[0][1]}"
     if len(hits) > 1:
         said += f"; on the other side {distance(hits[1][0])} {hits[1][1]}"
-    return [f"- `data` Active faults: {said} (an estimate: red lines read by colour from the map image, searched {reach} round; the tiles carry no fault names). {src}"], raw
+    return [
+        f"- `data` Active faults: {said} (an estimate: red lines read by colour from the map image, searched {reach} round; the tiles carry no fault names). {src}"
+    ], raw
 
 
-def _zone(site: Site, layers: list[tuple[str, str]], what: str):
+def _zone(site: Point, layers: list[tuple[str, str]], what: str):
     m_px = metres_per_px(site.lat, HAZARD_Z)
     reach = distance(HAZARD_R * 256 * m_px)
     inside, near, raw = [], None, {}
     for layer, name in layers:
-        urls, px, py = _around(site.lat, site.lon, HAZARD_Z, HAZARD_R, lambda z, x, y, l=layer: f"{PORTAL}/{l}/{z}/{x}/{y}.png")
+        urls, px, py = _around(
+            site.lat, site.lon, HAZARD_Z, HAZARD_R, lambda z, x, y, l=layer: f"{PORTAL}/{l}/{z}/{x}/{y}.png"
+        )
         mask, seen = _mosaic(urls, painted)
         hits = nearest(mask, px, py, m_px)
         here = bool(mask[int(py), int(px)])
@@ -356,11 +455,14 @@ def _zone(site: Site, layers: list[tuple[str, str]], what: str):
     if inside:
         return f"- `data` {what}: the field is INSIDE one ({', '.join(inside)}). {src}", raw
     if near:
-        return f"- `data` {what}: the field is outside; nearest {distance(near[0])} {near[1]} ({near[2]}). {src}", raw
+        return (
+            f"- `data` {what}: the field is outside; nearest {distance(near[0])} {near[1]} ({near[2]}). {src}",
+            raw,
+        )
     return f"- `data` {what}: the field is outside; none within {reach}. {src}", raw
 
 
-def hazards(site: Site):
+def hazards(site: Point):
     sediment, raw1 = _zone(site, SEDIMENT, "土砂災害警戒区域")
     flood, raw2 = _zone(site, [(FLOOD, "想定最大規模")], "洪水浸水想定区域")
     return [sediment, flood], {**raw1, **raw2, "zoom": HAZARD_Z}
@@ -379,11 +481,16 @@ def _dms(deg: float) -> str:
 
 def _catalogue(page: str) -> tuple[list[tuple[tuple[int, int, int, int], str]], dict[str, dict]]:
     """The index map's rectangles (x1, y1, x2, y2; code) and the published sheets by code."""
-    rects = [(tuple(map(int, m[:4])), m[4]) for m in
-             re.findall(r'<area shape="rect" coords="(\d+),(\d+),(\d+),(\d+)" href="#(\d+)"', page)]
+    rects = [
+        (tuple(map(int, m[:4])), m[4])
+        for m in re.findall(r'<area shape="rect" coords="(\d+),(\d+),(\d+),(\d+)" href="#(\d+)"', page)
+    ]
     sheets = {}
     for row in page.split("<tr>"):
-        m = re.search(r'id="(\d+)" class="group1" title="5万分の1地質図幅\s+(\d+)\s*［([^］]+)］-(\d+)\s*「([^」]+)」', row)
+        m = re.search(
+            r'id="(\d+)" class="group1" title="5万分の1地質図幅\s+(\d+)\s*［([^］]+)］-(\d+)\s*「([^」]+)」',
+            row,
+        )
         if not m:
             continue
         year = re.search(r"発行年：(\d{4})", row)
@@ -392,14 +499,19 @@ def _catalogue(page: str) -> tuple[list[tuple[tuple[int, int, int, int], str]], 
         pdf = max(pdfs, key=lambda u: ("_V" in u, "-L" not in u), default=None)
         elsewhere = re.search(r'説明書\s*（<a href="([^"]+)"', row)  # Hokkaido: at 道総研
         jpg = re.search(r"url=(/data/50KGM/JPG/[^\"]+\.jpg)", row)
-        sheets[m[1]] = {"region": m[2], "region_name": m[3], "no": m[4], "name": m[5].strip(),
-                        "year": year[1] if year else None,
-                        "report": f"https://www.gsj.jp{pdf}" if pdf else elsewhere[1] if elsewhere else None,
-                        "map": f"https://www.gsj.jp{jpg[1]}" if jpg else None}
+        sheets[m[1]] = {
+            "region": m[2],
+            "region_name": m[3],
+            "no": m[4],
+            "name": m[5].strip(),
+            "year": year[1] if year else None,
+            "report": f"https://www.gsj.jp{pdf}" if pdf else elsewhere[1] if elsewhere else None,
+            "map": f"https://www.gsj.jp{jpg[1]}" if jpg else None,
+        }
     return rects, sheets
 
 
-def sheet(site: Site):
+def sheet(site: Point):
     """The 1:50,000 geological map sheet the point is on, from the 産総研 catalogue,
     and where its report is. The point's formation name ("terrace deposits") does
     not say what rock the gravels are; the report's text does."""
@@ -426,17 +538,31 @@ def sheet(site: Site):
         if s is None:
             region = next(iter(sheets.values()), {})
             label = f"{int(code[:2])}［{region.get('region_name', '?')}］-{code[2:]}"
-            return [f"{head} No 1:50,000 geological map is published for this sheet ({label}; {cell}), "
-                    f"so there is no report to read. {src}"], raw
+            return [
+                (
+                    f"{head} No 1:50,000 geological map is published for this sheet ({label}; {cell}), "
+                    f"so there is no report to read. {src}"
+                )
+            ], raw
         label = f"{s['name']}, 5万分の1地質図幅 {s['region']}［{s['region_name']}］-{s['no']}"
         if s["report"]:
-            return [f"{head} The 1:50,000 report {label} ({s['year']}) describes the rocks and deposits of this "
-                    f"sheet ({cell}); read its section on the unit at this point. {src}, {s['report']}"], raw
-        return [f"{head} The 1:50,000 map {label} ({s['year']}) is published without a report online; "
-                f"its legend names the units ({cell}). {src}" + (f", {s['map']}" if s["map"] else "")], raw
-    return [f"{head} This point ({cell}) is not on the 産総研 catalogue's 1:50,000 index maps "
+            return [
+                (
+                    f"{head} The 1:50,000 report {label} ({s['year']}) describes the rocks and deposits of this "
+                    f"sheet ({cell}); read its section on the unit at this point. {src}, {s['report']}"
+                )
+            ], raw
+        return [
+            f"{head} The 1:50,000 map {label} ({s['year']}) is published without a report online; "
+            f"its legend names the units ({cell}). {src}" + (f", {s['map']}" if s["map"] else "")
+        ], raw
+    return [
+        (
+            f"{head} This point ({cell}) is not on the 産総研 catalogue's 1:50,000 index maps "
             f"(the islands' pages are not read). — 出典：産総研地質調査総合センター 地質図カタログ, "
-            f"https://www.gsj.jp/Map/JP/geology4.html"], raw
+            f"https://www.gsj.jp/Map/JP/geology4.html"
+        )
+    ], raw
 
 
 def ring_area_m2(ring: list) -> float:
@@ -455,53 +581,85 @@ def polygon_area_m2(geometry: dict) -> float:
 
 
 def _fude(params: dict) -> tuple[str, list[dict]]:
-    url = FUDE + "?" + urllib.parse.urlencode({**params, "geometryType": "esriGeometryPoint", "inSR": 4326,
-                                               "spatialRel": "esriSpatialRelIntersects", "outSR": 4326,
-                                               "f": "geojson"})
+    url = (
+        FUDE
+        + "?"
+        + urllib.parse.urlencode(
+            {
+                **params,
+                "geometryType": "esriGeometryPoint",
+                "inSR": 4326,
+                "spatialRel": "esriSpatialRelIntersects",
+                "outSR": 4326,
+                "f": "geojson",
+            }
+        )
+    )
     data = _json(url)
     if not isinstance(data, dict) or "error" in data:
         raise RuntimeError(f"筆ポリゴン: {(data or {}).get('error', {}).get('message', 'no answer')}")
     return url, data.get("features", [])
 
 
-def parcel(site: Site):
+def parcel(site: Point):
     """The 筆ポリゴン the point lies in, and the parcels within 100 m of it."""
     point = f"{site.lon},{site.lat}"
     url, here = _fude({"geometry": point, "outFields": "*"})
-    url_near, near = _fude({"geometry": point, "distance": FUDE_NEAR_M, "units": "esriSRUnit_Meter",
-                            "outFields": "polygon_uuid,land_type,issue_year", "returnGeometry": "false"})
+    url_near, near = _fude(
+        {
+            "geometry": point,
+            "distance": FUDE_NEAR_M,
+            "units": "esriSRUnit_Meter",
+            "outFields": "polygon_uuid,land_type,issue_year",
+            "returnGeometry": "false",
+        }
+    )
     hit = here[0] if here else None
     props = (hit or {}).get("properties", {})
-    others = [f["properties"] for f in near if f["properties"].get("polygon_uuid") != props.get("polygon_uuid")]
+    others = [
+        f["properties"] for f in near if f["properties"].get("polygon_uuid") != props.get("polygon_uuid")
+    ]
     kinds = [LAND_TYPE.get(p.get("land_type"), "?") for p in others]
     split = ", ".join(f"{kinds.count(k)} {k}" for k in ("田", "畑", "?") if kinds.count(k))
-    around = f"within {FUDE_NEAR_M} m, {len(others)} {'other ' if hit else ''}parcels" + (f" ({split})" if split else "")
+    around = f"within {FUDE_NEAR_M} m, {len(others)} {'other ' if hit else ''}parcels" + (
+        f" ({split})" if split else ""
+    )
     years = [p.get("issue_year") for p in [props, *others] if p.get("issue_year")]
     year = years[0] if years else re.search(r"_(\d{4})/", FUDE)[1]  # the release the service is
     used = date.today()
-    src = (f"— 出典：「筆ポリゴンデータ（{year}年度公開）」（農林水産省）（{used.year}年{used.month}月{used.day}日に利用）"
-           f"を加工して作成, {FUDE}")
+    src = (
+        f"— 出典：「筆ポリゴンデータ（{year}年度公開）」（農林水産省）（{used.year}年{used.month}月{used.day}日に利用）"
+        f"を加工して作成, {FUDE}"
+    )
     raw = {"query": url, "parcel": hit, "near_query": url_near, "near": others}
     if hit:
         raw["area_m2"] = round(polygon_area_m2(hit["geometry"]), 1)
         kind = LAND_TYPE.get(props.get("land_type"), f"land_type {props.get('land_type')}")
-        said = (f"the field point lies in a parcel of {raw['area_m2']:.0f} m², read as {kind} in "
-                f"{props.get('edit_year')} (id {props.get('polygon_uuid')}); {around}")
+        said = (
+            f"the field point lies in a parcel of {raw['area_m2']:.0f} m², read as {kind} in "
+            f"{props.get('edit_year')} (id {props.get('polygon_uuid')}); {around}"
+        )
     else:
         said = f"the field point lies in no parcel (land outside the 面積調査, such as a garden); {around}"
-    nav = (f"- `reference` 全国農地ナビ (eMAFF農地ナビ): the 農業委員会's farmland map, with the 農振 zoning and "
-           f"whether a parcel is idle; it takes no coordinates in a link, so search the address above. "
-           f"— 農林水産省, {NOUCHI_NAVI}")
+    nav = (
+        f"- `reference` 全国農地ナビ (eMAFF農地ナビ): the 農業委員会's farmland map, with the 農振 zoning and "
+        f"whether a parcel is idle; it takes no coordinates in a link, so search the address above. "
+        f"— 農林水産省, {NOUCHI_NAVI}"
+    )
     return [f"- `data` Parcel (筆ポリゴン): {said}. {FUDE_CAVEAT}. {src}", nav], raw
 
 
 def legend(js: str) -> dict[tuple[int, int, int], tuple[str, str, str]]:
     """figureRGB.js: [r, g, b, "code", "name", "explanation"] per soil class."""
-    return {(int(r), int(g), int(b)): (code, name, text.strip()) for r, g, b, code, name, text in
-            re.findall(r'\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\]', js)}
+    return {
+        (int(r), int(g), int(b)): (code, name, text.strip())
+        for r, g, b, code, name, text in re.findall(
+            r'\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\]', js
+        )
+    }
 
 
-def soil(site: Site):
+def soil(site: Point):
     """The soil class at the point on the 日本土壌インベントリー soil map. The site
     picks the nearest legend colour to what is under a click; neighbouring classes
     differ by one unit of one channel, so only an exact match counts here."""
@@ -511,7 +669,9 @@ def soil(site: Site):
     src = f"— 出典：農研機構、日本土壌インベントリー (CC BY 4.0), {url}"
     data = get_bytes(url)
     if data is None:
-        return [f"- `data` Soil type: the soil map has no tile here (outside its coverage). {src}"], {"tile": url}
+        return [f"- `data` Soil type: the soil map has no tile here (outside its coverage). {src}"], {
+            "tile": url
+        }
     js = (get_bytes(SOIL_LEGEND) or b"").decode("utf-8", "replace")
     classes = legend(js)
     if not classes:
@@ -522,9 +682,17 @@ def soil(site: Site):
     if px[3] == 0:
         return [f"- `data` Soil type: not mapped at this point (no colour on the soil map). {src}"], raw
     if rgb not in classes:
-        return [f"- `data` Soil type: the map's colour here, RGB {rgb}, is not in its legend; not guessed. "
-                f"Look at the map: {view} {src}"], raw
+        return [
+            (
+                f"- `data` Soil type: the map's colour here, RGB {rgb}, is not in its legend; not guessed. "
+                f"Look at the map: {view} {src}"
+            )
+        ], raw
     code, name, text = classes[rgb]
     raw["class"] = {"code": code, "name": name, "explanation": text}
-    return [f"- `data` Soil type: {name} ({code}). {text} The soil map contains errors (誤差を含む), "
-            f"read from the map colour at the point. {src}"], raw
+    return [
+        (
+            f"- `data` Soil type: {name} ({code}). {text} The soil map contains errors (誤差を含む), "
+            f"read from the map colour at the point. {src}"
+        )
+    ], raw

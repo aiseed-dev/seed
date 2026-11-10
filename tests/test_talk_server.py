@@ -27,7 +27,7 @@ JPEG = b"\xff\xd8\xff\xe0" + b"\0" * 100
 
 
 @pytest.fixture(autouse=True)
-def no_fieldnotes(monkeypatch):
+def no_lookup(monkeypatch):
     monkeypatch.setattr(L, "_load", lambda: None)
 
 

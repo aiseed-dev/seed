@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """照会の data 行を本人の言語（日本語）にする（設計書 §7.2）。
 
-fieldnotes-farm の照会は、決まった英語の枠（"Elevation 6.9 m (DEM: …)"、"the field is outside; …" など）に
+照会の元（seed.sources）は、決まった英語の枠（"Elevation 6.9 m (DEM: …)"、"the field is outside; …" など）に
 日本の資料の語をはめて返す。本人の言語が日本語のときは、その枠だけを日本語に置き換える。資料の語
 （地形分類の名、土壌の名と説明、筆ポリゴンの注意の中の語）と出典はそのまま。枠に合わない行は英語の
-まま通す（捨てない）。fieldnotes-farm は PyPI の 0.2.0（2026-11-05 公開）に固定なので、枠の文はこちらで持つ。
+まま通す（捨てない）。枠を変えたら、ここの規則とテスト（tests/test_lookup_ja.py）も変える。
 """
 
 from __future__ import annotations

@@ -29,7 +29,7 @@ READ = [Line("overall", "草が大半", 0.8), Line("soil_surface", "地表は見
 
 
 @pytest.fixture(autouse=True)
-def no_fieldnotes(monkeypatch):
+def no_lookup(monkeypatch):
     monkeypatch.setattr(L, "_load", lambda: None)
     L.clear_cache()
     yield

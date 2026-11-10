@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""座標からの照会（設計書 §2.2、§7.2）。fieldnotes-farm があれば使い、無ければ空の data。
+"""座標からの照会（設計書 §2.2、§7.2）。元の資料は `seed.sources`（seed-farm[lookup] が入っていれば使え、無ければ空の data）。
 
-fieldnotes-farm は同じ作者の別の包みで、PyPI の 0.2.0（2026-11-05 公開）に固定する。ここでは座標から
-呼べる照会の関数（fieldnotes.lookup）だけを使う（モデルを使う部分は呼ばない）。結果は `- <key>: <text>（出典: <名前>、確認日 <日>）` の
-data 行にする。本人の言語が日本語なら、英語の枠だけを日本語にする（`lookup_ja`）。
+結果は `- <key>: <text>（出典: <名前>、確認日 <日>）` の data 行にする。本人の言語が日本語なら、英語の枠だけを日本語にする（`lookup_ja`）。
 照会はネットに出るので、座標を小数 3 桁に丸めた鍵で 24 時間メモリに置く（置くのは照会の元の行で、
 言語ごとの文はそのつど作る）。元の座標はどこにも書かない。
 """
@@ -22,7 +20,7 @@ from .prompts import clean_text
 
 CACHE_SECONDS = 24 * 3600
 WALL_SECONDS = 40  # 一回の照会に待つ長さ。遅い元は落とす
-# (fieldnotes の名前, data 行の key, 日本だけか)。周りの岩（rocks_jp）と地質図カタログ（sheet_jp）は
+# (seed.sources の名前, data 行の key, 日本だけか)。周りの岩（rocks_jp）と地質図カタログ（sheet_jp）は
 # 一回に何十も問い合わせるので使わない。Wikipedia の近くの記事も数が多いので使わない
 USED = (
     ("address_jp", "place_name", True),
@@ -43,19 +41,18 @@ JP_BOX = (20.0, 46.0, 122.0, 154.0)  # 日本の照会元を使う範囲（緯�
 FN_LINE_RE = re.compile(r"^- `(?P<kind>data|reference)` (?P<text>.+?)\s+— (?P<src>.+)$")
 URL_TAIL_RE = re.compile(r",?\s*https?://\S+$")
 
-Raw = tuple[str, str, str]  # (data 行の key, fieldnotes の一行, 出典の名の代わり)
+Raw = tuple[str, str, str]  # (data 行の key, 元の一行, 出典の名の代わり)
 _cache: dict[tuple[float, float], tuple[float, str, list[Raw]]] = {}
 _lock = threading.Lock()
 
 
 def _load():
-    """fieldnotes から (Site, {名前: 関数}, {名前: 出典名}) を取る。無ければ None。"""
+    """seed.sources から (Point, {名前: 関数}, {名前: 出典名}) を取る。部品（numpy、pillow）が無ければ None。"""
     try:
-        from fieldnotes import lookup as fl  # type: ignore[import-not-found]
-        from fieldnotes.site import Site  # type: ignore[import-not-found]
-    except Exception:  # noqa: BLE001 — 任意の依存。無い・壊れているときは照会しないだけ
+        from .sources import Point, world
+    except ImportError:  # seed-farm[lookup] が入っていない。照会しないだけ
         return None
-    return Site, dict(fl.SOURCES), dict(getattr(fl, "NAMES", {}))
+    return Point, dict(world.SOURCES), dict(world.NAMES)
 
 
 def available() -> bool:
@@ -68,7 +65,7 @@ def in_japan(lat: float, lon: float) -> bool:
 
 
 def to_line(key: str, fn_line: str, fallback_source: str, day: str, language: str = "en") -> R.Line | None:
-    """fieldnotes の一行 → seed の data 行。出典の取れない行は捨てる。日本語なら英語の枠を置き換える。"""
+    """元の一行 → seed の data 行。出典の取れない行は捨てる。日本語なら英語の枠を置き換える。"""
     m = FN_LINE_RE.match(fn_line.strip())
     if not m:
         return None
@@ -87,8 +84,8 @@ def _fetch(lat: float, lon: float) -> list[Raw]:
     loaded = _load()
     if loaded is None:
         return []
-    site_cls, sources, names = loaded
-    site = site_cls(lat=lat, lon=lon, country="JP" if in_japan(lat, lon) else "")
+    point_cls, sources, names = loaded
+    site = point_cls(lat=lat, lon=lon, country="JP" if in_japan(lat, lon) else "")
     jp = site.country == "JP"
     plan = [(name, key) for name, key, jp_only in USED if name in sources and (jp or not jp_only)]
     if jp:
@@ -109,7 +106,7 @@ def _fetch(lat: float, lon: float) -> list[Raw]:
 
 
 def data_lines(lat: float, lon: float, language: str = "en") -> list[R.Line]:
-    """座標 → 本人の言語の data 行。fieldnotes が無ければ []。同じ 3 桁の座標は 24 時間使い回す。"""
+    """座標 → 本人の言語の data 行。照会の部品が無ければ []。同じ 3 桁の座標は 24 時間使い回す。"""
     k = (round(float(lat), 3), round(float(lon), 3))
     now = time.monotonic()
     with _lock:

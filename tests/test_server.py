@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""サーバーのテスト。Claude は呼ばない（read.call を差し替える）。fieldnotes も差し替える。"""
+"""サーバーのテスト。Claude は呼ばない（read.call を差し替える）。照会の元（lookup._load）も差し替える。"""
 
 import json
 import re
 import sys
-import types
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,7 +44,7 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @pytest.fixture(autouse=True)
-def no_fieldnotes(monkeypatch):
+def no_lookup(monkeypatch):
     monkeypatch.setattr(L, "_load", lambda: None)
     L.clear_cache()
     yield
@@ -376,7 +375,7 @@ def test_read_budget_limit(settings, calls):
 
 
 def test_read_with_center_adds_data_lines(settings, calls, monkeypatch):
-    monkeypatch.setattr(L, "_load", fake_fieldnotes)
+    monkeypatch.setattr(L, "_load", fake_sources)
     body = post_read(client_for(settings), center="34.0512,134.2534").json()
     assert body["data"][0]["key"] == "elevation"
     assert "<data>\n- elevation: Elevation 12 m" in calls.kwargs[0]["messages"][0]["content"][-1]["text"]
@@ -386,7 +385,7 @@ def test_read_with_center_adds_data_lines(settings, calls, monkeypatch):
 # ---------------------------------------------------------------- 照会
 
 
-def fake_fieldnotes():
+def fake_sources():
     class Site:
         def __init__(self, lat=None, lon=None, country=""):
             self.lat, self.lon, self.country = lat, lon, country
@@ -415,7 +414,7 @@ seen: list[int] = []
 
 
 def test_lookup_lines_cache_and_failures(monkeypatch):
-    monkeypatch.setattr(L, "_load", fake_fieldnotes)
+    monkeypatch.setattr(L, "_load", fake_sources)
     seen.clear()
     lines = L.data_lines(34.05123, 134.25341)
     assert [x.key for x in lines] == ["elevation", "soil"]  # 日本では世界の粗い地図と Wikipedia は使わない
@@ -429,30 +428,27 @@ def test_lookup_lines_cache_and_failures(monkeypatch):
     assert [x.key for x in world] == ["elevation"] and "Open-Meteo" in world[0].text
 
 
-def test_lookup_with_fake_fieldnotes_modules(monkeypatch):
-    """本物の _load が fieldnotes.lookup と fieldnotes.site を読むこと。"""
+def test_lookup_reads_seed_sources(monkeypatch):
+    """本物の _load が seed.sources を読み、網に出るのは world.get_json だけであること。"""
     monkeypatch.undo()
-    pkg = types.ModuleType("fieldnotes")
-    fl = types.ModuleType("fieldnotes.lookup")
-    site = types.ModuleType("fieldnotes.site")
-    site.Site = fake_fieldnotes()[0]
-    fl.SOURCES = {"elevation": lambda s: (["- `data` Elevation 3 m. — Open-Meteo, https://z"], {})}
-    fl.NAMES = {}
-    pkg.lookup, pkg.site = fl, site
-    for name, mod in (("fieldnotes", pkg), ("fieldnotes.lookup", fl), ("fieldnotes.site", site)):
-        monkeypatch.setitem(sys.modules, name, mod)
+    from seed.sources import world
+
+    asked = []
+    monkeypatch.setattr(world, "get_json", lambda url, **kw: asked.append(url) or {"elevation": [3.0]})
+    monkeypatch.setitem(world.SOURCES, "historic", lambda s: ([], {}))
     L.clear_cache()
     assert L.available()
-    assert L.data_lines(-33.9, 18.4)[0].text.startswith("Elevation 3 m（出典: Open-Meteo、")
+    assert L.data_lines(-33.9, 18.4)[0].text.startswith("Elevation 3 m（出典: Open-Meteo elevation API")
+    assert any("open-meteo" in u for u in asked)
 
 
 def test_api_lookup(settings, monkeypatch):
     c = client_for(settings)
     assert c.get("/api/lookup", params={"lat": 34.05, "lon": 134.25}).json() == {
         "data": [],
-        "note": "このサーバーには照会（fieldnotes-farm）が無い",
+        "note": "このサーバーには照会の部品（seed-farm[lookup]）が無い",
     }
-    monkeypatch.setattr(L, "_load", fake_fieldnotes)
+    monkeypatch.setattr(L, "_load", fake_sources)
     assert c.get("/health").json()["lookup"] is True
     data = c.get("/api/lookup", params={"lat": 34.05, "lon": 134.25}).json()["data"]
     assert data[0]["key"] == "elevation" and set(data[0]) == {"key", "text"}

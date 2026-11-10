@@ -3,6 +3,7 @@
 import json
 
 from fieldnotes import cli, lookup
+from seed.sources import world
 
 ANSWERS = {
     "open-meteo.com": {"elevation": [5.0]},
@@ -28,7 +29,7 @@ def init(tmp_path, country="KE"):
 
 
 def test_lookup_writes_sourced_lines(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(lookup, "get_json", fake)
+    monkeypatch.setattr(world, "get_json", fake)
     init(tmp_path)
     assert cli.main(["--root", str(tmp_path), "lookup"]) == 0
     text = (tmp_path / "records" / "lookup.md").read_text()
@@ -42,7 +43,7 @@ def test_lookup_writes_sourced_lines(tmp_path, monkeypatch, capsys):
 
 
 def test_a_source_that_is_down_is_named_not_fatal(tmp_path, monkeypatch):
-    monkeypatch.setattr(lookup, "get_json", fake)
+    monkeypatch.setattr(world, "get_json", fake)
     init(tmp_path, "JP")
     lookup.lookup(tmp_path / "records")
     text = (tmp_path / "records" / "lookup.md").read_text()
@@ -51,7 +52,7 @@ def test_a_source_that_is_down_is_named_not_fatal(tmp_path, monkeypatch):
 
 def test_search_near_the_farm_and_save(tmp_path, monkeypatch, capsys):
     asked = []
-    monkeypatch.setattr(lookup, "get_json", lambda url, data=None, **kw: asked.append((url, data)) or fake(url))
+    monkeypatch.setattr(world, "get_json", lambda url, data=None, **kw: asked.append((url, data)) or fake(url))
     init(tmp_path)
     lookup.lookup(tmp_path / "records")
     capsys.readouterr()
@@ -63,6 +64,6 @@ def test_search_near_the_farm_and_save(tmp_path, monkeypatch, capsys):
 
 def test_busy_wikipedia_is_retried(monkeypatch):
     answers = iter([{"error": {"code": "cirrussearch-too-busy-error"}}, {"query": {}}])
-    monkeypatch.setattr(lookup, "get_json", lambda url, **kw: next(answers))
-    monkeypatch.setattr(lookup.time, "sleep", lambda s: None)
-    assert lookup._wiki("en", action="query") == {"query": {}}
+    monkeypatch.setattr(world, "get_json", lambda url, **kw: next(answers))
+    monkeypatch.setattr(world.time, "sleep", lambda s: None)
+    assert world._wiki("en", action="query") == {"query": {}}

@@ -679,7 +679,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return _error(400, "bad_center")
         if not L.available():
-            return {"data": [], "note": "このサーバーには照会（fieldnotes-farm）が無い"}
+            return {"data": [], "note": "このサーバーには照会の部品（seed-farm[lookup]）が無い"}
         try:
             limits.take_lookup(_client_ip(request))
         except LimitReached as e:

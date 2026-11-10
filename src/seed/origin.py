@@ -4,8 +4,7 @@
 座標から、公開の地図と空中写真のタイルを引いて順に並べ、字幕（place.md の data 行の事実）と出典を付ける。
 AI は呼ばない。絵も作らない（作れば出典の無い物になる。作者 2026-11-04）。
 
-- タイルの道は fieldnotes-farm 0.2.0 の lookup_jp.py（GSI、PORTAL、SOIL_TILE）と同じ。fieldnotes は任意の依存なので、
-  ここに写して持つ。
+- タイルの道（GSI、PORTAL）は照会（seed/sources/jp.py）と同じ物を使う。
 - 取り方は差し替えられる（Fetch: url → bytes、404 は None、通信の失敗は例外）。テストは偽のタイルを渡す。
 - 出力は本人のフォルダーの中だけ（origin/<日>/、タイルのキャッシュは origin/tiles/）。座標は書かない。
 - 文は app/strings.py（ja と en）。data 行の英語の枠は lookup_ja で日本語にする。
@@ -26,9 +25,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from . import __version__, lookup_ja
+from . import lookup_ja
 from . import records as R
 from .app.strings import s
+from .sources import GSI, PORTAL, USER_AGENT
 
 TILE = 256
 EARTH_R = 6378137.0  # Web メルカトルの球の半径
@@ -42,10 +42,7 @@ SECONDS = 3.0
 FPS = 24
 FADE = 0.5  # mp4 の場面の間の重ね（秒）
 TERMS_CHECKED = "2026-11-04"  # 利用の条件を Claude が読んだ日
-USER_AGENT = f"seed/{__version__} (+https://github.com/aiseed-dev/seed)"
 
-GSI = "https://cyberjapandata.gsi.go.jp/xyz"
-PORTAL = "https://disaportaldata.gsi.go.jp/raster"
 SOIL = "https://soil-inventory.rad.naro.go.jp/tile/figure"
 
 FONTS = (

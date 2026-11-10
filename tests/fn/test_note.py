@@ -8,6 +8,7 @@ from PIL import Image
 from fieldnotes import cli, llm, lookup, mcp_server, note
 from fieldnotes.llm import Backend
 from fieldnotes.site import Site
+from seed.sources import world
 
 DAY = date(2026, 11, 2)
 
@@ -79,8 +80,8 @@ def test_rocks_around_name_the_first_hard_rock_each_way(monkeypatch):
     def fake(url, data=None, timeout=60, tries=3):
         lat = float(url.split("point=")[1].split(",")[0])
         return schist if lat < 34.08 - 0.025 else plain  # hard rock from 3 km south
-    monkeypatch.setattr(lookup, "get_json", fake)
-    lines, raw = lookup.rocks_japan(Site(lat=34.08, lon=134.445, country="JP"))
+    monkeypatch.setattr(world, "get_json", fake)
+    lines, raw = world.rocks_japan(Site(lat=34.08, lon=134.445, country="JP"))
     assert lines[0].startswith("- `data` 周りの岩（シームレス地質図 V2）: S 3 km, SE 4 km, SW 4 km: 泥質片岩 / 変成岩 / 中生代 白亜紀。")
     assert "none within 15 km to N, NE, E, W, NW" in lines[1] and "does not say which of them the river brought" in lines[1]
     assert len(raw) == 3 + 4 + 4 + 5 * 15

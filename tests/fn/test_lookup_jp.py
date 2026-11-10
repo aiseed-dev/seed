@@ -13,7 +13,9 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from fieldnotes import cli, lookup, lookup_jp
+from fieldnotes import cli, lookup
+from seed.sources import jp as lookup_jp
+from seed.sources import world
 from fieldnotes.site import Site
 
 FIX = Path(__file__).parent / "fixtures" / "lookup_jp_niihama"
@@ -88,7 +90,7 @@ def test_inside_a_zone_is_said_plainly(monkeypatch):
 
 
 def test_lookup_in_japan_writes_place_hazards_and_soil(tmp_path, monkeypatch, recorded):
-    monkeypatch.setattr(lookup, "get_json", lambda url, **kw: {"elevation": [97.0]} if "open-meteo" in url else {})
+    monkeypatch.setattr(world, "get_json", lambda url, **kw: {"elevation": [97.0]} if "open-meteo" in url else {})
     assert cli.main(["--root", str(tmp_path), "init", "--place", "新居浜市, 愛媛県", "--country", "JP",
                      "--lat", str(LAT), "--lon", str(LON)]) == 0
     lookup.lookup(tmp_path / "records")
@@ -108,7 +110,7 @@ def test_a_gsi_server_that_is_down_is_named(tmp_path, monkeypatch):
     def down(url):
         raise urllib.error.URLError("timed out")
     monkeypatch.setattr(lookup_jp, "get_bytes", down)
-    monkeypatch.setattr(lookup, "get_json", lambda url, **kw: {"elevation": [97.0]} if "open-meteo" in url else {})
+    monkeypatch.setattr(world, "get_json", lambda url, **kw: {"elevation": [97.0]} if "open-meteo" in url else {})
     cli.main(["--root", str(tmp_path), "init", "--place", "x", "--country", "JP", "--lat", str(LAT), "--lon", str(LON)])
     lookup.lookup(tmp_path / "records")
     text = (tmp_path / "records" / "lookup.md").read_text()
@@ -119,7 +121,7 @@ def test_a_gsi_server_that_is_down_is_named(tmp_path, monkeypatch):
 
 def test_outside_japan_none_of_this_is_asked(tmp_path, monkeypatch):
     monkeypatch.setattr(lookup_jp, "get_bytes", lambda url: pytest.fail(f"asked {url}"))
-    monkeypatch.setattr(lookup, "get_json", lambda url, **kw: {"elevation": [5.0]} if "open-meteo" in url else {})
+    monkeypatch.setattr(world, "get_json", lambda url, **kw: {"elevation": [5.0]} if "open-meteo" in url else {})
     cli.main(["--root", str(tmp_path), "init", "--place", "Nakuru", "--country", "KE", "--lat", "-0.3", "--lon", "36.07"])
     lookup.lookup(tmp_path / "records")
     assert "国土地理院" not in (tmp_path / "records" / "lookup.md").read_text()

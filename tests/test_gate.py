@@ -37,7 +37,7 @@ PUBLIC = _public()
 
 
 @pytest.fixture(autouse=True)
-def no_fieldnotes(monkeypatch):
+def no_lookup(monkeypatch):
     monkeypatch.setattr(L, "_load", lambda: None)
     L.clear_cache()
     yield
