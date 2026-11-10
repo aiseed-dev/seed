@@ -30,7 +30,7 @@ def app(seedfolder):
 
 
 def test_listed_between_land_and_weather(app):
-    assert [p.name for p in plugins.shipped()] == ["land", "procedure", "weather"]
+    assert [p.name for p in plugins.shipped()] == ["land", "land_checks", "procedure", "weather"]
     (p,) = [p for p in app.plugins if p.name == "procedure"]
     assert p.route == "/p/procedure" and p.title["ja"] == "手続き"
 

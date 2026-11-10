@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""照会の data 行の日本語化（lookup_ja.py）。枠の文は fieldnotes-farm の lookup_jp.py と lookup.py の物。"""
+"""照会の data 行の日本語化（lookup_ja.py）。枠の文は seed/sources の jp.py と world.py の物。"""
 
 from __future__ import annotations
 

@@ -353,7 +353,7 @@ def test_key_errors_never_carry_the_key(monkeypatch, status, word):
 
 def test_read_instructions_are_the_same_on_server_and_device(app, seedfolder, tmp_path, monkeypatch):
     """自分の鍵で読む時と、サーバーの /api/read で、Claude に渡す指示が同じ。"""
-    from seed import photos
+    from seed import fieldctx, photos
     from seed.server import read as RD
 
     path = observe(seedfolder, tmp_path, record=[Line("said", "北の角")])
@@ -398,6 +398,7 @@ def test_read_instructions_are_the_same_on_server_and_device(app, seedfolder, tm
                 date=obs.date,
                 time=obs.time,
                 kind=obs.kind,
+                context="\n".join(fieldctx.lines(app.folder, obs, None)) or None,
             )
         )
     asked = device["messages"][0]["content"][-1]["text"]

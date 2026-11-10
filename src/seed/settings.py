@@ -2,7 +2,7 @@
 """設定 seed.toml（docs/記録の形.md §7）と秘密 credentials.toml の読み書き。
 
 seed.toml の置き場所は記録のフォルダーの中（既定は ~/seed/seed.toml）。無ければ作り、language を決める。
-秘密（token、invite、draw_token、anthropic_key）は記録のフォルダーに置かない（設計書 §5.1）。
+秘密（token、invite、draw_token、anthropic_key、meta_key）は記録のフォルダーに置かない（設計書 §5.1）。
 ~/.config/seed/credentials.toml（許可 600。SEED_CREDENTIALS で場所を変えられる）に分ける。
 seed.toml に古い token / invite があれば credentials へ移して seed.toml から消し、標準エラーに一行知らせる。
 書くのは tomllib が読める素の形だけ（値は文字だけなので、依存を足さずに自分で書く）。
@@ -32,7 +32,7 @@ ENV_SERVER = "SEED_SERVER_URL"
 ENV_CREDENTIALS = "SEED_CREDENTIALS"  # 秘密の置き場を変える（テストや別の人）
 DEFAULT_CREDENTIALS = "~/.config/seed/credentials.toml"
 CREDENTIALS_FILENAME = "credentials.toml"
-SECRETS = ("token", "invite", "draw_token", "anthropic_key")  # seed.toml に書かない欄
+SECRETS = ("token", "invite", "draw_token", "anthropic_key", "meta_key")  # seed.toml に書かない欄
 DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"  # 自分の鍵で呼ぶ時の既定（サーバーの読みと同じ）
 ROUTES = ("local", "key", "server")  # Claude を呼ぶ所: 手元の Claude Code、自分の鍵、サーバー
 
@@ -53,6 +53,7 @@ CREDENTIAL_COMMENTS = {
     "invite": "招待コード（Discord で渡す）。サーバーで読む・公開・一言に要る",
     "draw_token": "seed grow --draw の描く機械（halo の門）の token。Authorization: Bearer で送る",
     "anthropic_key": "自分の Claude の鍵（Anthropic の API の鍵）。アプリが Anthropic の API に直に送るだけ",
+    "meta_key": "Meta の Model API の鍵。写真の覆い％（SAM 3.1）と声の書き取り（Muse Voice Transcribe）だけに使う",
 }
 
 
@@ -76,6 +77,7 @@ class Settings:
     invite: str = ""
     draw_token: str = ""
     anthropic_key: str = _field(default="", repr=False)  # 値を repr（例外の文、ログ）に出さない
+    meta_key: str = _field(default="", repr=False)  # SAM 3.1 と声の書き取り（meta.py）
     extra: dict = _field(default_factory=dict)  # 知らない鍵。消さずに書き戻す
     path: Path | None = _field(default=None, compare=False)
     override_url: str | None = _field(default=None, compare=False)  # この回だけのサーバー。書かない

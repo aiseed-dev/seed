@@ -53,7 +53,7 @@ build_number = 1
 [tool.flet.app]
 path = "src"
 module = "main.py"
-exclude = ["kagi", "seed/server", "seed_farm.egg-info", "fieldnotes"]
+exclude = ["kagi", "seed/server", "seed_farm.egg-info"]
 
 [tool.flet.ios]
 dependencies = ["flet==1.1.0", "flet-camera==1.1.0", "flet-geolocator==1.1.0", "pillow", "httpx", "pyyaml"]

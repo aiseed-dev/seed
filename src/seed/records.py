@@ -793,12 +793,27 @@ class Hypotheses:
         self.lines.append(line)
         return line
 
-    def mark(self, key: str, verdict: str, reason: str | None = None) -> Line:
+    def mark(self, key: str, verdict: str, reason: str | None = None, text: str | None = None) -> Line:
+        """仮説に本人の判定（right は確かめられた、wrong は違った）。text は seed mark と同じ形のため（使わない）。"""
         for i, l in enumerate(self.lines):
             if l.key == key:
                 self.lines[i] = l.marked(verdict, reason)
                 return self.lines[i]
         raise KeyError(f"仮説に無い: {key!r}")
+
+    def mark_expect(self, key: str, verdict: str, reason: str | None = None) -> Line:
+        """見込みに本人の判定。wrong の見込みは写真で確かめない（checks.to_check）。"""
+        for i, l in enumerate(self.expect):
+            if l.key == key:
+                self.expect[i] = l.marked(verdict, reason)
+                return self.expect[i]
+        raise KeyError(f"見込みに無い: {key!r}")
+
+    def say(self, key: str, text: str) -> Line:
+        """本人の行（## Record の note）を足す。"""
+        line = Line("note" if key not in RECORD_KEYS else key, text)
+        self.record.append(line)
+        return line
 
     def open(self) -> list[Line]:
         """まだ確かめられていない（本人が wrong を付けていない）仮説。"""
@@ -1045,6 +1060,14 @@ class Public:
         self.days.setdefault(obs.date, []).extend(lines)
 
 
+CONTEXT_MAX = 8000  # 読みに添える畑の物（fieldctx.py）の長さの上限
+
+
+def clean_context(text: str) -> str:
+    """サーバーが受ける畑の物: 細かい座標らしい物を落とし、長すぎれば切る。"""
+    return FINE_COORD_RE.sub("", text).strip()[:CONTEXT_MAX]
+
+
 def coarse_coord(center: list[float]) -> list[float]:
     """公開用に小数 2 桁（約 1 km）に丸める。"""
     return [round(float(center[0]), 2), round(float(center[1]), 2)]
@@ -1153,6 +1176,25 @@ class Folder:
         return self.root / "plan.md"
 
     @property
+    def hypotheses(self) -> Path:
+        """土地の仮説と、写真に何が見えれば確かめられるか（記録の形 §21）。"""
+        return self.root / "hypotheses.md"
+
+    @property
+    def concepts(self) -> Path:
+        """写真の覆い％を測る名詞（SAM 3.1。記録の形 §22）。"""
+        return self.root / "concepts.md"
+
+    @property
+    def plants(self) -> Path:
+        """優占した草がなぜ優占するかの AI の読み plants/<Genus_species>.md（記録の形 §22）。"""
+        return self.root / "plants"
+
+    def sam_dir(self, obs: Observation) -> Path:
+        """SAM 3.1 が見つけた物を写真に重ねた絵 observations/<id>.sam/。"""
+        return self.observations / (Path(obs.filename).stem + ".sam")
+
+    @property
     def public(self) -> Path:
         return self.root / "public"
 
@@ -1252,6 +1294,19 @@ class Folder:
         if not new:
             return 0
         data += new
+        self.place.write_text(
+            f"## {H_DATA}\n{render_lines(data)}\n\n## {H_RECORD}\n{render_lines(record)}\n", encoding="utf-8"
+        )
+        return len(new)
+
+    def add_place_record(self, lines: list[Line]) -> int:
+        """本人の言葉を place.md の ## Record に足す（無い物だけ）。足した数を返す。"""
+        data, record = self._place_sections()
+        have = {(l.key, l.text) for l in record}
+        new = [l for l in lines if (l.key, l.text) not in have]
+        if not new:
+            return 0
+        record += new
         self.place.write_text(
             f"## {H_DATA}\n{render_lines(data)}\n\n## {H_RECORD}\n{render_lines(record)}\n", encoding="utf-8"
         )

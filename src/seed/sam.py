@@ -1,12 +1,15 @@
-"""Segment a field photo with SAM 3.1 and turn the masks into coverage numbers.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Segment a field photo with SAM 3.1 and turn the masks into coverage numbers (元は fieldnotes の segment.py).
+
+Meta の SAM 3.1 は Claude に無いので、11-11 の一本化の後も Meta の鍵（meta.py）で呼ぶ。鍵が無ければ覆い％は測らない。
 
 SAM 3.1 takes ONE short noun phrase per request and returns a box + mask for
 every instance it finds. We send one request per concept and paint every
 instance into a full-frame union mask, so "coverage" is the share of the
 frame covered by at least one instance of that concept.
 
-    from fieldnotes.segment import segment_concepts
-    result = segment_concepts(Path("photos/north-ridge/2026-10-28_wide.jpg"),
+    from seed.sam import segment_concepts
+    result = segment_concepts(Path("photos/2026-10-28/121701.jpg"),
                               ["weed", "bare soil", "daikon leaf"])
     result.coverage  # {"weed": 61.2, "bare soil": 18.5, "daikon leaf": 20.3}
 
@@ -33,14 +36,13 @@ from meta_sam_parser import (
 from openai import AsyncOpenAI
 from PIL import Image, ImageOps
 
-from .llm import api_key
+from .meta import BASE_URL, api_key
 
 MODEL = "sam-3.1"
 # Measured on a real field photo (2026-10-28): "flower cluster" found 6-7
 # goldenrod heads at 1024 px and none at 1500 or 2048 px. Phone photos are
 # ~4000 px, so SAM always gets a 1024 px copy.
 SAM_SIDE = 1024
-BASE_URL = "https://api.meta.ai/v1"
 
 
 @dataclass
@@ -101,19 +103,22 @@ def _client() -> AsyncOpenAI:
     return AsyncOpenAI(base_url=BASE_URL, api_key=api_key())
 
 
-async def _segment_one(client: AsyncOpenAI, concept: str, image_url: str, width: int, height: int,
-                       confidence: bool = True) -> ConceptResult:
+async def _segment_one(
+    client: AsyncOpenAI, concept: str, image_url: str, width: int, height: int, confidence: bool = True
+) -> ConceptResult:
     stream = await client.responses.create(
         model=MODEL,
         stream=True,
-        input=[{
-            "type": "message",
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": concept},
-                {"type": "input_image", "image_url": image_url},
-            ],
-        }],
+        input=[
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": concept},
+                    {"type": "input_image", "image_url": image_url},
+                ],
+            }
+        ],
         metadata={"include_confidence": "true"} if confidence else None,
     )
     parsed = parse_responses_stream(stream, image_segmentation_format())
@@ -139,12 +144,16 @@ def records_to_concept(concept: str, width: int, height: int, records) -> Concep
             sub = raster[top - b.top : bottom - b.top, left - b.left : right - b.left]
             union[top:bottom, left:right] |= sub
             box = boxes.get(r.object_id)
-            out.instances.append(Instance(
-                object_id=r.object_id,
-                box=(box.left, box.top, box.right, box.bottom) if box else (b.left, b.top, b.right, b.bottom),
-                pixels=int(sub.sum()),
-                confidence=r.confidence,
-            ))
+            out.instances.append(
+                Instance(
+                    object_id=r.object_id,
+                    box=(box.left, box.top, box.right, box.bottom)
+                    if box
+                    else (b.left, b.top, b.right, b.bottom),
+                    pixels=int(sub.sum()),
+                    confidence=r.confidence,
+                )
+            )
     out.union = union
     return out
 
@@ -160,7 +169,9 @@ def segment_concepts(photo: Path, concepts: list[str], max_side: int = SAM_SIDE)
     return asyncio.run(segment_concepts_async(photo, concepts, max_side))
 
 
-def save_overlay(result: SegmentResult, out: Path, colours: dict[str, tuple[int, int, int]] | None = None) -> Path:
+def save_overlay(
+    result: SegmentResult, out: Path, colours: dict[str, tuple[int, int, int]] | None = None
+) -> Path:
     """Write the photo with each concept's union mask tinted, for the record and the demo."""
     im = ImageOps.exif_transpose(Image.open(result.photo)).convert("RGB")
     im.thumbnail((result.width, result.height))

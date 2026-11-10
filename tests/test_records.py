@@ -68,8 +68,8 @@ def test_line_not_a_line():
     assert Line.parse("ただの文") is None
 
 
-def test_line_roundtrip_fieldnotes_examples():
-    # fieldnotes-farm の docs/records.md と同じ文法で書かれた行が読めること
+def test_line_roundtrip_examples_from_fieldnotes():
+    # fieldnotes（11-11 に一本化）の docs/records.md の形で書かれた行が読めること
     for s in [
         "- overall: silvergrass and goldenrod, no crop [0.85]  → farmer: right",
         "- dominant: Solidago altissima [0.9]  → farmer: wrong (it is Miscanthus)",
@@ -109,7 +109,11 @@ def test_candidate_material_keys_between_water_and_change():
 
     i = READING_KEYS.index
     assert i("water") < i("access") < i("sun_slope") < i("surroundings") < i("change") < i("basis")
-    assert PLAN_KEYS[:3] == ("cut", "ground", "sow") and "mix" in PLAN_KEYS and PLAN_KEYS[-1] == "next_to_observe"
+    assert (
+        PLAN_KEYS[:3] == ("cut", "ground", "sow")
+        and "mix" in PLAN_KEYS
+        and PLAN_KEYS[-1] == "next_to_observe"
+    )
 
 
 def test_change_key_sorts_after_water_before_basis():
@@ -609,7 +613,9 @@ def test_tags_key_after_crops_and_ten_states():
     from seed.records import READING_KEYS, TAG_STATES
 
     i = READING_KEYS.index
-    assert i("crops") < i("emerging") < i("tags") < i("zone") < i("water")  # 芽生えと違う所は fieldnotes から（11-11）
+    assert (
+        i("crops") < i("emerging") < i("tags") < i("zone") < i("water")
+    )  # 芽生えと違う所は fieldnotes から（11-11）
     assert len(TAG_STATES["ja"]) == 10 and len(TAG_STATES["en"]) == 10
 
 
@@ -862,7 +868,10 @@ cover_model: sam-3.1
 (none)
 """
     obs = Observation.parse(text)
-    assert obs.coverage == {"vegetation": 91.8, "goldenrod": 0.0} and obs.cover_range["vegetation"] == [80.1, 97.3]
+    assert obs.coverage == {"vegetation": 91.8, "goldenrod": 0.0} and obs.cover_range["vegetation"] == [
+        80.1,
+        97.3,
+    ]
     assert [l.key for l in obs.checks] == ["h3", "h8"] and obs.checks_model == "claude-opus-5-5"
     obs.mark("h3", "right")
     obs.mark("acidity", "wrong", "スギナが少ない")
@@ -883,7 +892,9 @@ def test_hypotheses_add_mark_expect_roundtrip(tmp_path):
     h.add("吉野川の平野の南側の微高地（出典: 本人、2026-10-28）")
     h.add("南に水田が並ぶ", 0.6)
     h.mark("h1", "right")
-    h.set_expect([Line("h1", "holds: 水が溜まらない; fails: 溜まる; visible: yes", 0.6), Line("x", "no")], "m")
+    h.set_expect(
+        [Line("h1", "holds: 水が溜まらない; fails: 溜まる; visible: yes", 0.6), Line("x", "no")], "m"
+    )
     path = tmp_path / "hypotheses.md"
     h.write(path)
     back = Hypotheses.read(path)

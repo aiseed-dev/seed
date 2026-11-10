@@ -153,13 +153,14 @@ class Client:
         date: str | None = None,
         time: str | None = None,
         kind: str | None = None,
+        context: str | None = None,
     ) -> Reading:
         """写真（縮小済みの JPEG）を送り、読みを受ける。previous は同じ場所の前の観察の Markdown。ask は ASKS の語。
 
         names は写真の名（ファイルの名の幹）。送るファイルの名にし、読みの行はこの名で写真を指す。
         field は家のサーバー（設計書 §5.13）で、写真と観察を置く畑の名。
         date・time・kind は観察の前書き（時期と、候補地の読み方のため）。観察が持っている時だけ送る。座標は今まで通り
-        center だけ（サーバーが資料の照会に使い、Claude には渡さない）。
+        center だけ（サーバーが資料の照会に使い、Claude には渡さない）。context は写真の位置の語、覆い％、草の読み（fieldctx.py）。
         """
         if not photos:
             raise ClientError("no_photos", "no photos to read")
@@ -182,6 +183,7 @@ class Client:
             ("date", date),
             ("time", time),
             ("kind", kind),
+            ("context", context),
         ):
             if v:
                 form[k] = v

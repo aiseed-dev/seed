@@ -51,7 +51,7 @@ def put(folder, name, body):
 def test_shipped_land_is_found(app):
     (land,) = [p for p in plugins.load(app.folder) if p.name == "land"]
     assert land.route == "/p/land" and land.title["ja"] == "この土地"
-    assert [p.name for p in app.plugins] == ["land", "procedure", "weather"]
+    assert [p.name for p in app.plugins] == ["land", "land_checks", "procedure", "weather"]
 
 
 def test_own_plugin_comes_after_shipped(app, seedfolder):
@@ -61,6 +61,7 @@ def test_own_plugin_comes_after_shipped(app, seedfolder):
         "/",
         "/photos",
         "/p/land",
+        "/p/land_checks",
         "/p/procedure",
         "/p/weather",
         "/p/harvest",
@@ -81,7 +82,7 @@ def test_broken_plugins_are_skipped(app, seedfolder, caplog):
     put(seedfolder, "ok", GOOD)
     with caplog.at_level(logging.WARNING, logger="seed.app"):
         got = plugins.load(app.folder)
-    assert [p.name for p in got] == ["land", "procedure", "weather", "ok"]
+    assert [p.name for p in got] == ["land", "land_checks", "procedure", "weather", "ok"]
     assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 3
 
 
@@ -99,7 +100,7 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
     other = tmp_path / "other"
     other.mkdir()
     app.open_folder(str(other))
-    assert [p.name for p in app.plugins] == ["land", "procedure", "weather"]
+    assert [p.name for p in app.plugins] == ["land", "land_checks", "procedure", "weather"]
     app2 = App(FakePage(), str(seedfolder))
     assert "harvest" in [p.name for p in app2.plugins]
 
@@ -107,7 +108,14 @@ def test_switching_folders_reloads(app, seedfolder, tmp_path):
 def test_plugins_written_while_running_are_picked_up(app, seedfolder):
     import os
 
-    assert [sc.route for sc in app.screens()] == ["/", "/photos", "/p/land", "/p/procedure", "/p/weather"]
+    assert [sc.route for sc in app.screens()] == [
+        "/",
+        "/photos",
+        "/p/land",
+        "/p/land_checks",
+        "/p/procedure",
+        "/p/weather",
+    ]
     put(seedfolder, "harvest", GOOD)
     app.refresh()
     assert "/p/harvest" in [sc.route for sc in app.screens()]

@@ -207,6 +207,7 @@ def user_content(
     date: str | None = None,
     time: str | None = None,
     kind: str | None = None,
+    field: str | None = None,
 ) -> list[dict]:
     names = photo_names(names, len(photos))
     content: list[dict] = []
@@ -227,6 +228,8 @@ def user_content(
     text += front_text(date, time, kind)
     if record and record.strip():  # 本人の言葉（直した事を含む）を先に
         text += f"\n<record>\n{record.strip()}\n</record>\n{CORRECTION_RULE}\n"
+    if field and field.strip():  # 写真の位置、覆い％、草の読み（fieldctx.py）
+        text += f"\n<field>\n{field.strip()}\n</field>\n"
     text += "\n<data>\n" + ("\n".join(facts) or R.EMPTY) + "\n</data>\n"
     prev = previous_text(previous)
     if prev:
@@ -257,6 +260,7 @@ def read_request(
     date: str | None = None,
     time: str | None = None,
     kind: str | None = None,
+    field: str | None = None,
 ) -> dict:
     """読みの要求の中身（Messages API の形。fallbacks と beta の見出しは呼ぶ側が足す）。サーバーと端末で同じ。"""
     return {
@@ -278,6 +282,7 @@ def read_request(
                     date,
                     time,
                     kind,
+                    field,
                 ),
             }
         ],
@@ -515,6 +520,19 @@ TOOLS = [
     _tool(
         "read_land",
         "この土地の成り立ち（place.md の Data: 土、地形、水の区域、歴史。出典付き）と、本人が確かめた事。",
+    ),
+    _tool(
+        "read_hypotheses",
+        "この畑の土地の仮説（hypotheses.md: h1… と、写真で何が見えれば確かめられるかの見込み、本人の合う／違う）と、"
+        "観察ごとに写真が仮説に何を言ったか（## Checks）。",
+    ),
+    _tool(
+        "add_hypothesis",
+        "本人が言った土地の仮説（地形、地質、水、歴史についての「〜ではないか」）を hypotheses.md に一つ足す。"
+        "本人の言葉で、出典があれば括弧に（例: …（出典: 本人）、…（出典: 石井町史 p.833））。"
+        "あなたの考えは足さない。確かめるのは本人が seed check か「確かめ」の画面で。",
+        {"text": {"type": "string"}},
+        ("text",),
     ),
     _tool(
         "identify_plant",

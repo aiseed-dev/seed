@@ -109,9 +109,23 @@ async def read(
     date: str | None = None,
     time: str | None = None,
     kind: str | None = None,
+    context: str | None = None,
 ) -> Reading:
     body = read_request(
-        model, skill_dir, photos, data, place_data, previous, record, language, ask, names, date, time, kind
+        model,
+        skill_dir,
+        photos,
+        data,
+        place_data,
+        previous,
+        record,
+        language,
+        ask,
+        names,
+        date,
+        time,
+        kind,
+        context,
     )
     msg = await call_mapped(client, **body, **fallback_args(model))
     usage = usage_dict(getattr(msg, "usage", None))

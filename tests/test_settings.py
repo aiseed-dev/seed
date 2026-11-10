@@ -94,6 +94,7 @@ def test_secrets_not_written_to_seed_toml(tmp_path, credentials_in_tmp):
         "invite": "inv-fake-0001",
         "draw_token": "draw-fake-0001",
         "anthropic_key": "sk-fake-key-0001",
+        "meta_key": "",
     }
     again = settings.load(tmp_path / "f")
     assert (again.token, again.invite, again.draw_token) == (s.token, "inv-fake-0001", "draw-fake-0001")

@@ -350,6 +350,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 観察の前書きの date・time・kind（時期と、候補地の読み方のため）。古いアプリは送らないので無くてよい。
         # 座標は Claude に渡さない（center は資料の照会にだけ使う）
         front = {k: str(form.get(k) or "") or None for k in ("date", "time", "kind")}
+        # 写真の位置の語、覆い％、草の読み（fieldctx.py。座標は入らない）。長すぎる物は切る
+        context = R.clean_context(str(form.get("context") or "")) or None
         for k, ok in (
             ("date", R.DATE_RE.fullmatch),
             ("time", R.TIME_RE.fullmatch),
@@ -381,6 +383,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ask=ask,
                 names=[Path(f.filename or "").stem for f in uploads],
                 **front,
+                context=context,
             )
         except RD.ReadError as e:
             limits.spend(e.usage)

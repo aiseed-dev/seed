@@ -353,6 +353,32 @@ def t_read_land(desk: Desk, inp: dict) -> str:
     return "\n".join(out)
 
 
+def t_read_hypotheses(desk: Desk, inp: dict) -> str:
+    h = R.Hypotheses.read(desk.folder.hypotheses)
+    out = ["## Hypotheses", R.render_lines(h.lines)]
+    if h.expect:
+        out += ["", f"## Expect ({h.model})", R.render_lines(h.expect)]
+    checks = []
+    for path in desk.folder.list_observations():
+        obs = Observation.read(path)
+        checks += [f"{path.stem} {l.render()}" for l in obs.checks]
+    if checks:
+        out += ["", "## 観察ごとの Checks", *checks]
+    return "\n".join(out)
+
+
+def t_add_hypothesis(desk: Desk, inp: dict) -> str:
+    text = " ".join(str(inp.get("text") or "").split())[:500]
+    if not text:
+        raise ToolError("text が空")
+    h = R.Hypotheses.read(desk.folder.hypotheses)
+    if not desk.folder.hypotheses.exists():
+        h.language = desk.settings.language
+    line = h.add(text)
+    h.write(desk.folder.hypotheses)
+    return "足した: " + line.render()
+
+
 def t_identify_plant(desk: Desk, inp: dict) -> str:
     from . import identify
     from .cli import identify_photos
@@ -437,6 +463,8 @@ TOOL_RUN = {
     "read_plan": t_read_plan,
     "write_plan": t_write_plan,
     "read_land": t_read_land,
+    "read_hypotheses": t_read_hypotheses,
+    "add_hypothesis": t_add_hypothesis,
     "identify_plant": t_identify_plant,
     "draft_public": t_draft_public,
 }
@@ -573,7 +601,7 @@ def run(
 
 def read_with_key(st: Settings, folder: Folder, obs: Observation, skill_dir: Path | None):
     """観察を本人の鍵で読み、client.Reading を返す。指示はサーバーの /api/read と同じ（prompts.read_request）。"""
-    from . import photos
+    from . import fieldctx, photos
     from .client import Reading
 
     if not st.anthropic_key:
@@ -594,6 +622,7 @@ def read_with_key(st: Settings, folder: Folder, obs: Observation, skill_dir: Pat
         date=obs.date,
         time=obs.time,
         kind=obs.kind,
+        field="\n".join(fieldctx.lines(folder, obs, prev)),
     )
     data = post(st.anthropic_key, with_fallbacks(body, st.model))
     stop = data.get("stop_reason")

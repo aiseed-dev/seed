@@ -32,6 +32,7 @@ from .records import (
     READING_KEYS,
     RECORD_KEYS,
     Folder,
+    Hypotheses,
     Line,
     Mark,
     Observation,
@@ -258,7 +259,7 @@ def read_on_server(
     家のサーバー（seed home。設計書 §5.13）には、写真を縮めずに（sources があれば撮った元を）送り、
     畑の名を添える。写真と観察の本物は PC に置かれる。
     """
-    from . import client, photos
+    from . import client, fieldctx, photos
 
     center = obs.location["center"] if obs.location else None
     prev = folder.previous_observation(obs)  # 同じ場所の直前の観察。あれば読みに change が付く
@@ -278,6 +279,7 @@ def read_on_server(
             date=obs.date,
             time=obs.time,
             kind=obs.kind,
+            context="\n".join(fieldctx.lines(folder, obs, prev)) or None,
         )
     client.apply_reading(obs, reading)
     keep_model_lines(obs, before)
@@ -790,15 +792,43 @@ def cmd_observe(st: Settings, args) -> int:
 
 
 PLAN_NAME = "plan"  # mark / say で栽培計画を指す名
+HYPOTHESES_NAME = "hypotheses"  # mark / say で仮説を指す名（記録の形 §21）
+EXPECT_NAME = "expect"  # mark で仮説の見込みを指す名
+
+
+class _ExpectView:
+    """seed mark expect h3 wrong のための、hypotheses.md の ## Expect の見え方。"""
+
+    def __init__(self, h: Hypotheses) -> None:
+        self.h = h
+
+    def mark(self, key: str, verdict: str, reason: str | None = None, text: str | None = None) -> Line:
+        return self.h.mark_expect(key, verdict, reason)
+
+    def say(self, key: str, text: str) -> Line:
+        return self.h.say(key, text)
+
+    def write(self, path: Path) -> None:
+        self.h.write(path)
+
+
+def latest_observation(folder: Folder) -> Path | None:
+    paths = folder.list_observations()
+    return paths[-1] if paths else None
 
 
 def _load_obs(st: Settings, name: str) -> tuple[Path, Observation | Plan]:
-    """観察の名（日-時刻）か "plan"（栽培計画）を読む。"""
+    """観察の名（日-時刻）か "plan"（栽培計画）か "hypotheses" / "expect"（仮説と見込み）を読む。"""
     folder = st.records
     if name == PLAN_NAME:
         if not folder.plan.exists():
             raise FileNotFoundError(folder.plan)
         return folder.plan, Plan.read(folder.plan)
+    if name in (HYPOTHESES_NAME, EXPECT_NAME):
+        if not folder.hypotheses.exists():
+            raise FileNotFoundError(folder.hypotheses)
+        h = Hypotheses.read(folder.hypotheses)
+        return folder.hypotheses, (h if name == HYPOTHESES_NAME else _ExpectView(h))
     path = find_observation(folder, name)
     return path, Observation.read(path)
 
@@ -997,12 +1027,19 @@ def load_plan(st: Settings, folder: Folder) -> Plan:
     return Plan.new(st.language)
 
 
-def plan_local(st: Settings, folder: Folder, plan: Plan, model: str | None = None):
-    """手元の claude で栽培計画を立て、plan に入れる（判定と本人の行は残る）。"""
+def plan_local(st: Settings, folder: Folder, plan: Plan, model: str | None = None, cut: bool = False):
+    """手元の claude で栽培計画を立て、plan に入れる（判定と本人の行は残る）。
+
+    cut なら刈り方の行だけを立て直し、ほかの行（播く物、混植…）はそのまま残す。
+    """
     from . import local
 
-    reading = local.plan(folder, plan, model=model)
-    plan.reread(reading.lines, reading.model)
+    reading = local.plan(folder, plan, model=model, cut=cut)
+    if cut:
+        kept = [l for l in plan.reading if l.key not in local.CUT_KEYS]
+        plan.reread(kept + [l for l in reading.lines if l.key in local.CUT_KEYS], reading.model)
+    else:
+        plan.reread(reading.lines, reading.model)
     return reading
 
 
@@ -1031,7 +1068,9 @@ def cmd_plan(st: Settings, args) -> int:
     if how == "local":
         _out(s("local_reading", lg))
         try:
-            got = plan_local(st, folder, plan, model=getattr(args, "model", None))
+            got = plan_local(
+                st, folder, plan, model=getattr(args, "model", None), cut=getattr(args, "cut", False)
+            )
             ms = (got.usage or {}).get("duration_ms") or 0
             _out(s("local_done", lg, model=got.model, seconds=round(ms / 1000)))
         except ClientError as e:
@@ -1693,6 +1732,196 @@ def move_root_records(st: Settings, folder: Folder) -> list[str]:
     return moved
 
 
+def _pick_obs(st: Settings, name: str | None) -> tuple[Path, Observation] | None:
+    """名があればその観察、無ければ一番新しい観察。無ければ None（言葉は出してある）。"""
+    folder = st.records
+    try:
+        path = find_observation(folder, name) if name else latest_observation(folder)
+    except FileNotFoundError:
+        path = None
+    if path is None:
+        _err(s("observation_not_found", st.language, name=name or "-"))
+        return None
+    return path, Observation.read(path)
+
+
+def cmd_hypothesis(st: Settings, args) -> int:
+    """土地の仮説を足す・見る（記録の形 §21）。確かめるのは seed check、判定は seed mark hypotheses h1 right。"""
+    folder, lg = st.records, st.language
+    h = Hypotheses.read(folder.hypotheses)
+    if not folder.hypotheses.exists():
+        h.language = lg
+    if args.act == "add":
+        line = h.add(" ".join(args.text.split()))
+        h.write(folder.hypotheses)
+        _out(line.render())
+        return 0
+    if not h.lines:
+        _out(s("hypotheses_none", lg))
+        return 0
+    for l in h.lines:
+        _out(l.render())
+    if h.expect:
+        _out(f"\n## Expect ({h.model})")
+        for l in h.expect:
+            _out(l.render())
+    return 0
+
+
+def cmd_check(st: Settings, args) -> int:
+    """仮説を写真で確かめる。見込み（文だけ）が無いか --expect なら先に書き、観察の ## Checks を書く。"""
+    from . import checks
+    from .client import ClientError
+
+    folder, lg = st.records, st.language
+    h = Hypotheses.read(folder.hypotheses)
+    if not h.lines:
+        _err(s("hypotheses_none", lg))
+        return 1
+    try:
+        if args.expect or not h.expect:
+            _out(s("check_expecting", lg, n=len(checks.to_expect(h))))
+            h = checks.expect(folder)
+            for l in h.expect:
+                _out(l.render())
+        if args.expect_only:
+            return 0
+        got = _pick_obs(st, args.observation)
+        if got is None:
+            return 1
+        path, obs = got
+        lines = checks.check(folder, obs)
+    except ClientError as e:
+        _err(error_text(e, lg))
+        return 2
+    except ValueError:
+        _err(s("hypotheses_none", lg))
+        return 1
+    if not lines:
+        _out(s("check_nothing", lg))
+        return 0
+    obs.write(path)
+    for l in lines:
+        _out(l.render())
+    _out(s("saved_to", lg, path=path))
+    return 0
+
+
+def cmd_sam(st: Settings, args) -> int:
+    """写真の覆い％を SAM 3.1 で測り、観察の前書きと concepts.md に書く（Meta の鍵が要る）。"""
+    from . import concepts, meta
+    from .client import ClientError
+
+    folder, lg = st.records, st.language
+    if not meta.available(st):
+        _err(s("meta_key_missing", lg))
+        return 1
+    got = _pick_obs(st, args.observation)
+    if got is None:
+        return 1
+    path, obs = got
+    try:
+        species = concepts.species_in(obs)
+        if species and not args.no_new:
+            concepts.ensure(folder, species)
+        concepts.segment_field(
+            folder,
+            obs,
+            progress=lambda n, of, rel: _out(s("sam_photo", lg, n=n, of=of, photo=Path(rel).name)),
+        )
+    except ClientError as e:
+        _err(error_text(e, lg))
+        return 2
+    except ModuleNotFoundError as e:
+        _err(s("need_extra", lg, extra="sam", module=e.name))
+        return 1
+    obs.write(path)
+    for noun, pct in obs.coverage.items():
+        _out(f"- {noun}: {pct}%")
+    _out(s("saved_to", lg, path=path))
+    return 0
+
+
+def cmd_concept(st: Settings, args) -> int:
+    """SAM 3.1 に渡す名詞を見る・合う／違うを付ける（記録の形 §22）。"""
+    from . import concepts
+
+    folder, lg = st.records, st.language
+    if args.act == "mark":
+        try:
+            concepts.mark(folder, args.noun, args.verdict, args.reason, args.instead)
+        except KeyError as e:
+            _err(str(e.args[0]))
+            return 1
+        _out(s("marked", lg, key=args.noun, verdict=s(args.verdict, lg)))
+        return 0
+    for c in concepts.FieldConcepts.load(folder).items:
+        _out(c.to_line().render())
+    return 0
+
+
+def cmd_voice(st: Settings, args) -> int:
+    """本人の声（録音か、書き取った文）を観察に入れる。書き取りは Meta、分けるのは Claude。"""
+    from . import meta, voice
+    from .client import ClientError
+
+    lg = st.language
+    got = _pick_obs(st, args.observation)
+    if got is None:
+        return 1
+    path, obs = got
+    try:
+        if args.text:
+            changed = voice.file_text(st.records, obs, args.text, heard_by="")
+        else:
+            if not meta.available(st):
+                _err(s("meta_key_missing", lg))
+                return 1
+            _text, changed = voice.file_voice(st.records, obs, Path(args.file), key=meta.api_key(st))
+    except ClientError as e:
+        _err(error_text(e, lg))
+        return 2
+    except ModuleNotFoundError as e:
+        _err(s("need_extra", lg, extra="voice", module=e.name))
+        return 1
+    obs.write(path)
+    for l in changed:
+        _out(l.render())
+    _out(s("saved_to", lg, path=path))
+    return 0
+
+
+def cmd_plants(st: Settings, args) -> int:
+    """一番新しい読みの優占する草ごとに、なぜ優占するかの読みを plants/ に（一度だけ。記録の形 §22）。"""
+    from . import plants
+    from .client import ClientError
+
+    folder, lg = st.records, st.language
+    species = plants.species_of(folder)
+    if not species:
+        _out(s("plants_none_cli", lg))
+        return 0
+    try:
+        for name, sci in species:
+            note = plants.ecology(folder, name, sci, lg)
+            _out(f"{note.name} ({note.scientific}): {plants.PlantNote.path_for(folder, sci)}")
+    except ClientError as e:
+        _err(error_text(e, lg))
+        return 2
+    return 0
+
+
+def cmd_mcp(st: Settings | None, args) -> int:
+    """本人の AI（Claude Desktop、Claude Code など）から記録を読む MCP の窓（mcp_server.py）。"""
+    try:
+        from . import mcp_server
+    except ModuleNotFoundError as e:
+        _err(s("need_extra", lang.default_language(None), extra="mcp", module=e.name))
+        return 1
+    mcp_server.run(_field_project(args), http=args.http, port=args.port)
+    return 0
+
+
 def cmd_import(st: Settings | None, args) -> int:
     """fieldnotes の農場のフォルダーを、プロジェクトの fields/<畑の名>/ に移す（記録の形 §23）。元は変えない。"""
     from . import importfn
@@ -1895,7 +2124,9 @@ def parser() -> argparse.ArgumentParser:
     idhow.add_argument("--server", action="store_true", help="サーバーの鍵で（招待コードが要る）")
 
     m = sub.add_parser("mark", parents=[common], help="読みの行に合う／違うを付ける")
-    m.add_argument("observation", help="観察の名（日-時刻）か plan（栽培計画）")
+    m.add_argument(
+        "observation", help="観察の名（日-時刻）か plan（栽培計画）か hypotheses / expect（仮説と見込み）"
+    )
     m.add_argument("key")
     m.add_argument("verdict", choices=("right", "wrong"))
     m.add_argument("--reason")
@@ -1917,6 +2148,11 @@ def parser() -> argparse.ArgumentParser:
         "plan", parents=[common], help="栽培計画 plan.md を立てる・立て直す（借りる・買えた畑で）"
     )
     pl.add_argument("--season", help="季節。本人の言葉で（例: 2026-27 冬）")
+    pl.add_argument(
+        "--cut",
+        action="store_true",
+        help="刈り方（cut）の行だけを立て直す。ほかの行は残す（伸びた所を作物に戻す最初の一刈り）",
+    )
     pl.add_argument("--decided", action="append", metavar="TEXT", help="本人が決めたこと（繰り返し可）")
     pl.add_argument("--did", action="append", metavar="TEXT", help="実際にしたこと（繰り返し可）")
     plhow = pl.add_mutually_exclusive_group()
@@ -2107,6 +2343,49 @@ def parser() -> argparse.ArgumentParser:
 
     sub.add_parser("skill-path", parents=[common], help="手引き skill/ の道を出す")
 
+    hy = sub.add_parser("hypothesis", parents=[common], help="土地の仮説 hypotheses.md を足す・見る")
+    hysub = hy.add_subparsers(dest="act", required=True)
+    hya = hysub.add_parser(
+        "add", parents=[common], help="仮説を一つ足す（出典は括弧に。例: …（出典: 本人））"
+    )
+    hya.add_argument("text", metavar="TEXT")
+    hysub.add_parser("list", parents=[common], help="仮説と見込みを出す")
+
+    ck = sub.add_parser(
+        "check", parents=[common], help="仮説を写真で確かめる（見込みを文だけで書いてから、観察の ## Checks）"
+    )
+    ck.add_argument("observation", nargs="?", help="観察の名（日-時刻）。無ければ一番新しい観察")
+    ck.add_argument("--expect", action="store_true", help="見込みを書き直してから確かめる")
+    ck.add_argument("--expect-only", action="store_true", help="見込みだけ書く（写真は見ない）")
+
+    sm = sub.add_parser("sam", parents=[common], help="写真の覆い％を SAM 3.1 で測る（Meta の鍵が要る）")
+    sm.add_argument("observation", nargs="?", help="観察の名（日-時刻）。無ければ一番新しい観察")
+    sm.add_argument("--no-new", action="store_true", help="優占する草の新しい名詞を Claude に聞かない")
+
+    cc = sub.add_parser("concept", parents=[common], help="SAM 3.1 に渡す名詞 concepts.md を見る・合う／違う")
+    ccsub = cc.add_subparsers(dest="act", required=True)
+    ccsub.add_parser("list", parents=[common], help="名詞と、前に見つけた物")
+    ccm = ccsub.add_parser("mark", parents=[common], help="名詞に合う／違うを付ける")
+    ccm.add_argument("noun")
+    ccm.add_argument("verdict", choices=("right", "wrong"))
+    ccm.add_argument("--reason")
+    ccm.add_argument("--instead", help="代わりに試す名詞（本人の物として足す）")
+
+    vo = sub.add_parser(
+        "voice", parents=[common], help="本人の声を観察に入れる（録音は Meta で書き取り、Claude が分ける）"
+    )
+    vo.add_argument("file", nargs="?", help="録音のファイル（m4a、3gp、ogg、webm、wav）")
+    vo.add_argument("--text", help="録音の代わりに、書き取った文")
+    vo.add_argument("--observation", help="観察の名（日-時刻）。無ければ一番新しい観察")
+
+    sub.add_parser(
+        "plants", parents=[common], help="優占する草がなぜ優占するかの読みを plants/ に（一度だけ）"
+    )
+
+    mc = sub.add_parser("mcp", parents=[common], help="本人の AI から記録を読む MCP の窓（既定は stdio）")
+    mc.add_argument("--http", action="store_true", help="家の網に Streamable HTTP で出す")
+    mc.add_argument("--port", type=int, default=8552, help="--http の口（既定 8552）")
+
     im = sub.add_parser(
         "import",
         parents=[common],
@@ -2157,6 +2436,13 @@ COMMANDS = {
     "field": cmd_field,
     "project": cmd_project,
     "import": cmd_import,
+    "mcp": cmd_mcp,
+    "hypothesis": cmd_hypothesis,
+    "check": cmd_check,
+    "sam": cmd_sam,
+    "concept": cmd_concept,
+    "voice": cmd_voice,
+    "plants": cmd_plants,
     "home": cmd_home,
 }
 # プロジェクト全体（畑が幾つも）では使えない命令。記録は畑ごとに在る
@@ -2164,13 +2450,14 @@ FIELD_ONLY = frozenset(
     {
         "observe", "identify", "mark", "marks", "say", "plan", "publish", "photos", "prune",
         "origin", "grow", "lot", "ledger", "weather", "procedure",
+        "hypothesis", "check", "sam", "concept", "voice", "plants",
     }
 )  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
-    if args.command in ("field", "project", "import"):
+    if args.command in ("field", "project", "import", "mcp"):
         return COMMANDS[args.command](None, args)
     try:
         args.folder, pick = fields_mod.locate(getattr(args, "field", None), getattr(args, "folder", None))

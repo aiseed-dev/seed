@@ -1,20 +1,18 @@
-"""One walk over a field: many photos, each with its time and place, read as one field.
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""One walk over a field: many photos, each with its time and place, read as one field (元は fieldnotes の walk.py).
 
-The farmer walks each field on the same route every day and shoots 20-50
-photos with the phone's location on; inbox.py keeps them in walk order in
-photos/<field>/<date>/index.json. This module says where each photo was taken,
-in words a model and a farmer both read ("NW corner", "middle", "S edge"):
+The farmer walks each field on the same route and shoots 20-50 photos with the phone's location on. This
+module says where each photo was taken, in words Claude and the farmer both read ("NW corner", "middle",
+"S edge"):
 
-* relative to the farm parcel (筆ポリゴン, records/lookup/parcel_jp.json) that
-  holds at least half of the day's photo points;
-* else relative to the walk's own extent, and then each photo says whether it
-  lies in the parcel or how far outside it ("outside the parcel, 35 m S"), so
-  that a corner of the walk is never read as a corner of the field (Niihama,
-  2026-10-29: 2 of 24 photos in the parcel, Spark's "S edge" 30-40 m S of it);
-* without GPS, by walk order only ("photo 3 of 42").
+* relative to the field's parcel (筆ポリゴン, parcel.geojson in the field's folder) when it holds at least
+  half of the photo points;
+* else relative to the walk's own extent, and then each photo says whether it lies in the parcel or how far
+  outside it ("outside the parcel, 35 m S"), so that a corner of the walk is never read as a corner of the
+  field (Niihama, 2026-10-29: 2 of 24 photos in the parcel, the reading's "S edge" 30-40 m S of it);
+* without GPS, by walk order only ("3 of 42").
 
-Each photo is labelled "3 of 42, 10:21, NW corner, facing W"; the reading and
-the map use the same numbers and words.
+Each photo is labelled "3 of 42, 10:21, NW corner, facing W"; the reading uses the same numbers and words.
 """
 
 from __future__ import annotations
@@ -23,44 +21,20 @@ import json
 import math
 from pathlib import Path
 
-from .inbox import INDEX, index_day
-
-MAX_IMAGES = 50  # Muse Spark, per request (dev.meta.ai, Image understanding, read 2026-10-30): more returns HTTP 400
-SIDE = 1024  # long side of each photo sent with a walk; about 1,000 input tokens each
+PARCEL_FILE = (
+    "parcel.geojson"  # the 筆ポリゴン the field lies in (GeoJSON geometry), from the lookup or the import
+)
 EARTH_M_PER_DEG = 111_320.0
 ONE_SPOT_M = 3.0  # photo points closer than this (the phone's GPS error) are one spot
-GRID = [["NW corner", "N edge", "NE corner"], ["W edge", "middle", "E edge"], ["SW corner", "S edge", "SE corner"]]
+GRID = [
+    ["NW corner", "N edge", "NE corner"],
+    ["W edge", "middle", "E edge"],
+    ["SW corner", "S edge", "SE corner"],
+]
 COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 Box = tuple[float, float, float, float]  # west, south, east, north (degrees)
-
-
-def day_dir(root: Path, field: str, day: str) -> Path:
-    return root / "photos" / field / day
-
-
-def entries(root: Path, field: str, day: str) -> list[dict]:
-    """The day's index, rebuilt when photos were added or removed by hand."""
-    d = day_dir(root, field, day)
-    if not d.is_dir():
-        return []
-    path = d / INDEX
-    files = {p.name for p in d.iterdir() if p.suffix.lower() in (".jpg", ".jpeg")}
-    if path.exists():
-        got = json.loads(path.read_text(encoding="utf-8"))
-        if {e["file"] for e in got} == files:
-            return got
-    return index_day(d)
-
-
-def save_cover(root: Path, field: str, day: str, cover: dict[str, dict[str, float]]) -> None:
-    """Keep what SAM found in each photo (file name -> {noun: %}) in the day's index."""
-    got = entries(root, field, day)
-    for e in got:
-        if e["file"] in cover:
-            e["cover"] = cover[e["file"]]
-    (day_dir(root, field, day) / INDEX).write_text(json.dumps(got, ensure_ascii=False, indent=1) + "\n",
-                                                  encoding="utf-8")
+Ring = list[list[float]]
 
 
 def sample(items: list, k: int) -> list:
@@ -76,6 +50,7 @@ def sample(items: list, k: int) -> list:
 
 # ---- where a photo was taken ----------------------------------------------
 
+
 def _rings(geom: dict) -> list[list[list[float]]]:
     if geom.get("type") == "Polygon":
         return geom["coordinates"][:1]
@@ -84,14 +59,23 @@ def _rings(geom: dict) -> list[list[list[float]]]:
     return []
 
 
-def parcels(records_root: Path) -> list[list[list[float]]]:
-    """The outer rings of the parcel at the farm's point, as looked up (lookup_jp.py keeps the
-    neighbours' properties only, without their shapes)."""
-    p = records_root / "lookup" / "parcel_jp.json"
+def parcels(field_root: Path) -> list[Ring]:
+    """The outer rings of the field's parcel (parcel.geojson: a GeoJSON geometry, or a Feature holding one)."""
+    p = Path(field_root) / PARCEL_FILE
     if not p.exists():
         return []
-    hit = json.loads(p.read_text(encoding="utf-8")).get("parcel")
-    return _rings(hit["geometry"]) if hit and hit.get("geometry") else []
+    try:
+        geom = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError:
+        return []
+    geom = geom.get("geometry", geom) if isinstance(geom, dict) else {}
+    return _rings(geom) if isinstance(geom, dict) else []
+
+
+def save_parcel(field_root: Path, geometry: dict) -> Path:
+    p = Path(field_root) / PARCEL_FILE
+    p.write_text(json.dumps(geometry, ensure_ascii=False) + "\n", encoding="utf-8")
+    return p
 
 
 def inside(lon: float, lat: float, ring: list[list[float]]) -> bool:
@@ -107,13 +91,13 @@ def _bounds(points: list[tuple[float, float]]) -> Box:
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def frame(points: list[tuple[float, float]], records_root: Path) -> tuple[Box, str, list | None] | None:
+def frame(points: list[tuple[float, float]], rings: list[Ring]) -> tuple[Box, str, Ring | None] | None:
     """The frame the positions are given in, what it is ("parcel" or "walk": the parcel holding
     at least half the points, else the points' own extent), and the parcel ring the photos are
     measured against (the one holding most of them; None when the farm has no parcel)."""
     if not points:
         return None
-    best = max(parcels(records_root), key=lambda r: sum(inside(x, y, r) for x, y in points), default=None)
+    best = max(rings, key=lambda r: sum(inside(x, y, r) for x, y in points), default=None)
     if best and 2 * sum(inside(x, y, best) for x, y in points) >= len(points):
         return _bounds([(x, y) for x, y in best]), "parcel", best
     return _bounds(points), "walk", best
@@ -157,10 +141,11 @@ def facing(deg: float | None) -> str | None:
     return None if deg is None else COMPASS[round(deg % 360 / 45) % 8]
 
 
-def labels(found: list[dict], records_root: Path) -> dict[str, str]:
-    """File name -> "3 of 42, 10:21, NW corner, facing W", for the photos of one walk."""
+def labels(found: list[dict], rings: list[Ring]) -> dict[str, str]:
+    """File name -> "3 of 42, 10:21, NW corner, facing W", for the photos of one walk.
+    found: one dict per photo in walk order: file, time ("10:21:33"), lat, lon, facing (degrees), any may be None."""
     points = [(e["lon"], e["lat"]) for e in found if e.get("lat") is not None]
-    fr = frame(points, records_root)
+    fr = frame(points, rings)
     out = {}
     for i, e in enumerate(found, start=1):
         parts = [f"{i} of {len(found)}"]
@@ -171,26 +156,32 @@ def labels(found: list[dict], records_root: Path) -> dict[str, str]:
             if fr[1] == "walk" and fr[2]:  # the walk's words, so say where the parcel is
                 off = outside(e["lon"], e["lat"], fr[2])
                 parts.append(f"outside the parcel, {off[0]} m {off[1]}" if off else "in the parcel")
-        if (f := facing(e.get("facing"))):
+        if f := facing(e.get("facing")):
             parts.append(f"facing {f}")
         out[e["file"]] = ", ".join(parts)
     return out
 
 
-def frame_note(found: list[dict], records_root: Path) -> str:
+def frame_note(found: list[dict], rings: list[Ring]) -> str:
     """One sentence for the prompt: what the positions are relative to."""
     points = [(e["lon"], e["lat"]) for e in found if e.get("lat") is not None]
-    f = frame(points, records_root)
+    f = frame(points, rings)
     if not f:
         return "The photos carry no location; they are numbered in the order the farmer walked."
-    what = "the farm parcel (筆ポリゴン) the photos lie in" if f[1] == "parcel" else "the area the walk covered"
-    text = (f"The photos are numbered in the order the farmer walked; {len(points)} of {len(found)} carry GPS, "
-            f"and their positions (NW corner, middle, S edge ...) are relative to {what}.")
+    what = (
+        "the farm parcel (筆ポリゴン) the photos lie in" if f[1] == "parcel" else "the area the walk covered"
+    )
+    text = (
+        f"The photos are numbered in the order the farmer walked; {len(points)} of {len(found)} carry GPS, "
+        f"and their positions (NW corner, middle, S edge ...) are relative to {what}."
+    )
     if f[1] == "walk" and f[2]:
         n_in = sum(inside(x, y, f[2]) for x, y in points)
-        text += (f" They are the walk's corners and edges, not the field's: only {n_in} of {len(points)} lie in "
-                 "the farm's parcel (筆ポリゴン), and every other photo says how far outside it was taken and "
-                 "which way. A zone seen only in photos outside the parcel is not on this field: write "
-                 "\"outside the parcel\" with the distance in its line (e.g. \"outside the parcel, 30-40 m S\") "
-                 "and never a corner or edge of the field.")
+        text += (
+            f" They are the walk's corners and edges, not the field's: only {n_in} of {len(points)} lie in "
+            "the farm's parcel (筆ポリゴン), and every other photo says how far outside it was taken and "
+            "which way. A zone seen only in photos outside the parcel is not on this field: write "
+            '"outside the parcel" with the distance in its line (e.g. "outside the parcel, 30-40 m S") '
+            "and never a corner or edge of the field."
+        )
     return text
