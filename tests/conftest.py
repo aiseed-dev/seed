@@ -58,3 +58,14 @@ def no_weather_fill(monkeypatch):
     from seed import weather
 
     monkeypatch.setattr(weather, "fill_missing", lambda *a, **k: 0)
+
+
+@pytest.fixture(autouse=True)
+def no_installed_claude(monkeypatch):
+    """準備の画面（ready.claude_path）が、この PC の ~/.local/bin/claude を見つけない。使うテストは上書きする。"""
+    from seed import ready
+
+    monkeypatch.setattr(ready, "installed_places", list)
+    monkeypatch.delenv(ready.ENV_PREVIEW, raising=False)
+    monkeypatch.delenv(ready.ENV_PC_PREVIEW, raising=False)
+    monkeypatch.delenv("SEED_NEXT_PREVIEW", raising=False)  # 話すの例の見本（talk.ENV_NEXT_PREVIEW）

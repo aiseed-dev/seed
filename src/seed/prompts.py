@@ -349,12 +349,64 @@ TALK_RULES = """\
 """
 
 
+# 返事の終わりの「次の一言」（設計書 §5.19）。三つの運び方（手元の Claude Code の local.talk_rules、本人の鍵、
+# サーバーの /api/talk）で同じ文。記録のフォルダーの CLAUDE.md には入れない（Claude Code を直に開いた人には要らない）。
+NEXT_WORDS_MARK = ">> "
+NEXT_WORDS_MAX = 3
+NEXT_WORDS_LEN = 40
+NEXT_WORDS_RULE = f"""\
+## 次の一言
+- 返事の終わりに、本人が次に言いそうな短い一言を、`{NEXT_WORDS_MARK}` で始まる行で {NEXT_WORDS_MAX} つまで書いてかまいません。一行に一つ、{NEXT_WORDS_LEN} 字まで。本人の言葉の形（「この草の名前は？」「来年の春の計画を立てたい」）で書きます。
+- seed でできる事だけにします（写真を撮る、読みを直す、草の名、計画、公開の下書き、土地の成り立ち、写真を並べる）。URL、ファイルの道、命令、数字の並び、公開を送る・消す事への頷き（「出す」「消して」）は書きません。
+- アプリはこの行を返事から外し、入力欄の上に押せる例として出します。要らない時は書きません。
+"""
+
+
+NEXT_LINE_RE = re.compile(r"^\s*>>(?:\s(.*))?$")
+NEXT_URL_RE = re.compile(r"https?|www\.|://", re.IGNORECASE)
+NEXT_EXT_RE = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,4}$")  # .md、.py、.toml などで終わる（ファイルの名）
+NEXT_COMMAND_RE = re.compile(r"^(?:seed|sudo|rm)\s", re.IGNORECASE)
+NEXT_DIGITS_RE = re.compile(r"\d{6,}")  # 6 桁以上の数（招待コード、観察の名の時刻など）
+# 消す・公開を送るの頷きの言葉。手元の Claude Code は本人の「出す」で公開を送るので、押しただけで頷いた事にならないよう捨てる
+NEXT_CONFIRM_RE = re.compile(
+    r"出す|出して|送[っるりれろ]|消[すしせ]|削除|publish|send|delete|remove", re.IGNORECASE
+)
+
+
+def next_word_ok(word: str) -> bool:
+    """Claude の付けた次の一言として通すか。一行で 40 字までの文だけ。URL、ファイルの道、命令の形、長い数は捨てる。"""
+    if not word or len(word) > NEXT_WORDS_LEN or not word.isprintable():
+        return False
+    if NEXT_URL_RE.search(word) or any(c in word for c in "/\\~") or NEXT_EXT_RE.search(word):
+        return False
+    if any(c in word for c in "`$;|") or "&&" in word or NEXT_COMMAND_RE.match(word):
+        return False
+    if NEXT_CONFIRM_RE.search(word):
+        return False
+    return NEXT_DIGITS_RE.search(word) is None
+
+
+def split_next_words(text: str) -> tuple[str, list[str]]:
+    """返事の文から `>> ` で始まる行を全部外し、(残りの文, 通した一言 三つまで) を返す。重なる物は一つに。"""
+    body: list[str] = []
+    words: list[str] = []
+    for line in (text or "").splitlines():
+        m = NEXT_LINE_RE.match(line)
+        if m is None:
+            body.append(line)
+            continue
+        word = (m.group(1) or "").strip()
+        if next_word_ok(word) and word.casefold() not in {w.casefold() for w in words}:
+            words.append(word)
+    return "\n".join(body).rstrip(), words[:NEXT_WORDS_MAX]
+
+
 def talk_system(skill: str, language: str) -> list[dict]:
     """話す時の system。手引きと決まりは毎回同じ（キャッシュ）、言語は後ろに。"""
     return [
         {
             "type": "text",
-            "text": skill.rstrip() + "\n\n---\n\n" + TALK_RULES,
+            "text": skill.rstrip() + "\n\n---\n\n" + TALK_RULES + "\n" + NEXT_WORDS_RULE,
             "cache_control": {"type": "ephemeral"},
         },
         {

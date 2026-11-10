@@ -5,7 +5,8 @@
 `seed app --web` は、この PC の中だけで、ブラウザで画面を確かめるための一人用。人ごとに分ける Web 版はやめた
 （作者 2026-11-06「Web 版は、マニュアル的なものだけにする」）。
 
-画面は二つ（話す /、写真 /photos）。道（route）で切り替える。サーバーの管理は kagi の机の画面「人の出入り」から。
+画面は二つ（話す /、写真 /photos）。道（route）で切り替える。準備の画面（/setup。設計書 §5.19）は、
+開いた時に足りない物が在る時と、歯車の「準備を見直す」からだけ出る（上の端の印には並べない）。サーバーの管理は kagi の机の画面「人の出入り」から。
 古い道（/observe、/records など）に来たら「話す」へ。
 """
 
@@ -23,7 +24,7 @@ import flet as ft
 from seed import fields as fields_mod
 from seed import lang
 from seed import settings as settings_mod
-from seed.app import gallery, plugins, talk, theme
+from seed.app import gallery, pc_rows, plugins, talk, theme
 from seed.app.strings import s
 from seed.cli import prepare
 from seed.client import Client
@@ -63,6 +64,8 @@ SCREENS = [
     Screen("/photos", "nav_photos", ft.Icons.PHOTO_LIBRARY_OUTLINED, gallery.view),
 ]
 
+
+SETUP_ROUTE = "/setup"  # 準備の画面（setup.ROUTE と同じ）
 
 NAV_BUTTON = 48  # 上の端の印一つの幅（スマートフォンの既定。PC は 40 で、少し余る）
 
@@ -112,6 +115,10 @@ class App:
         folder = got
         self.index: dict | None = None
         self.picker = ft.FilePicker()  # 参照を持っておく（無いと外される）
+        # 準備の画面の状態（setup.py）: needs（足りない物）、checking、busy、login（子）、note。畑を替えても残す
+        self.ready: dict = {"needs": [], "checking": False, "busy": None, "login": None, "note": ""}
+        # 歯車の PC の行（pc_rows.py）: seed home の子と、新しくするの状態。畑を替えても残す（子はプロジェクトの根で立てる）
+        self.pc: dict = pc_rows.new_state()
         self.open_folder(folder)
 
     def open_folder(self, folder: str | None) -> None:
@@ -356,7 +363,12 @@ class App:
         path = path or urlparse(self.page.route or "/").path or "/"
         sc = next((sc for sc in self.screens() if sc.route == path), SCREENS[0])  # 知らない道は「話す」へ
         try:
-            view = sc.build(self)
+            if path == SETUP_ROUTE:
+                from seed.app import setup
+
+                view = setup.view(self)
+            else:
+                view = sc.build(self)
         except Exception:
             log.exception("画面を作れない: %s", path)
             raise
@@ -428,8 +440,19 @@ def make_main(folder: str | None = None) -> Callable[[ft.Page], object]:
         log.info("session: web=%s route=%s", page.web, page.route)
         app = App(page, folder)
         page.on_route_change = app.route_change
-        app.route_change()
+        from seed.app import setup
+
+        if urlparse(page.route or "/").path == SETUP_ROUTE:  # 道で /setup を開いた（ブラウザで確かめる時）
+            await setup.check(app)
+            app.route_change()
+        elif await setup.first(app):  # 足りない物が在る時だけ、話すの前に準備の画面
+            await app.go(SETUP_ROUTE)
+        else:
+            app.route_change()
         page.run_task(talk.tell_loose, app)  # 畑に入っていない写真を後ろで探す（設計書 §5.17）
+        # 「アプリを開いたら始める」（PC のアプリだけ。設計書 §5.19）
+        if app.settings.home_start == pc_rows.AUTO:
+            page.run_task(pc_rows.auto_start, app)
 
     return main
 

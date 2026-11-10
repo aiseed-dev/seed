@@ -24,7 +24,9 @@ Claude を呼ぶ所（route。設定の札の一行で変えられる）は、PC
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
+import os
 import re
 import string
 import threading
@@ -37,6 +39,7 @@ import yaml
 
 from seed import album, client, direct, land, local, loose, photos
 from seed import highlights as H
+from seed import prompts as P
 from seed.app import capture, cards, photo, theme
 from seed.app.strings import error_text
 from seed.app.strings import s as s_text_of
@@ -135,7 +138,8 @@ def readings(folder: Folder) -> dict[str, list[Line]]:
 # ---------------------------------------------------------------- やり取りに足す物（この窓の間だけ）
 #
 # state["talk"] の一件は dict: who（"me" / "claude"）、after（どの観察の後に出すか。無ければ頭）、
-# text、fixed（直した行）、obs（どの観察の話か）、card（押した印の札）。記録に残る物はファイルから組む。
+# text、fixed（直した行）、obs（どの観察の話か）、card（押した印の札）、fix（直し方のボタン。setup.fix_button）。
+# 記録に残る物はファイルから組む。
 
 
 def talk_state(app: App) -> list[dict]:
@@ -154,6 +158,14 @@ def add(app: App, **item) -> None:
 
 def say(app: App, text: str, **kw) -> None:
     add(app, who="claude", text=text, **kw)
+
+
+def say_error(app: App, ex: Exception, **kw) -> None:
+    """読めなかった理由を一文で。命令を打つよう求める文（ログイン、部品）には、直すボタンを下に付ける（§5.19）。"""
+    from seed.app import setup
+
+    fix = setup.fix_of(app, getattr(ex, "word", None))
+    say(app, error_text(ex, app.lang, **kw), **({"fix": fix} if fix else {}))
 
 
 # ---------------------------------------------------------------- 送る
@@ -244,7 +256,7 @@ async def read_obs(app: App, obs: Observation, sources: list[Path] | None = None
             extra = (sources,) if sources else ()  # 家のサーバーの時だけ撮った元を添える
             await asyncio.to_thread(read_on_server, app.settings, app.folder, obs, *extra)
     except (ClientError, photos.PhotoError) as ex:
-        say(app, error_text(ex, app.lang, server=app.settings.server))
+        say_error(app, ex, server=app.settings.server)
         return False
     obs.write(app.folder.observation_path(obs))
     return True
@@ -265,7 +277,7 @@ async def send_photos(app: App, paths: list[Path], text: str) -> None:
         rel = await asyncio.to_thread(photos.import_photos, app.folder, paths, keep)
         obs = await asyncio.to_thread(photos.observation_for, app.folder, rel, app.lang)
     except photos.PhotoError as ex:
-        say(app, error_text(ex, app.lang))
+        say_error(app, ex)
         return
     except (OSError, TimeoutError) as ex:
         say(app, str(ex))
@@ -275,7 +287,9 @@ async def send_photos(app: App, paths: list[Path], text: str) -> None:
     if text:
         obs.say("said", text.replace("\n", " "))
     obs.write(app.folder.observation_path(obs))
-    await read_obs(app, obs, list(paths) if home else None)
+    app.state.pop("next_words", None)  # 新しい写真: 前の返事の一言は場面に合わなくなる
+    if await read_obs(app, obs, list(paths) if home else None):
+        app.state["just_read"] = app.folder.observation_path(obs).stem  # 読みが返った直後の例（§5.19）
     if obs.location and not app.folder.place_data():
         await place_data(app, quiet=True)  # 初めての位置の入った写真: 土地の成り立ちを調べておく（AI 無し）
 
@@ -296,7 +310,7 @@ async def send_words(app: App, text: str) -> None:
                 local.talk, app.folder, text, app.lang, app.state.get("claude_session"), **extra
             )
         except ClientError as ex:
-            say(app, error_text(ex, app.lang))
+            say_error(app, ex)
             return
         app.state["claude_session"] = session
         add_reply(app, before, reply or app.t("talk_done"))
@@ -325,10 +339,27 @@ def note_words(app: App, text: str) -> bool:
 
 
 def add_reply(app: App, before: dict[str, list[Line]], text: str, **kw) -> None:
-    """Claude の返事。読み直して変わった行（直した所）を先に出す。"""
+    """Claude の返事。読み直して変わった行（直した所）を先に出す。
+
+    返事の終わりの `>> ` の行（次の一言。設計書 §5.19）は、画面に出す前と残す前に外し、入力の上の例にだけ出す
+    （app.state。記録に残さない。次の返事で入れ替わり、畑を替えれば消える）。
+    """
+    text, words = P.split_next_words(text)
+    app.state["next_words"] = words
     after = readings(app.folder)
     fixed = [l for n, lines in after.items() if before.get(n) for l in changed_lines(before[n], lines)]
-    add(app, who="claude", text=text, fixed=fixed, reply=True, **kw)
+    add(app, who="claude", text=text or app.t("talk_done"), fixed=fixed, reply=True, **kw)
+
+
+def drop_next_lines(messages: list[dict]) -> None:
+    """自分の鍵とサーバーのやり取り（次の頼みでも送る物）からも、Claude の返事の `>> ` の行を外す。"""
+    for m in messages:
+        content = m.get("content")
+        if m.get("role") != "assistant" or not isinstance(content, list):
+            continue
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "text" and ">>" in str(b.get("text") or ""):
+                b["text"] = P.split_next_words(str(b["text"]))[0] or "-"  # 空の文の塊は API が受けない
 
 
 def transport(app: App, via: str):
@@ -366,6 +397,7 @@ async def talk_direct(app: App, text: str, via: str) -> None:
         return
     finally:
         app.state.pop("talk_stop", None)
+    drop_next_lines(messages)
     reply = out.text or app.t("talk_done")
     if out.stopped:
         reply = (out.text + "\n\n" if out.text else "") + app.t(STOP_WORDS[out.stopped])
@@ -708,6 +740,12 @@ async def send(app: App, text: str, paths: list[Path] | None = None, as_example:
     if app.state.get("await_invite") and text and not paths:
         await take_invite(app, text)
         return
+    answer_to = app.state.pop("answer_to", None)
+    if answer_to and text and not paths and keep_answer(app, answer_to, text):
+        app.refresh()
+        return
+    if not paths:
+        app.state.pop("just_read", None)  # 読みが返った直後の例は、次に言葉を送るまで
     to = app.state.pop("talk_to", None)
     if to and text and not paths:
         await cards.send_word(app, to, text)
@@ -720,14 +758,27 @@ async def send(app: App, text: str, paths: list[Path] | None = None, as_example:
             await run_example(app, key)
             return
     if not paths:
-        add(app, who="me", text=text)  # 言葉はすぐ下に出す（待つ間も読める）
-    app.state["pending"] = {"text": text if paths else "", "photos": paths}
+        await say_words(app, text)
+        return
+    app.state["pending"] = {"text": text, "photos": paths}
     app.refresh()
     try:
-        if paths:
-            await send_photos(app, paths, text)
-        else:
-            await send_words(app, text)
+        await send_photos(app, paths, text)
+    finally:
+        app.state.pop("pending", None)
+        app.refresh()
+
+
+async def say_words(app: App, text: str) -> None:
+    """言葉を本人の言葉として下に出し、Claude を呼ぶ所の通りに頼む。例（Claude の付けた一言も）を押した時もここ。
+
+    入力欄の待ち（鍵、招待コード、サーバーの URL、一言の宛先）は通さない: 例の言葉が鍵や宛先の一言にならないように。
+    """
+    add(app, who="me", text=text)  # 言葉はすぐ下に出す（待つ間も読める）
+    app.state["pending"] = {"text": "", "photos": []}
+    app.refresh()
+    try:
+        await send_words(app, text)
     finally:
         app.state.pop("pending", None)
         app.refresh()
@@ -908,12 +959,18 @@ def item_controls(app: App, item: dict) -> list[ft.Control]:
     if item.get("loose"):  # 畑に入っていない写真の小さな絵（HEIC も photo.load が縮める）
         pics = [photo.picture(app, Path(p), photo.TINY, photo.TINY, photo.TINY) for p in item["loose"]]
         side.append(ft.Row([p for p in pics if p is not None], wrap=True, spacing=8, run_spacing=8))
+    if item.get("fix"):  # 命令を打つよう求めた文の下に、押して済むボタン（文の中の命令は残す）
+        from seed.app import setup
+
+        side.append(setup.fix_button(app, item["fix"]))
     for cmd in item.get("commands") or []:  # 写せる文字で（消すのは本人）
         side.append(theme.mono(cmd))
     if item.get("examples"):
         side.append(example_chips(app, item["examples"]))
     if item.get("draft"):
         side += draft_controls(app, item)
+    if item.get("prune"):
+        side += prune_controls(app, item)
     return [claude_side(side)]
 
 
@@ -1043,6 +1100,8 @@ def whole_conversation(app: App, items: list[dict], hide: set[str]) -> list[ft.C
 #
 # 入力の上に、人が言いそうな言葉で例を出す。押すとその言葉を送った物として扱い、答えを下に出す。
 # AI 無しでアプリが答えられる物は、どの端末でもその場で。Claude が要る物は、使えない端末ではやり方を一言添えて返す。
+# 並べ方（設計書 §5.19）: 場面の物（コードで選ぶ。AI を呼ばない）、Claude が返事の終わりに付けた次の一言、
+# 今までの並び、の順に詰めて三つまで。最後に「ほかに何ができますか」をいつも置く。
 
 
 @dataclass(frozen=True)
@@ -1069,10 +1128,29 @@ EXAMPLES = {
         Example("others"),
         Example("plants"),
         Example("settings"),
+        # 場面から選ぶ物
+        Example("setup"),
+        Example("find_pc"),
+        Example("answer"),
+        Example("today_shot"),
+        Example("compare"),  # Claude が無ければ、場所ごとに時の順に並べる（AI 無し）
+        Example("show_draft"),
+        # 命令でしかできなかった、AI の要らない物（「ほかに何ができますか」に足す）
+        Example("ledger"),
+        Example("lots"),
+        Example("weather"),
+        Example("marks"),
+        Example("keep"),
+        Example("prune"),
         Example("more"),
     )
 }
-EXAMPLES_SHOWN = 5  # 一度に出す数（と「ほかに何ができますか」）
+EXAMPLES_SHOWN = 3  # 一度に出す数（と「ほかに何ができますか」）
+GAP_DAYS = 7  # 前の観察からこの日数が空いたら「今日の一枚」と「前と比べて」（設計書に日数は無い。一週間）
+SAY = "say:"  # Claude の付けた一言の鍵の頭。鍵が無いので、文そのものを本人の言葉として送る
+TOOLS = ("ledger", "lots", "weather", "marks", "keep", "prune")
+NOT_TYPED = ("first", "today_shot", "more")  # 打った言葉が同じでも例として動かさない（撮る画面を開く物など）
+ENV_NEXT_PREVIEW = "SEED_NEXT_PREVIEW"  # 見本: Claude の一言を「言葉|言葉」で。返事が来たら入れ替わる
 CARD_OF = {
     "plan_show": "plan",
     "published": "published",
@@ -1082,8 +1160,12 @@ CARD_OF = {
 }
 
 
-def examples(app: App, everything: bool = False) -> list[str]:
-    """今の場面に合う例の鍵。観察が無い時は「まず一枚」だけ。手元の Claude が無い端末は、AI 無しの物を先に。"""
+def today() -> dt.date:
+    return dt.date.today()
+
+
+def base_keys(app: App) -> list[str]:
+    """今までの並び。観察が無い時は「まず一枚」と設定だけ。手元の Claude が無い端末は、AI 無しの物を先に。"""
     if not app.folder.list_observations():
         return ["first", "settings"]  # 繋がる前でも設定（PC を探す、鍵、招待コード）を開けるように
     plan = "plan_show" if app.folder.plan.exists() else "plan_make"
@@ -1107,9 +1189,85 @@ def examples(app: App, everything: bool = False) -> list[str]:
         keys.insert(2, "published")
     if not can_talk(app):
         keys.sort(key=lambda k: EXAMPLES[k].needs_claude)
+    return keys
+
+
+def open_question(app: App, name: str) -> str | None:
+    """その観察の読みに Claude の問い（「問い: …」の行）が在り、まだ答えていなければ、その問い。"""
+    try:
+        obs = Observation.read(app.folder.observations / f"{name}.md")
+    except (ValueError, TypeError, OSError):
+        return None
+    q = H.question(obs)
+    return q if q and not H.answered(obs, q) else None
+
+
+def days_since(name: str) -> int:
+    """観察の名（日-時刻）の日から今日まで、何日か。名が読めなければ 0。"""
+    try:
+        return (today() - dt.date.fromisoformat(name[:10])).days
+    except ValueError:
+        return 0
+
+
+def unsent_draft(app: App) -> dict | None:
+    """この窓で見せた公開の下書きで、まだ「出す」を押していない物（新しい物）。"""
+    return next((i for i in reversed(talk_state(app)) if i.get("draft") and not i.get("sent")), None)
+
+
+def scene_keys(app: App) -> list[str]:
+    """場面から選ぶ例。コードで選び、AI も命令も呼ばない（準備は、開いた時に見た app.ready の結果を使う）。"""
+    out: list[str] = []
+    needs = app.ready.get("needs") or []
+    items = talk_state(app)
+    fixing = bool(items) and bool(items[-1].get("fix"))  # 直前の文の下に直し方のボタンが在る: 二重に出さない
+    if "phone_read" in needs:
+        out.append("find_pc")
+    elif needs and not fixing:
+        out.append("setup")
+    paths = app.folder.list_observations()
+    if not paths:
+        out.append("first")
+        return out
+    name = paths[-1].stem
+    if open_question(app, name):
+        out.append("answer")
+    if app.state.get("just_read") == name:  # 写真を送って、読みが返った直後
+        out += ["wrong", "name_it"]
+    if unsent_draft(app) is not None:
+        out.append("show_draft")
+    if days_since(name) >= GAP_DAYS:
+        out += ["today_shot", "compare"]
+    return out
+
+
+def next_words(app: App) -> list[str]:
+    """Claude が前の返事の終わりに付けた次の一言（画面にだけ。記録に残さない）。無ければ見本の環境変数。"""
+    words = app.state.get("next_words")
+    if words is None:
+        raw = os.environ.get(ENV_NEXT_PREVIEW)
+        if not raw:
+            return []
+        _, words = P.split_next_words("\n".join(P.NEXT_WORDS_MARK + w.strip() for w in raw.split("|")))
+    return list(words)
+
+
+def examples(app: App, everything: bool = False) -> list[str]:
+    """入力の上に出す例の鍵。場面の物、Claude の一言、今までの並びの順に、同じ言葉は一つにして三つまで、
+    最後に「ほかに何ができますか」。everything は「ほかに何ができますか」の答え（今までの並びと、AI 無しの物）。"""
     if everything:
-        return keys
-    return [*keys[:EXAMPLES_SHOWN], "more"]
+        return [*base_keys(app), *TOOLS]
+    out: list[str] = []
+    seen: set[str] = set()
+    for k in [*scene_keys(app), *(SAY + w for w in next_words(app)), *base_keys(app)]:
+        label = example_label(app, k).casefold()
+        if k == "more" or k in out or label in seen:
+            continue
+        out.append(k)
+        seen.add(label)
+        if len(out) == EXAMPLES_SHOWN:
+            break
+    return [*out, "more"]
 
 
 def first_photo_text(app: App) -> str:
@@ -1118,7 +1276,11 @@ def first_photo_text(app: App) -> str:
 
 
 def example_label(app: App, key: str) -> str:
-    return app.t("ex_first_pc" if key == "first" and capture.is_pc(app) else f"ex_{key}")
+    if key.startswith(SAY):
+        return key[len(SAY) :]
+    if key in ("first", "today_shot") and capture.is_pc(app):
+        return app.t(f"ex_{key}_pc")
+    return app.t(f"ex_{key}")
 
 
 def example_of(app: App, text: str) -> str | None:
@@ -1127,7 +1289,7 @@ def example_of(app: App, text: str) -> str | None:
 
     t = text.strip()
     for key in EXAMPLES:
-        if key in ("first", "more"):
+        if key in NOT_TYPED:
             continue
         if any(STRINGS[lg].get(f"ex_{key}") == t for lg in STRINGS):
             return key
@@ -1135,12 +1297,48 @@ def example_of(app: App, text: str) -> str | None:
 
 
 async def run_example(app: App, key: str) -> None:
-    """例を押した、か、例の言葉を打った。人の言葉として出し、答えを下に出す。"""
+    """例を押した、か、例の言葉を打った。人の言葉として出し、答えを下に出す。
+
+    消す（残さない物）と公開は、ここでは動かない: 消すは「消す」の二度押し、公開は下書きの全文と「出す」を通る。
+    """
+    app.state.pop("just_read", None)  # 読みが返った直後の例は、次に何かを押すまで
+    if key.startswith(SAY):  # Claude の付けた一言: 文そのものを本人の言葉として
+        await say_words(app, key[len(SAY) :])
+        return
     ex = EXAMPLES[key]
-    if key == "first":
+    if key in ("first", "today_shot"):
         await add_photos(app, "")
         return
+    if key == "setup":
+        from seed.app import setup
+
+        await setup.open_setup(app)
+        return
+    if key == "find_pc":
+        app.show_settings()
+        return
+    if key == "answer":
+        start_answer(app)
+        return
     phrase = app.t(f"ex_{key}")
+    if key == "compare":  # Claude が在れば Claude へ。無ければ場所ごとに時の順に並べる（AI 無し）
+        if can_talk(app):
+            await say_words(app, phrase)
+            return
+        add(app, who="me", text=phrase)
+        add(app, who="claude", places=True)
+        app.refresh()
+        return
+    if key == "show_draft":
+        add(app, who="me", text=phrase)
+        show_draft(app)
+        app.refresh()
+        return
+    if key in TOOLS:
+        add(app, who="me", text=phrase)
+        await run_tool(app, key)
+        app.refresh()
+        return
     if key in ("landform", "soil_q"):  # 打った言葉と同じに Claude へ。土地の画面は「この土地」
         if can_talk(app):
             await send(app, phrase, as_example=False)
@@ -1198,7 +1396,132 @@ async def name_latest(app: App) -> None:
         app.state.pop("pending", None)
 
 
-EXAMPLE_ICONS = {"first": ft.Icons.PHOTO_CAMERA_OUTLINED, "more": ft.Icons.MORE_HORIZ}
+def start_answer(app: App) -> None:
+    """「問いに答える」: 送らずに、次に書く一行を一番新しい観察の問いへの答えにする（入力欄の言い出しが変わる）。"""
+    name = last_name(app)
+    if name is None or open_question(app, name) is None:
+        return
+    app.state.pop("talk_to", None)
+    app.state["answer_to"] = name
+    app.refresh()
+
+
+def keep_answer(app: App, name: str, text: str) -> bool:
+    """問いへの答えを、記録の形（said の行に「（問い: …）」を添える。highlights.answer_line）で残す。AI は呼ばない。"""
+    path = app.folder.observations / f"{name}.md"
+    try:
+        obs = Observation.read(path)
+    except (ValueError, TypeError, OSError):
+        return False
+    q = H.question(obs)
+    if not q or H.answered(obs, q):
+        return False
+    obs.record.append(H.answer_line(q, text, app.lang))
+    obs.write(path)
+    add(app, who="me", text=text)
+    say(app, app.t("talk_answer_kept"))
+    return True
+
+
+def show_draft(app: App) -> None:
+    """「下書きを見せて」: まだ出していない下書きを、今のファイルの全文と「出す」で下に出し直す（前の物は外す）。"""
+    item = unsent_draft(app)
+    if item is None:
+        say(app, app.t("talk_draft_missing"))
+        return
+    talk_state(app).remove(item)
+    add_draft(app, item["draft"])
+
+
+def tool_text(app: App, key: str) -> str:
+    """命令（seed ledger sum など）と同じ関数を、子を立てずに呼び、出す文を返す。AI は呼ばない。"""
+    import argparse
+
+    from seed import cli
+
+    month = today().strftime("%Y-%m")
+    fn, args = {
+        "ledger": (cli.cmd_ledger, argparse.Namespace(act="sum", month=month)),
+        "lots": (cli.cmd_lot, argparse.Namespace(act="list")),
+        "weather": (cli.cmd_weather, argparse.Namespace(act="show", month=month)),
+        "marks": (cli.cmd_marks, argparse.Namespace(key=None, all=False, json=False)),
+        "keep": (cli.cmd_keep, argparse.Namespace(level=None, bulk=None)),  # 見るだけ（変えない）
+    }[key]
+    return cli.captured(fn, app.settings, args)[1]
+
+
+async def run_tool(app: App, key: str) -> None:
+    if key == "prune":
+        prune_offer(app)
+        return
+    try:
+        text = await asyncio.to_thread(tool_text, app, key)
+    except (OSError, ValueError) as ex:
+        say(app, error_text(ex, app.lang))
+        return
+    say(app, text or app.t("talk_done"))
+
+
+def prune_offer(app: App) -> None:
+    """残さない物（seed prune と同じ keep.prune_plan）を、何を何 MB と見せる。消すのは「消す」の二度押し。"""
+    from seed import keep as keep_mod
+
+    st = app.settings
+    plan = keep_mod.prune_plan(st.records, st.keep)
+    if not plan:
+        say(app, app.t("prune_nothing", keep=st.keep))
+        return
+    lines = [app.t("prune_item", path=p, mb=keep_mod.mb(b)).strip() for p, b in plan]
+    lines.append(app.t("prune_total", keep=st.keep, mb=keep_mod.mb(sum(b for _, b in plan))))
+    say(app, "\n".join(lines), prune=[str(p) for p, _ in plan])
+
+
+async def prune_now(app: App, item: dict) -> None:
+    """二度目の「消す」。見せた物のうち、今も keep で残さない物だけを消す（見せた物より広げない）。"""
+    from seed import keep as keep_mod
+
+    item["done"] = True
+    st = app.settings
+    shown = set(item.get("prune") or [])
+    plan = [(p, b) for p, b in keep_mod.prune_plan(st.records, st.keep) if str(p) in shown]
+    if not plan:
+        say(app, app.t("prune_nothing", keep=st.keep))
+        return
+    freed = await asyncio.to_thread(keep_mod.prune, plan)
+    say(app, app.t("prune_done", n=len(plan), mb=keep_mod.mb(freed)))
+
+
+def prune_controls(app: App, item: dict) -> list[ft.Control]:
+    """「消す」→「本当に消す」（二度押し。端末で y と答えるのと同じ）。消した後は押せない。"""
+    sure = bool(item.get("sure"))
+
+    async def press(e) -> None:
+        if item.get("done") or app.state.get("pending"):
+            return
+        if not item.get("sure"):
+            item["sure"] = True
+            app.refresh()
+            return
+        await prune_now(app, item)
+        app.refresh()
+
+    button = (ft.FilledButton if sure else ft.TextButton)(
+        app.t("prune_run_sure") if sure else app.t("prune_run"),
+        icon=ft.Icons.DELETE_OUTLINE,
+        on_click=press,
+        disabled=bool(item.get("done")),
+    )
+    return [theme.muted(app.t("prune_twice")), button]
+
+
+EXAMPLE_ICONS = {
+    "first": ft.Icons.PHOTO_CAMERA_OUTLINED,
+    "today_shot": ft.Icons.PHOTO_CAMERA_OUTLINED,
+    "setup": ft.Icons.CHECKLIST,
+    "find_pc": ft.Icons.SEARCH,
+    "answer": ft.Icons.HELP_OUTLINE,
+    "more": ft.Icons.MORE_HORIZ,
+}
 
 
 def example_chips(app: App, keys: list[str], one_line: bool = False) -> ft.Control:
@@ -1359,6 +1682,8 @@ def composer(app: App) -> ft.Control:
         hint = t("talk_hint_code") if app.state.get("invite_digits") else t("talk_hint_invite")
     elif to:
         hint = t("talk_hint_to", to=to)
+    elif app.state.get("answer_to"):  # 「問いに答える」を押した: 次の一行は問いへの答え
+        hint = t("talk_hint_answer")
     else:
         hint = t("talk_hint")
     box = ft.TextField(
@@ -1406,6 +1731,13 @@ def composer(app: App) -> ft.Control:
             app.refresh()
 
         row.insert(1, ft.IconButton(ft.Icons.CLOSE, tooltip=t("talk_to_cancel"), on_click=cancel_to))
+    elif app.state.get("answer_to"):
+
+        def cancel_answer(e) -> None:
+            app.state.pop("answer_to", None)
+            app.refresh()
+
+        row.insert(1, ft.IconButton(ft.Icons.CLOSE, tooltip=t("talk_answer_cancel"), on_click=cancel_answer))
     bar = ft.Row(row, spacing=4, vertical_alignment=ft.CrossAxisAlignment.END)
     if app.whole:  # プロジェクト全体: 写真と公開は畑を選んでから
         return ft.Column([theme.muted(t("talk_whole_pick")), bar], spacing=4, tight=True)

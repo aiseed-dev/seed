@@ -197,7 +197,8 @@ def test_conversation_without_observations(app):
     assert talk.turns(app.folder) == []
     words = texts(talk.view(app))
     assert app.t("talk_hello") in words and talk.first_photo_text(app) in words
-    assert talk.examples(app) == ["first", "settings"]  # 観察が無い時は「まず一枚」と、繋ぐための設定
+    # 観察が無い時は「まず一枚」と、繋ぐための設定。最後に「ほかに何ができますか」をいつも（§5.19）
+    assert talk.examples(app) == ["first", "settings", "more"]
     assert talk.example_label(app, "first") in words
 
 

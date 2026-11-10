@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from seed import client, local
-from seed.app import capture, theme
+from seed.app import capture, pc_rows, theme
 
 if TYPE_CHECKING:
     from .main import App
@@ -158,7 +158,14 @@ def open_form(app: App) -> None:
 
     remover.content = ft.TextButton(t("form_key_remove"), on_click=remove_key)
 
+    async def setup(e) -> None:  # 準備の画面（設計書 §5.19）。「今はしない」を押した後もここから開ける
+        from seed.app import setup as setup_view
+
+        close()
+        await setup_view.open_setup(app)
+
     body: list[ft.Control] = [
+        ft.TextButton(t("form_setup"), icon=ft.Icons.CHECKLIST, on_click=setup),
         theme.subheading(t("form_pc")),
         ft.FilledTonalButton(t("set_find_home"), icon=ft.Icons.WIFI_FIND, on_click=find),
         url,
@@ -171,6 +178,8 @@ def open_form(app: App) -> None:
     ]
     if s.anthropic_key:
         body.append(remover)
+    if pc_rows.shown(app):  # PC のアプリだけ: スマートフォンから写真を受ける、新しくする（設計書 §5.19）
+        body += pc_rows.section(app)
     body.append(status)
     app.page.show_dialog(
         ft.AlertDialog(

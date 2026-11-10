@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import contextvars
 import datetime as dt
 import json
 import re
@@ -389,12 +390,35 @@ def how_to_read(args) -> str:
 # ---------------------------------------------------------------- コマンド
 
 
+# アプリが命令と同じ関数を呼ぶ時（設計書 §5.19。子として走らせない）、出す文をここに集める。糸ごとに別
+_SINK: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar("seed_cli_sink", default=None)
+
+
 def _out(text: str = "") -> None:
+    sink = _SINK.get()
+    if sink is not None:
+        sink.append(text)
+        return
     print(text)
 
 
 def _err(text: str) -> None:
+    sink = _SINK.get()
+    if sink is not None:
+        sink.append(text)
+        return
     print(text, file=sys.stderr)
+
+
+def captured(fn, st: Settings, args) -> tuple[int, str]:
+    """命令の関数（cmd_…）を、端末に出さずに呼ぶ。(戻りの数, 出した文)。input() を使う命令には使わない。"""
+    lines: list[str] = []
+    token = _SINK.set(lines)
+    try:
+        code = fn(st, args)
+    finally:
+        _SINK.reset(token)
+    return code, "\n".join(lines).strip("\n")
 
 
 def _set_keep(st: Settings, level: str | None, bulk: str | None = None) -> bool:
@@ -613,7 +637,9 @@ def cmd_home(st: Settings, args) -> int:
     _out(s("home_start", lg, project=project))
     for h in hosts:
         _out(s("home_url", lg, url=f"http://{h}:{args.port}"))
-    _out(s("home_code", lg, code=code))
+    # アプリが子として立てる時（--no-code）は出さない。アプリは home.toml から、「見せる」の時だけ読む
+    if not getattr(args, "no_code", False):
+        _out(s("home_code", lg, code=code))
     _out(s("home_how", lg))
     if args.host in ("0.0.0.0", "::"):
         import threading
@@ -2047,6 +2073,11 @@ def parser() -> argparse.ArgumentParser:
     )
     hm.add_argument("--host", default="0.0.0.0", help="待つ番地（既定 0.0.0.0）")
     hm.add_argument("--port", type=int, default=HOME_PORT, help=f"待つ口（既定 {HOME_PORT}）")
+    hm.add_argument(
+        "--no-code",
+        action="store_true",
+        help="招待コードを出さない（アプリの歯車から立てる時。コードはアプリの「見せる」で出す）",
+    )
     return p
 
 

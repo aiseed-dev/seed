@@ -20,6 +20,20 @@
 
 アプリは [Flet](https://flet.dev/)（Python だけで PC、Web、スマートフォンに同じコードで出る）で作っています。Python 3.11 以上が要ります。
 
+### 命令を打たずに開く
+
+このページの緑の「Code」から「Download ZIP」で取り、解いたフォルダーの中の一つを二度押しします。
+
+- Windows: `open-seed.bat`
+- macOS: `open-seed.command`
+- Linux: `open-seed.sh`
+
+初めての時は、要る部品を入れてからアプリが開きます（数分かかります）。二度目からはすぐ開きます。Claude Code が入っていない時やログインしていない時は、最初に「準備」の画面が出て、ボタンで入れられます。
+
+確かめたのは Linux です。Windows と macOS でうまく開かない時は、下の命令で入れてください。
+
+### 命令で入れる
+
 ```bash
 git clone https://github.com/aiseed-dev/seed.git
 ```

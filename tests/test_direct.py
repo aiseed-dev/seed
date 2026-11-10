@@ -508,7 +508,8 @@ def test_examples_go_to_claude_with_key(app, seedfolder, tmp_path, monkeypatch):
     )
     run(talk.run_example(app, "plan_make"))
     assert app.state["talk"][-1]["text"] == "計画を立てました"
-    assert talk.EXAMPLES["plan_make"].needs_claude and talk.examples(app)[0] == "landform"
+    # 鍵が在れば、今までの並びで Claude の要る物を後ろへ回さない（場面の例はその前に詰まる。§5.19）
+    assert talk.EXAMPLES["plan_make"].needs_claude and talk.base_keys(app)[0] == "landform"
 
 
 def test_fresh_start_before_limits():

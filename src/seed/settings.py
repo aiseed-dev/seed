@@ -43,6 +43,8 @@ COMMENTS = {
     "read": "local / key / server。アプリで Claude を呼ぶ所（読み取りと話す）。空なら手元の Claude、自分の鍵、サーバーの順",
     "claude_model": "自分の鍵で呼ぶモデル。空なら claude-opus-5-5。費用は本人に掛かる（claude-sonnet-5-5、claude-haiku-5-5 は安い）",
     "field": "今の畑（fields/ の下のフォルダーの名）。空ならプロジェクト全体（seed field use で変える）",
+    "setup": "later なら、アプリを開いた時に準備の画面を出さない（歯車の「準備を見直す」からは開ける）",
+    "home_start": "auto なら、PC のアプリを開いた時に、スマートフォンから写真を受ける seed home を始める（歯車で選ぶ）",
     "bulk": "重い物（写真の元 originals/）を置く別の盤の道。空なら記録のフォルダーの中（seed keep --bulk で変える）",
 }
 
@@ -66,6 +68,10 @@ class Settings:
     field: str = ""  # 今の畑（設計書 §5.12）。fields/ が無いプロジェクトでは使わない
     read: str = ""  # Claude を呼ぶ所（local / key / server）。空なら在る物を ROUTES の順に
     claude_model: str = ""  # 自分の鍵で呼ぶモデル。空なら DEFAULT_CLAUDE_MODEL
+    setup: str = ""  # 準備の画面（設計書 §5.19）。"later" は「今はしない」を押した。空なら足りない時に出す
+    home_start: str = (
+        ""  # "auto" は PC のアプリを開いた時に seed home を子として始める（設計書 §5.19）。空なら始めない
+    )
     token: str = ""
     invite: str = ""
     draw_token: str = ""
@@ -137,6 +143,10 @@ class Settings:
             if f.name in SECRETS and f.name not in self.kept_inline:
                 continue
             if f.name == "field" and not self.field:  # 畑が一つのプロジェクトには書かない
+                continue
+            if f.name == "setup" and not self.setup:  # 「今はしない」を押すまでは書かない
+                continue
+            if f.name == "home_start" and not self.home_start:  # 選ぶまでは書かない
                 continue
             line = f"{f.name} = {_toml_str(getattr(self, f.name))}"
             if f.name in COMMENTS:
