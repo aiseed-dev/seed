@@ -460,6 +460,10 @@ async def send_draft(app: App, item: dict) -> None:
         app.refresh()
         return
     item["sent"] = True
+    try:  # 送った全文を覚える（public/.sent.json。サーバーが預かった時も）
+        app.folder.mark_sent(Path(item["draft"]).stem, text)
+    except OSError as ex:  # 送れてはいる。覚えられないと「下書きを見せて」にまた出るだけ
+        log.warning("could not record the sent draft: %s", ex)
     app.index = None
     if got.get("state") == "pending":  # サーバーが預かった。動かす人が読んでから載る
         say(app, app.t("publish_pending"))
@@ -971,6 +975,8 @@ def item_controls(app: App, item: dict) -> list[ft.Control]:
         side += draft_controls(app, item)
     if item.get("prune"):
         side += prune_controls(app, item)
+    if item.get("keep_levels"):
+        side.append(keep_controls(app))
     return [claude_side(side)]
 
 
@@ -1234,7 +1240,7 @@ def scene_keys(app: App) -> list[str]:
         out.append("answer")
     if app.state.get("just_read") == name:  # 写真を送って、読みが返った直後
         out += ["wrong", "name_it"]
-    if unsent_draft(app) is not None:
+    if unsent_draft(app) is not None or app.folder.unsent_drafts():
         out.append("show_draft")
     if days_since(name) >= GAP_DAYS:
         out += ["today_shot", "compare"]
@@ -1424,13 +1430,20 @@ def keep_answer(app: App, name: str, text: str) -> bool:
 
 
 def show_draft(app: App) -> None:
-    """「下書きを見せて」: まだ出していない下書きを、今のファイルの全文と「出す」で下に出し直す（前の物は外す）。"""
+    """「下書きを見せて」: まだ出していない下書きを、今のファイルの全文と「出す」で下に出し直す（前の物は外す）。
+
+    この窓に無ければ、public/ のまだ送っていない物（手元の Claude Code が作った物など）の一番新しい一つ。
+    """
     item = unsent_draft(app)
-    if item is None:
+    if item is not None:
+        talk_state(app).remove(item)
+        add_draft(app, item["draft"])
+        return
+    files = app.folder.unsent_drafts()
+    if not files:
         say(app, app.t("talk_draft_missing"))
         return
-    talk_state(app).remove(item)
-    add_draft(app, item["draft"])
+    add_draft(app, files[0].relative_to(app.folder.root).as_posix())
 
 
 def tool_text(app: App, key: str) -> str:
@@ -1445,9 +1458,18 @@ def tool_text(app: App, key: str) -> str:
         "lots": (cli.cmd_lot, argparse.Namespace(act="list")),
         "weather": (cli.cmd_weather, argparse.Namespace(act="show", month=month)),
         "marks": (cli.cmd_marks, argparse.Namespace(key=None, all=False, json=False)),
-        "keep": (cli.cmd_keep, argparse.Namespace(level=None, bulk=None)),  # 見るだけ（変えない）
+        "keep": (cli.cmd_keep, argparse.Namespace(level=None, bulk=None)),  # 見るだけ（変えない。下にボタン）
     }[key]
-    return cli.captured(fn, app.settings, args)[1]
+    return cli.captured(fn, app.settings, args, voice=app_voice(app))[1]
+
+
+def app_voice(app: App) -> tuple[str, ...]:
+    """アプリの言い方の鍵の後ろの語（strings.VOICE）。命令を指す文の代わりに、アプリの言い方の文を使う。
+
+    手元の Claude Code で話す時は、命令（seed weather fetch など）を Claude が走らせられるので、言えば済む事を書く
+    （`_app_local`）。自分の鍵とサーバーの Claude はその道具を持たないので、無い事だけ（`_app`）。
+    """
+    return ("_app_local", "_app") if can_talk_local(app) else ("_app",)
 
 
 async def run_tool(app: App, key: str) -> None:
@@ -1459,7 +1481,58 @@ async def run_tool(app: App, key: str) -> None:
     except (OSError, ValueError) as ex:
         say(app, error_text(ex, app.lang))
         return
-    say(app, text or app.t("talk_done"))
+    say(app, text or app.t("talk_done"), **({"keep_levels": True} if key == "keep" else {}))
+
+
+def set_keep(app: App, level: str) -> None:
+    """残す量のボタン。`seed keep <量>` と同じ関数で seed.toml に書き、変えた事を一行で。下げても消さない（二度押しにしない）。
+
+    下げて、残さない物が在れば、「残さない物を消したい」の例を添える（消すのはそこの二度押しだけ）。
+    """
+    from seed import cli
+    from seed import keep as keep_mod
+
+    st = app.settings
+    before = st.keep
+    if level == before or level not in keep_mod.LEVELS:
+        return
+    code, _ = cli.captured(lambda s_, _a: 0 if cli._set_keep(s_, level) else 1, st, None)
+    if code:
+        return
+    line = app.t("keep_changed", desc=app.t(f"keep_btn_{level}"))
+    if keep_mod.rank(level) < keep_mod.rank(before) and keep_mod.prune_plan(st.records, level):
+        say(app, line + "\n" + app.t("keep_lowered"), examples=["prune"])
+    else:
+        say(app, line)
+
+
+def keep_controls(app: App) -> ft.Control:
+    """三つの量のボタン。今の量の物は押せない。"""
+    from seed import keep as keep_mod
+
+    def press(level: str):
+        def go(e) -> None:
+            if app.state.get("pending"):
+                return
+            set_keep(app, level)
+            app.refresh()
+
+        return go
+
+    return ft.Row(
+        [
+            ft.OutlinedButton(
+                app.t(f"keep_btn_{level}"),
+                on_click=press(level),
+                disabled=level == app.settings.keep,
+                data=level,
+            )
+            for level in keep_mod.LEVELS
+        ],
+        wrap=True,
+        spacing=8,
+        run_spacing=8,
+    )
 
 
 def prune_offer(app: App) -> None:

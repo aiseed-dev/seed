@@ -22,7 +22,7 @@ from . import claude_md, highlights, lang
 from . import fields as fields_mod
 from . import keep as keep_mod
 from . import settings as settings_mod
-from .app.strings import error_text, s
+from .app.strings import VOICE, error_text, s
 from .records import (
     ASKS,
     PHOTO_KEY,
@@ -412,13 +412,19 @@ def _err(text: str) -> None:
     print(text, file=sys.stderr)
 
 
-def captured(fn, st: Settings, args) -> tuple[int, str]:
-    """命令の関数（cmd_…）を、端末に出さずに呼ぶ。(戻りの数, 出した文)。input() を使う命令には使わない。"""
+def captured(fn, st: Settings, args, voice: tuple[str, ...] = ()) -> tuple[int, str]:
+    """命令の関数（cmd_…）を、端末に出さずに呼ぶ。(戻りの数, 出した文)。input() を使う命令には使わない。
+
+    voice はアプリの言い方（strings.VOICE。例: ("_app",)）。`<鍵>_app` の文が在れば、命令を指す文の代わりに使う。
+    端末から呼ぶ時は置かないので、端末の文は変わらない。
+    """
     lines: list[str] = []
     token = _SINK.set(lines)
+    vtoken = VOICE.set(voice)
     try:
         code = fn(st, args)
     finally:
+        VOICE.reset(vtoken)
         _SINK.reset(token)
     return code, "\n".join(lines).strip("\n")
 
@@ -935,8 +941,18 @@ def publish_file(st: Settings, path: Path) -> int:
     except client.ClientError as e:
         _err(error_text(e, lg, server=st.server))
         return 2
+    in_public = path.resolve().parent == st.records.public.resolve()
+    _remember_sent(st, path.stem if in_public else pub.id, text)
     _say_published(lg, got)
     return 0
+
+
+def _remember_sent(st: Settings, public_id: str, text: str) -> None:
+    """送れた全文を public/.sent.json に覚える。書けなくても送れてはいるので、一行言うだけで止めない。"""
+    try:
+        st.records.mark_sent(public_id, text)
+    except OSError:
+        _err(s("sent_not_recorded", st.language, path=st.records.sent_path))
 
 
 def _say_published(lg: str, got: dict) -> None:
@@ -1009,13 +1025,15 @@ def cmd_publish(st: Settings, args) -> int:
     if shots is None:
         _out(s("published_local", lg, path=path))
         return 1
+    text = pub.render()
     try:
         with client.Client(st.server, st.token, lg, invite=st.invite) as c:
-            got = c.publish(pub.render(), shots)
+            got = c.publish(text, shots)
     except client.ClientError as e:
         _err(error_text(e, lg, server=st.server))
         _out(s("published_local", lg, path=path))
         return 2
+    _remember_sent(st, pub.id, text)
     _say_published(lg, got)
     return 0
 

@@ -9,7 +9,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1120,6 +1123,13 @@ def _distance_m(a: list[float], b: list[float]) -> float:
     return math.hypot(dx, dy)
 
 
+SENT_NAME = ".sent.json"  # 送った下書きの覚え（public/ の中。点で始まるので public/*.md の索引に入らない）
+
+
+def text_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 @dataclass
 class Folder:
     """~/seed/。道を決めるだけで、作る・読む・書くは呼ぶ側が選ぶ。"""
@@ -1197,6 +1207,48 @@ class Folder:
     @property
     def public(self) -> Path:
         return self.root / "public"
+
+    @property
+    def sent_path(self) -> Path:
+        """送った下書きの覚え public/.sent.json（{id: {"sha256", "at"}}）。手元だけの物で、サーバーには送らない。"""
+        return self.public / SENT_NAME
+
+    def sent(self) -> dict[str, dict]:
+        """送った下書きの覚え。無い、読めない時は空（どれもまだ送っていない、と見る）。"""
+        try:
+            got = json.loads(self.sent_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {k: v for k, v in got.items() if isinstance(v, dict)} if isinstance(got, dict) else {}
+
+    def mark_sent(self, public_id: str, text: str) -> None:
+        """送れた全文の sha256 と時刻を覚える。書きかけで壊さないよう、隣に書いてから置き換える。"""
+        got = self.sent()
+        got[public_id] = {
+            "sha256": text_sha256(text),
+            "at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        self.public.mkdir(parents=True, exist_ok=True)
+        tmp = self.sent_path.with_name(f"{SENT_NAME}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(got, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, self.sent_path)
+
+    def unsent_drafts(self) -> list[Path]:
+        """まだ送っていない下書き（public/*.md のうち、今の全文の sha256 が覚えと違う物、覚えの無い物）。新しい順。"""
+        if not self.public.is_dir():
+            return []
+        got = self.sent()
+        out = []
+        for path in self.public.glob("*.md"):
+            if path.name.startswith(".") or not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if (got.get(path.stem) or {}).get("sha256") != text_sha256(text):
+                out.append(path)
+        return sorted(out, key=lambda p: p.stat().st_mtime, reverse=True)
 
     @property
     def connections(self) -> Path:

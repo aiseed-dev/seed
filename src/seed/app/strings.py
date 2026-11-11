@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import contextvars
+
 from .. import lang
 
 DISCORD_URL = "https://discord.gg/Q8pwMH2uTA"
@@ -182,6 +184,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "keep_desc_photos": "写真を元の大きさで",
         "keep_desc_research": "写真の元と、読みの生の出力も。後で読み直して比べられる",
         "keep_change": "変えるには seed keep text | photos | research。上げるのは自由、下げても消しません。消すのは seed prune。",
+        "keep_change_app": "下のボタンで変えられます。上げるのは自由で、下げても何も消しません。消す時は「残さない物を消したい」と言ってください。",
+        "keep_btn_text": "写真は読み用の大きさ",
+        "keep_btn_photos": "写真を元の大きさで",
+        "keep_btn_research": "写真の元と読みの生の出力も",
+        "keep_changed": "残す量を「{desc}」にしました。",
+        "sent_not_recorded": "送りました。送った事を手元に覚えられませんでした（{path}）。",
+        "keep_lowered": "今ある物は消していません。残さない物を消す時は、下を押してください。",
         "keep_set": "残す量を {keep} にしました。",
         "keep_bulk": "重い物（写真の元）は {bulk} に置きます。そこの空きは {free} GB。",
         "bulk_set": "重い物の置き場を {bulk} にしました。",
@@ -194,6 +203,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "marks_about": "（key: {key}）",
         "marks_none": "合う／違うの付いた行はまだ無い{about}",
         "marks_no_wrong": "違うの付いた行はまだ無い{about}。合うは {n} 行（--all で出す）",
+        "marks_no_wrong_app": "違うの付いた行はまだありません{about}。合うは {n} 行です。",
         "marks_src_obs": "観察 {n} 件",
         "marks_src_plan": "、plan.md",
         "marks_sep": "、",
@@ -202,6 +212,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "marks_reason": "（{reason}）",
         "marks_chapter": "06 章: {path}",
         "marks_chapter_missing": "06 章: 見つからない（seed init で手引きを写す）",
+        "marks_chapter_missing_app": "06 章: 見つかりません",
         "marks_chapter_none": "06 章に対応する行無し",
         "marks_chapter_lines": "06 章の行:",
         "marks_chapter_line": "- {n} 行: {item}",
@@ -446,6 +457,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "ledger_kind_cost": "掛かった (cost)",
         "ledger_kind_help": "手伝って得た (help)",
         "ledger_kind_other": "そのほか (other)",
+        "ledger_kind_sale_app": "売った",
+        "ledger_kind_cost_app": "掛かった",
+        "ledger_kind_help_app": "手伝って得た",
+        "ledger_kind_other_app": "そのほか",
         "invoice_no_items": "{month} の、to: {to} の行が ledger.md に無い（掛かった物は請求書に入れない）。何も書いていない",
         "invoice_written": "請求書の下書きを書いた: {path}（{n} 行、合計 {total} 円）",
         "invoice_title": "請求書（下書き）",
@@ -463,6 +478,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "weather_filled": "気象の記録を {n} 日分足した（過去データ。予報は残さない）",
         "weather_fill_none": "足す日は無い（最初の観察から昨日まで、全部ある。座標が無い時も）",
         "weather_none": "{month} の気象の記録は無い（{path}）。seed weather fetch で取る",
+        "weather_none_app": "{month} の気象の記録はまだありません。",
+        "weather_none_app_local": "{month} の気象の記録はまだありません。「今月の天気を取って」と話すと、Claude が取ります。",
         "procedure_unknown": "知らない手続き: {slug}（今あるのは {known}）",
         "procedure_written": "手続きの下書きを書いた: {path}（checklist.md、draft.md、sources.md）",
         "procedure_filled": "記録から埋めた欄: {keys}。ほかは（本人が書く）",
@@ -959,6 +976,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "keep_desc_photos": "photos at full size",
         "keep_desc_research": "also the photo originals and the raw reading output, to re-read and compare later",
         "keep_change": "Change with seed keep text | photos | research. Raising is free; lowering deletes nothing. Deleting is seed prune.",
+        "keep_change_app": "Change it with the buttons below. Raising is free; lowering deletes nothing. To delete, say “Delete what I don't keep”.",
+        "keep_btn_text": "Photos at reading size",
+        "keep_btn_photos": "Photos at full size",
+        "keep_btn_research": "Also originals and raw readings",
+        "keep_changed": "Now keeping: {desc}.",
+        "sent_not_recorded": "Sent. Could not note on this computer that it was sent ({path}).",
+        "keep_lowered": "Nothing was deleted. To delete what is no longer kept, press below.",
         "keep_set": "Now keeping: {keep}.",
         "keep_bulk": "Heavy files (photo originals) go to {bulk}. Free there: {free} GB.",
         "bulk_set": "Heavy files now go to {bulk}.",
@@ -971,6 +995,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "marks_about": " (key: {key})",
         "marks_none": "No lines marked right or wrong yet{about}",
         "marks_no_wrong": "No lines marked wrong yet{about}. {n} marked right (--all shows them)",
+        "marks_no_wrong_app": "No lines marked wrong yet{about}. {n} marked right.",
         "marks_src_obs": "{n} observations",
         "marks_src_plan": ", plan.md",
         "marks_sep": ", ",
@@ -979,6 +1004,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "marks_reason": " ({reason})",
         "marks_chapter": "Chapter 06: {path}",
         "marks_chapter_missing": "Chapter 06: not found (seed init copies the skill)",
+        "marks_chapter_missing_app": "Chapter 06: not found",
         "marks_chapter_none": "No matching line in chapter 06",
         "marks_chapter_lines": "Chapter 06 lines:",
         "marks_chapter_line": "- line {n}: {item}",
@@ -1227,6 +1253,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "ledger_kind_cost": "Spent (cost)",
         "ledger_kind_help": "Earned helping (help)",
         "ledger_kind_other": "Other (other)",
+        "ledger_kind_sale_app": "Sold",
+        "ledger_kind_cost_app": "Spent",
+        "ledger_kind_help_app": "Earned helping",
+        "ledger_kind_other_app": "Other",
         "invoice_no_items": "No entries in ledger.md for {month} with to: {to} (costs are not invoiced). Nothing written",
         "invoice_written": "Wrote the invoice draft: {path} ({n} lines, total {total} yen)",
         "invoice_title": "Invoice (draft)",
@@ -1244,6 +1274,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "weather_filled": "Added {n} days to the weather record (past data; forecasts are never saved)",
         "weather_fill_none": "Nothing to add (every day from the first observation to yesterday is there, or there are no coordinates)",
         "weather_none": "No weather record for {month} ({path}). Get it with seed weather fetch",
+        "weather_none_app": "No weather record for {month} yet.",
+        "weather_none_app_local": "No weather record for {month} yet. Say “Get this month's weather” and Claude will fetch it.",
         "procedure_unknown": "Unknown procedure: {slug} (known: {known})",
         "procedure_written": "Wrote the procedure draft: {path} (checklist.md, draft.md, sources.md)",
         "procedure_filled": "Fields filled from your records: {keys}. The rest say (本人が書く)",
@@ -1585,9 +1617,22 @@ def key_label(key: str, language: str) -> str:
     return STRINGS.get(language, {}).get(f"key_{key}") or STRINGS["en"].get(f"key_{key}") or key
 
 
+# アプリが命令と同じ関数を呼ぶ時の言い方（設計書 §5.19。cli.captured が置く）。鍵の後ろに付ける語を、先の物から試す。
+# 例: ("_app_local", "_app")。空なら端末の文のまま。糸ごとに別
+VOICE: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar("seed_voice", default=())
+
+
+def _lookup(word: str, language: str) -> str | None:
+    return STRINGS.get(language, {}).get(word) or STRINGS["en"].get(word)
+
+
 def s(word: str, language: str, **kw) -> str:
-    """画面の文。無い言語は en、en にも無ければ lang.t（見出しや判定の語）。"""
-    text = STRINGS.get(language, {}).get(word) or STRINGS["en"].get(word) or lang.t(word, language)
+    """画面の文。無い言語は en、en にも無ければ lang.t（見出しや判定の語）。
+
+    VOICE が置かれていれば、`<word><後ろの語>` の文が在る時はそれを使う（アプリの言い方。命令の形を出さない）。
+    """
+    text = next((t for t in (_lookup(word + v, language) for v in VOICE.get()) if t), None)
+    text = text or _lookup(word, language) or lang.t(word, language)
     return text.format(**kw) if kw else text
 
 

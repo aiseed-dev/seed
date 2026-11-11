@@ -156,7 +156,8 @@ def test_unsent_draft_offers_show_draft(app, seedfolder, tmp_path):
     run(talk.run_example(app, "show_draft"))
     items = app.state["talk"]
     assert items[-1]["draft"] == "public/x.md" and sum(1 for i in items if i.get("draft")) == 1
-    items[-1]["sent"] = True
+    items[-1]["sent"] = True  # 送れた時は、送った全文も覚える（send_draft と同じ）
+    app.folder.mark_sent("x", "下書きの全文")
     assert "show_draft" not in top(app)
 
 
@@ -288,7 +289,7 @@ def test_tools_work_without_claude(app, seedfolder, tmp_path):
     want = {
         "ledger": "2026-11 の合計",
         "lots": "ロットはまだ無い",
-        "weather": "2026-11 の気象の記録は無い",
+        "weather": "2026-11 の気象の記録はまだありません。",
         "marks": "合う／違うの付いた行はまだ無い",
         "keep": "残す量は photos",
     }
