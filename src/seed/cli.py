@@ -1974,6 +1974,8 @@ def cmd_import(st: Settings | None, args) -> int:
             photos=rep.photos,
             hypotheses=rep.hypotheses,
             project=project,
+            merged=rep.merged,
+            photos_there=rep.photos_there,
         )
     )
     if rep.kept:

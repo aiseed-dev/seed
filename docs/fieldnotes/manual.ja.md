@@ -55,7 +55,7 @@ mkdir -p ~/.config/fieldnotes && chmod 700 ~/.config/fieldnotes
 |---|---|
 | `fieldnotes consent yes` / `no` | Muse Spark に送るものを Meta が学習に使ってよいか。アプリは初回起動時に同じことをダイアログで聞く(右上の歯車からいつでも変えられる) |
 | `fieldnotes language ja` / `en` / `auto` | AI が書く言語。`auto`(既定)は使っている PC やスマホの言語 |
-| `fieldnotes reader spark` / `glimmer` | 畑を読むモデル。`glimmer` は家の中の llama.cpp サーバー(既定 `http://192.168.100.6:11434/v1`、`--url` と `--model` で変更、`--check` で応答確認)。動画やふだんは `spark` |
+| `fieldnotes reader spark` / `glimmer` | 畑を読むモデル。`glimmer` は家の中の llama.cpp サーバー(既定 `http://192.0.2.6:11434/v1`、`--url` と `--model` で変更、`--check` で応答確認)。動画やふだんは `spark` |
 
 ## 3. 農場フォルダを作る
 

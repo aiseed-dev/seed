@@ -5,7 +5,7 @@ import json
 from test_photos import make_jpeg
 
 from seed import cli, walk
-from seed.records import Hypotheses, Observation, Plan
+from seed.records import Hypotheses, Line, Observation, Plan
 
 SITE = """---
 site: test-farm
@@ -194,3 +194,142 @@ def test_import_fieldnotes_farm_into_a_field(tmp_path, seedfolder):
 def test_import_refuses_a_folder_without_records(tmp_path, seedfolder, capsys):
     assert cli.main(["import", "fieldnotes", str(tmp_path / "nothing"), "--folder", str(seedfolder)]) == 1
     assert "records/" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------- 移す先に同じ物が既にある時（記録の形 §23）
+
+
+def _snapshot(root):
+    return {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+
+
+def _import(src, seedfolder):
+    assert cli.main(["import", "fieldnotes", str(src), "--folder", str(seedfolder)]) == 0
+
+
+def _field_with(seedfolder, obs=None, photo_bytes=None):
+    """seed で先に付けた畑 uncut。同じ時刻の名の写真（中身は違う）と、同じ名の観察を置ける。"""
+    assert cli.main(["field", "new", "uncut", "--folder", str(seedfolder)]) == 0
+    f = seedfolder / "fields" / "uncut"
+    if photo_bytes is not None:
+        (f / "photos" / "2026-10-28").mkdir(parents=True, exist_ok=True)
+        (f / "photos" / "2026-10-28" / "121701.jpg").write_bytes(photo_bytes)
+    if obs is not None:
+        (f / "observations").mkdir(parents=True, exist_ok=True)
+        obs.write(f / "observations" / obs.filename)
+    return f
+
+
+def _own_obs():
+    obs = Observation(
+        date="2026-10-28",
+        time="12:17:01",
+        photos=["photos/2026-10-28/121701.jpg"],
+        location={"center": [34.08, 134.44], "points": 1, "extent_m": 0},
+        model="claude-x",
+        language="ja",
+    )
+    obs.reading = [Line("overall", "seed で読んだ", 0.7)]
+    return obs
+
+
+def test_import_twice_adds_nothing(tmp_path, seedfolder, capsys):
+    src = farm(tmp_path)
+    _import(src, seedfolder)
+    first = _snapshot(seedfolder)
+    capsys.readouterr()
+    _import(src, seedfolder)
+    assert _snapshot(seedfolder) == first  # 写真も行も一文も notes/ の物も増えない
+    out = capsys.readouterr().out
+    assert "観察 0（在った観察に足した 0）、写真 0（在って写さなかった 2）" in out
+
+
+def test_same_time_photo_already_there_is_used_not_copied(tmp_path, seedfolder):
+    src = farm(tmp_path)
+    f = _field_with(seedfolder, photo_bytes=b"seed's own photo")
+    _import(src, seedfolder)
+    day = f / "photos" / "2026-10-28"
+    assert sorted(p.name for p in day.iterdir()) == ["121701.jpg", "121730.jpg", "121755-voice.m4a"]
+    assert (day / "121701.jpg").read_bytes() == b"seed's own photo"  # 中身では比べない
+    obs = Observation.read(f / "observations" / "2026-10-28-121701.md")
+    assert obs.photos == ["photos/2026-10-28/121701.jpg", "photos/2026-10-28/121730.jpg"]
+
+
+def test_existing_observation_gets_what_is_missing(tmp_path, seedfolder, capsys):
+    src = farm(tmp_path)
+    own = _own_obs()
+    f = _field_with(seedfolder, obs=own, photo_bytes=b"seed's own photo")
+    capsys.readouterr()
+    _import(src, seedfolder)
+    path = f / "observations" / "2026-10-28-121701.md"
+    obs = Observation.read(path)
+    # 在る物は変えない
+    assert obs.photos == own.photos and obs.location == own.location and obs.model == "claude-x"
+    assert [(l.key, l.text) for l in obs.reading] == [("overall", "seed で読んだ")]
+    # 古い読みは Earlier reading へ、一文を添えて
+    assert [l.key for l in obs.earlier] == ["overall", "dominant", "change", "acidity"]
+    assert obs.kept_text["Earlier reading"] == "fieldnotes の読み（muse-spark-1.3、2026-10-28 の一日分）"
+    assert obs.checks[0].key == "h2" and obs.checks_model == "muse-spark-1.3"
+    assert obs.coverage == {"vegetation": 91.8} and obs.cover_range == {"vegetation": [80.1, 97.3]}
+    assert obs.cover_model == "sam-3.1"
+    rec = [(l.key, l.text) for l in obs.record]
+    assert ("did", "東側を刈った（声から: muse-voice-transcribe-1.0）") in rec
+    assert ("note", "北の端は低い。") in rec
+    assert (f / "observations" / "2026-10-28-121701.sam" / "1.jpg").exists()
+    assert not (seedfolder / "notes" / "fieldnotes" / "records").exists()  # 全部入った
+    out = capsys.readouterr().out
+    assert "観察 0（在った観察に足した 1）、写真 1（在って写さなかった 1）" in out
+    # 二度目は何も増えない（行も一文も重ならない）
+    text = path.read_text(encoding="utf-8")
+    _import(src, seedfolder)
+    assert path.read_text(encoding="utf-8") == text
+    assert text.count("fieldnotes の読み") == 1
+
+
+def test_existing_checks_and_coverage_are_kept_and_the_day_is_copied(tmp_path, seedfolder):
+    src = farm(tmp_path)
+    own = _own_obs()
+    own.checks, own.checks_model = [Line("h1", "seed で確かめた", 0.6)], "claude-x"
+    own.coverage, own.cover_model = {"vegetation": 50.0}, "sam-3.1"
+    f = _field_with(seedfolder, obs=own)
+    sam = f / "observations" / "2026-10-28-121701.sam"
+    sam.mkdir()
+    (sam / "1.jpg").write_bytes(b"seed overlay")
+    _import(src, seedfolder)
+    obs = Observation.read(f / "observations" / "2026-10-28-121701.md")
+    assert [(l.key, l.text) for l in obs.checks] == [("h1", "seed で確かめた")]
+    assert obs.checks_model == "claude-x" and obs.coverage == {"vegetation": 50.0}
+    assert (sam / "1.jpg").read_bytes() == b"seed overlay"
+    assert [l.key for l in obs.earlier] == ["overall", "dominant", "change", "acidity"]  # 読みは入る
+    kept = seedfolder / "notes" / "fieldnotes" / "records" / "uncut"
+    assert (kept / "2026-10-28.md").read_text(encoding="utf-8") == DAY
+    assert (kept / "2026-10-28-overlay-1.jpg").exists()
+    first = _snapshot(seedfolder)
+    _import(src, seedfolder)
+    assert _snapshot(seedfolder) == first
+
+
+def test_two_photos_in_the_same_second(tmp_path, seedfolder):
+    src = farm(tmp_path)
+    day = src / "photos" / "uncut" / "2026-10-28"
+    make_jpeg(day / "121701-zz.jpg")
+    _import(src, seedfolder)
+    got = seedfolder / "fields" / "uncut" / "photos" / "2026-10-28"
+    assert sorted(p.name for p in got.glob("*.jpg")) == ["121701-2.jpg", "121701.jpg", "121730.jpg"]
+    assert (got / "121701.jpg").read_bytes() == (day / "121701-uncut.jpg").read_bytes()
+    assert (got / "121701-2.jpg").read_bytes() == (day / "121701-zz.jpg").read_bytes()
+    _import(src, seedfolder)
+    assert len(list(got.glob("*.jpg"))) == 3
+
+
+def test_report_counts(tmp_path, seedfolder):
+    from seed import importfn
+    from seed.records import Folder
+
+    src = farm(tmp_path)
+    f = _field_with(seedfolder, obs=_own_obs(), photo_bytes=b"seed's own photo")
+    folder = Folder(f, project=seedfolder)
+    rep = importfn.import_farm(src, {"uncut": folder}, "ja")
+    assert (rep.observations, rep.merged, rep.photos, rep.photos_there, rep.voices) == (0, 1, 1, 1, 1)
+    rep = importfn.import_farm(src, {"uncut": folder}, "ja")
+    assert (rep.observations, rep.merged, rep.photos, rep.photos_there, rep.voices) == (0, 0, 0, 2, 0)

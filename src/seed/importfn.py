@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import filecmp
 import json
 import re
 import shutil
@@ -57,6 +58,8 @@ class Report:
     photos: int = 0
     voices: int = 0
     hypotheses: int = 0
+    merged: int = 0  # 足りない物を足した、移す先に在った観察
+    photos_there: int = 0  # 移す先に既に在って写さなかった写真
     kept: list[str] = field(default_factory=list)  # notes/fieldnotes/ に写した物
 
 
@@ -234,37 +237,48 @@ def _index(day_dir: Path) -> dict[str, dict]:
         return {}
 
 
-def _new_name(dest: Path, hms: str, ext: str, suffix: str = "") -> Path:
-    path = dest / f"{hms}{suffix}.{ext}"
-    n = 2
-    while path.exists():
-        path = dest / f"{hms}{suffix}-{n}.{ext}"
-        n += 1
-    return path
+def _nth_name(hms: str, n: int, ext: str, suffix: str = "") -> str:
+    """同じ時刻の n 番目の名。1 番目は <HHMMSS><suffix>.<ext>、後は -2、-3…。"""
+    return f"{hms}{suffix}.{ext}" if n == 1 else f"{hms}{suffix}-{n}.{ext}"
 
 
-def _copy_day_photos(src_day: Path, folder: R.Folder, day: str) -> tuple[dict[str, str], list[dict], int]:
-    """写真と録音を写す。({元の道: 新しい道}, 座標の入った index の項目, 録音の数)。"""
+@dataclass
+class DayPhotos:
+    moved: dict[str, str] = field(default_factory=dict)  # {元の名: 移す先の道}
+    points: list[dict] = field(default_factory=list)  # 座標の入った index の項目
+    photos: int = 0  # 新しく写した写真
+    voices: int = 0  # 新しく写した録音
+    already: int = 0  # 移す先に既に在って写さなかった写真
+
+
+def _copy_day_photos(src_day: Path, folder: R.Folder, day: str) -> DayPhotos:
+    """写真と録音を写す。同じ時刻の n 枚目は移す先の n 番目の名に当て、その名が既にあれば写さない（中身では比べない）。"""
     dest = folder.photos / day
     dest.mkdir(parents=True, exist_ok=True)
-    moved: dict[str, str] = {}
-    voices = 0
+    out = DayPhotos()
+    seen: dict[tuple[str, str], int] = {}  # (photo か voice, 時刻) → 何番目まで見たか
     for p in sorted(src_day.iterdir()):
         m = PHOTO_RE.match(p.name)
         v = VOICE_RE.match(p.name)
         if v:
-            to = _new_name(dest, v["hms"], v["ext"].lower(), "-voice")
-            shutil.copy2(p, to)
-            voices += 1
+            kind, hms, ext, suffix = "voice", v["hms"], v["ext"].lower(), "-voice"
         elif m:
             ext = "jpg" if m["ext"].lower() in ("jpg", "jpeg") else m["ext"].lower()
-            to = _new_name(dest, m["hms"], ext)
-            shutil.copy2(p, to)
+            kind, hms, suffix = "photo", m["hms"], ""
         else:
             continue
-        moved[p.name] = f"photos/{day}/{to.name}"
+        n = seen[(kind, hms)] = seen.get((kind, hms), 0) + 1
+        to = dest / _nth_name(hms, n, ext, suffix)
+        if to.exists():
+            out.already += kind == "photo"
+        else:
+            shutil.copy2(p, to)
+            out.photos += kind == "photo"
+            out.voices += kind == "voice"
+        out.moved[p.name] = f"photos/{day}/{to.name}"
     idx = _index(src_day)
-    return moved, [idx[k] for k in moved if k in idx], voices
+    out.points = [idx[k] for k in out.moved if k in idx]
+    return out
 
 
 def _location(points: list[dict]) -> dict | None:
@@ -353,6 +367,58 @@ def _reading_line(l: R.Line) -> R.Line:
     return l
 
 
+def _earlier_note(obs: R.Observation, language: str) -> str:
+    """在る観察の Earlier reading に置く、行でない一文。"""
+    model = obs.model or "none"
+    if language == "ja":
+        return f"fieldnotes の読み（{model}、{obs.date} の一日分）"
+    return f"The fieldnotes reading ({model}, for the day {obs.date})"
+
+
+def merge_into(have: R.Observation, old: R.Observation, overlays: list[Path], sam: Path) -> tuple[bool, bool]:
+    """在る観察 have に、古い一日の old から足りない物だけを足す（記録の形 §23）。(足した物があるか, 入れられない物があるか)。
+
+    have の photos、location、## Reading、model は変えない。書き戻すのは呼ぶ側。
+    """
+    added = left = False
+    known = have.reading + have.earlier
+    new = [l for l in old.reading + old.earlier if not any(l.same_statement(k) for k in known)]
+    if new:
+        have.earlier = have.earlier + new
+        note = _earlier_note(old, have.language)
+        text = have.kept_text.get(R.H_EARLIER, "")
+        if note not in text:
+            have.kept_text[R.H_EARLIER] = R.join_text(text, note)
+        added = True
+    if old.checks:
+        if not have.checks:
+            have.checks, have.checks_model = list(old.checks), old.checks_model
+            added = True
+        elif not all(any(l.same_statement(h) for h in have.checks) for l in old.checks):
+            left = True
+    if old.coverage:
+        if not have.coverage:
+            have.coverage, have.cover_range = dict(old.coverage), dict(old.cover_range)
+            have.cover_model = old.cover_model
+            added = True
+        elif have.coverage != old.coverage:
+            left = True
+    for o in overlays:
+        to = sam / f"{OVERLAY_RE.match(o.name)['n']}.jpg"
+        if not to.exists():
+            sam.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(o, to)
+            added = True
+        elif not filecmp.cmp(o, to, shallow=False):  # 前に写した同じ絵なら、入っている
+            left = True
+    rec = {(l.key, l.text) for l in have.record}
+    more = [l for l in old.record if (l.key, l.text) not in rec]
+    if more:
+        have.record = have.record + more
+        added = True
+    return added, left
+
+
 # ---------------------------------------------------------------- 提案、名詞、草の読み
 
 
@@ -435,24 +501,35 @@ def import_farm(
         rd = rec / name
         days |= {p.stem for p in rd.glob("*.md") if R.DATE_RE.match(p.stem)} if rd.is_dir() else set()
         for day in sorted(days):
-            moved, points, voices = (
-                _copy_day_photos(ph / day, folder, day) if (ph / day).is_dir() else ({}, [], 0)
-            )
-            rep.photos += sum(1 for v in moved.values() if Path(v).stem.split("-")[-1] != "voice")
-            rep.voices += voices
+            got = _copy_day_photos(ph / day, folder, day) if (ph / day).is_dir() else DayPhotos()
+            rep.photos += got.photos
+            rep.voices += got.voices
+            rep.photos_there += got.already
             day_md = rd / f"{day}.md"
             if not day_md.exists():
                 continue
-            obs = convert_day(day_md.read_text(encoding="utf-8"), moved, _location(points), language)
+            obs = convert_day(day_md.read_text(encoding="utf-8"), got.moved, _location(got.points), language)
             target = folder.observation_path(obs)
-            if target.exists():  # 二度目の取り込み: 本人が seed で付けた物を消さない
+            overlays = sorted(rd.glob(f"{day}-overlay-*.jpg"))
+            sam = folder.observations / (Path(obs.filename).stem + ".sam")
+            if target.exists():  # 在る観察は書き換えず、足りない物だけ足す。本人が seed で付けた物を消さない
+                have = R.Observation.read(target)
+                added, left = merge_into(have, obs, overlays, sam)
+                if added:
+                    have.write(target)
+                    rep.merged += 1
+                if left:  # 入れられない物がある日は、元の一日をそのまま残す
+                    kept = (folder.project or folder.root) / "notes" / "fieldnotes" / "records" / name
+                    kept.mkdir(parents=True, exist_ok=True)
+                    for p in [day_md, *overlays]:
+                        shutil.copy2(p, kept / p.name)
+                    if f"records/{name}" not in rep.kept:
+                        rep.kept.append(f"records/{name}")
                 continue
             folder.observations.mkdir(parents=True, exist_ok=True)
             obs.write(target)
             rep.observations += 1
-            overlays = sorted(rd.glob(f"{day}-overlay-*.jpg"))
             if overlays:
-                sam = folder.observations / (Path(obs.filename).stem + ".sam")
                 sam.mkdir(exist_ok=True)
                 for o in overlays:
                     shutil.copy2(o, sam / f"{OVERLAY_RE.match(o.name)['n']}.jpg")

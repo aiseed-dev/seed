@@ -53,7 +53,7 @@ The key is read at every call, so nothing needs restarting after you place it. W
 |---|---|
 | `fieldnotes consent yes` / `no` | whether Meta may train on what is sent to Muse Spark. The app asks the same thing in a dialog on first start (the gear icon changes it later) |
 | `fieldnotes language ja` / `en` / `auto` | the language the AI writes in. `auto` (default) is each phone's or PC's own |
-| `fieldnotes reader spark` / `glimmer` | the model that reads the fields. `glimmer` is a llama.cpp server in the house (default `http://192.168.100.6:11434/v1`; `--url` and `--model` change it, `--check` asks whether it answers). Day to day, and for the video: `spark` |
+| `fieldnotes reader spark` / `glimmer` | the model that reads the fields. `glimmer` is a llama.cpp server in the house (default `http://192.0.2.6:11434/v1`; `--url` and `--model` change it, `--check` asks whether it answers). Day to day, and for the video: `spark` |
 
 ## 3. Starting a farm
 

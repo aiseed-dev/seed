@@ -331,7 +331,7 @@ coverage: {weed: 61.2, bare_soil: 18.5, crop: 20.3}   # SAM 3.1, % of frame
 
 ## 9. 未確定・要確認
 
-- [ ] MS-S1 MAX（Linux, 192.168.100.6）: ping は通るが 22/11434 が閉じている（10/27 時点）。`sudo ss -tlnp | grep -E ':22|:11434'` で待ち受けを確認。手順は `scripts/setup-glimmer-server.sh`。
+- [ ] MS-S1 MAX（Linux, 192.0.2.6）: ping は通るが 22/11434 が閉じている（10/27 時点）。`sudo ss -tlnp | grep -E ':22|:11434'` で待ち受けを確認。手順は `scripts/setup-glimmer-server.sh`。
 - [ ] field-timelapse の場所と入出力形式
 - [ ] SAM に効く概念名（写真が来てから Playground で試す）
 - [x] 天気の日別値: **Open-Meteo の過去データ API** を畑の座標で叩く（2026-10-27 決定、`src/fieldnotes/weather.py`）。自前サイトの NetCDF は 57 官署のみで徳島が入っていなかった。
