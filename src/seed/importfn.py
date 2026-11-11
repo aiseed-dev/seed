@@ -474,6 +474,19 @@ def _copy_tree(src: Path, dest: Path) -> None:
         shutil.copy2(src, dest)
 
 
+def _differs(src: Path, dest: Path) -> bool:
+    """dest に、src と同じ名で中身の違う物が一つでも在るか。"""
+    if not dest.exists():
+        return False
+    if src.is_file():
+        return dest.is_file() and dest.read_bytes() != src.read_bytes()
+    for p in src.rglob("*"):
+        q = dest / p.relative_to(src)
+        if p.is_file() and q.is_file() and q.read_bytes() != p.read_bytes():
+            return True
+    return False
+
+
 # ---------------------------------------------------------------- 全体
 
 
@@ -542,11 +555,13 @@ def import_farm(
     first = next(iter(folders.values()), None)
     if first is not None:
         kept = (first.project or first.root) / "notes" / "fieldnotes"
-        for part in ("documents", "_compare", "surroundings", "lookup"):
-            if (rec / part).exists():
-                _copy_tree(rec / part, kept / part)
-                rep.kept.append(part)
-        if (src / "photos" / "_around").is_dir():
-            _copy_tree(src / "photos" / "_around", kept / "around")
-            rep.kept.append("around")
+        parts = [(rec / p, p) for p in ("documents", "_compare", "surroundings", "lookup")]
+        parts.append((src / "photos" / "_around", "around"))
+        for there, part in parts:
+            if not there.exists() or (part == "around" and not there.is_dir()):
+                continue
+            # 別の農場の同じ名で中身の違う物が在れば、上書きせず農場の名の下へ
+            to = part if not _differs(there, kept / part) else f"{src.resolve().name}/{part}"
+            _copy_tree(there, kept / to)
+            rep.kept.append(to)
     return rep

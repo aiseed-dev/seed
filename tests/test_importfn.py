@@ -333,3 +333,49 @@ def test_report_counts(tmp_path, seedfolder):
     assert (rep.observations, rep.merged, rep.photos, rep.photos_there, rep.voices) == (0, 1, 1, 1, 1)
     rep = importfn.import_farm(src, {"uncut": folder}, "ja")
     assert (rep.observations, rep.merged, rep.photos, rep.photos_there, rep.voices) == (0, 0, 0, 2, 0)
+
+
+# ---------------------------------------------------------------- 二つ目の農場を同じプロジェクトへ（記録の形 §23）
+
+
+def _second_farm(tmp_path):
+    """同じ名の lookup/parcel_jp.json を、違う中身で持つ二つ目の農場 farm2。"""
+    src = farm(tmp_path / "b").rename(tmp_path / "farm2")
+    (src / "records" / "lookup" / "parcel_jp.json").write_text('{"parcel": null}', encoding="utf-8")
+    return src
+
+
+def test_second_farm_goes_under_its_own_name(tmp_path, seedfolder):
+    from seed import importfn
+    from seed.records import Folder
+
+    one, two = farm(tmp_path), _second_farm(tmp_path)
+    first = (one / "records" / "lookup" / "parcel_jp.json").read_bytes()
+    _import(one, seedfolder)
+    folder = Folder(seedfolder / "fields" / "uncut", project=seedfolder)
+    rep = importfn.import_farm(two, {"uncut": folder}, "ja")
+    kept = seedfolder / "notes" / "fieldnotes"
+    assert (kept / "lookup" / "parcel_jp.json").read_bytes() == first
+    assert (kept / "farm2" / "lookup" / "parcel_jp.json").read_text(encoding="utf-8") == '{"parcel": null}'
+    assert "farm2/lookup" in rep.kept and "lookup" not in rep.kept
+    assert "_compare" in rep.kept  # 中身の同じ物は今までの所へ
+    assert not (kept / "farm2" / "_compare").exists()
+
+
+def test_two_farms_imported_again_change_nothing(tmp_path, seedfolder):
+    one, two = farm(tmp_path), _second_farm(tmp_path)
+    _import(one, seedfolder)
+    _import(two, seedfolder)
+    before = _snapshot(seedfolder)
+    _import(one, seedfolder)
+    assert _snapshot(seedfolder) == before
+    _import(two, seedfolder)
+    assert _snapshot(seedfolder) == before
+
+
+def test_one_farm_twice_stays_in_the_plain_place(tmp_path, seedfolder):
+    src = farm(tmp_path)
+    _import(src, seedfolder)
+    _import(src, seedfolder)
+    kept = seedfolder / "notes" / "fieldnotes"
+    assert sorted(p.name for p in kept.iterdir()) == ["_compare", "lookup"]
