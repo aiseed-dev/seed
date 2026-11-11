@@ -22,8 +22,19 @@ from . import settings as settings_mod
 from .records import split_front
 
 IMAGE_SUFFIXES = {".heic", ".heif", ".jpg", ".jpeg", ".png"}
-# seed が見る所（根と fields/<名>/ の下）。originals は写真の元の置き場（keep が research）で、seed の物
-SEEN_DIRS = {"photos", "videos", "skill", "notes", "public", "public-home", "origin", "grow", "originals"}
+# seed が見る所（根と fields/<名>/ の下）。originals は写真の元の置き場（keep が research）、observations は SAM の重ね画像（<id>.sam/<n>.jpg）の置き場で、どちらも seed の物
+SEEN_DIRS = {
+    "photos",
+    "videos",
+    "skill",
+    "notes",
+    "public",
+    "public-home",
+    "origin",
+    "grow",
+    "originals",
+    "observations",
+}
 CHUNK = 1 << 20
 _UNSET = object()
 

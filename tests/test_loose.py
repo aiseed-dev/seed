@@ -88,6 +88,13 @@ def test_scan_skips_seen_and_dot_dirs(proj):
     assert all(not i.in_seed and i.metres is None for g in groups for i in g.items)
 
 
+def test_sam_overlays_under_observations_are_not_loose(proj):
+    touch(proj / "fields" / "北" / "observations" / "2026-11-05-142107.sam" / "1.jpg")
+    touch(proj / "observations" / "2026-11-05-142107.sam" / "1.jpg")
+    assert loose.scan(proj) == []
+    assert list(loose.walk_outside(proj)) == []
+
+
 def test_scan_without_photos_is_empty_and_does_not_hash(proj, monkeypatch):
     touch(proj / "uploads" / "memo.txt")
     monkeypatch.setattr(loose, "sha256_file", lambda p: pytest.fail("写真が無いのに読んだ"))
